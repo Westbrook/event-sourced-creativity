@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import { resolve } from "node:path";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
+import { publicControls } from "./build/public-controls";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
@@ -99,6 +100,7 @@ export default defineConfig(async () => {
             input: {
               index: resolve(import.meta.dirname, "index.html"),
               marketing: resolve(import.meta.dirname, "marketing.html"),
+              experiences: resolve(import.meta.dirname, "experiences.html"),
             },
           },
         },
@@ -108,6 +110,7 @@ export default defineConfig(async () => {
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
     plugins: [
+      publicControls(),
       sites(),
       cloudflare({ viteEnvironment: { name: "server" }, config: localBindingConfig, inspectorPort: false }),
     ],

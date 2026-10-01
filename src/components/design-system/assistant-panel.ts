@@ -177,8 +177,16 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   #modalReady = false;
   #dismissedSpecialistId = "";
   #positionFrame = 0;
+  #browseLane: { main: HTMLElement; direction: string; posture: string | null; shortHeight: string | null;
+    value: string; priority: string; written: string } | null = null;
+  #browseLaneRefusal: { main: HTMLElement; focus: Element | null; layout: string } | null = null;
+  #browsePointer: MediaQueryList | null = null;
+  #revalidateBrowseSlot = () => {
+    this.#browseLaneRefusal = null;
+    this.#schedulePosition();
+  };
   #schedulePosition = () => {
-    if (this.#positionFrame || this.open) return;
+    if (this.#positionFrame || this.open && this.dataset.browseSlot !== "true" && this.dataset.browseLane !== "true") return;
     this.#positionFrame = requestAnimationFrame(() => {
       this.#positionFrame = 0;
       this.#positionLauncher();
@@ -214,10 +222,17 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     window.addEventListener("scroll", this.#schedulePosition, { capture: true, passive: true });
     window.addEventListener("focusin", this.#schedulePosition, { passive: true });
     window.addEventListener("transitionend", this.#schedulePosition, { passive: true });
+    this.#browsePointer = typeof window.matchMedia === "function" ? window.matchMedia("(pointer: coarse)") : null;
+    this.#browsePointer?.addEventListener("change", this.#revalidateBrowseSlot);
   }
 
   override disconnectedCallback() {
     this.#clearStudioLauncher();
+    this.#clearBrowseLauncher();
+    this.#clearBrowseLane();
+    this.#browseLaneRefusal = null;
+    this.#browsePointer?.removeEventListener("change", this.#revalidateBrowseSlot);
+    this.#browsePointer = null;
     window.removeEventListener("resize", this.#schedulePosition);
     window.removeEventListener("scroll", this.#schedulePosition, true);
     window.removeEventListener("focusin", this.#schedulePosition);
@@ -259,9 +274,11 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     } else this.#modalReady = false;
     if (this.open) {
       this.#clearStudioLauncher();
+      this.#clearBrowseLauncher(false);
       this.style.removeProperty("--forma-assistant-obstacle-offset");
       delete this.dataset.compactLauncher;
       delete this.dataset.tightLauncher;
+      if (this.dataset.browseSlot === "true" || this.dataset.browseLane === "true") this.#schedulePosition();
     } else this.#schedulePosition();
   }
 
@@ -279,6 +296,150 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   #clearStudioLauncher() {
     delete this.dataset.studioLauncher;
     for (const name of ["left", "top", "size"]) this.style.removeProperty(`--forma-assistant-studio-${name}`);
+  }
+
+  #clearBrowseLauncher(reservation = true) {
+    delete this.dataset.browseLauncher;
+    if (reservation) delete this.dataset.browseSlot;
+    for (const name of ["left", "top", "size"]) this.style.removeProperty(`--forma-assistant-browse-${name}`);
+  }
+
+  #clearBrowseLane() {
+    delete this.dataset.browseLane;
+    for (const name of ["left", "top"]) this.style.removeProperty(`--forma-assistant-browse-lane-${name}`);
+    const previous = this.#browseLane;
+    this.#browseLane = null;
+    const property = "--forma-assistant-browse-lane-base-inset";
+    if (previous && previous.main.style.getPropertyValue(property) === previous.written
+      && previous.main.style.getPropertyPriority(property) === "") {
+      if (previous.value) previous.main.style.setProperty(property, previous.value, previous.priority);
+      else previous.main.style.removeProperty(property);
+    }
+  }
+
+  #browseLaneLayout(main: HTMLElement) {
+    const shell = main.closest(".application-creative"), bounds = main.getBoundingClientRect();
+    // Scroll alone does not retry an unchanged rejected width reservation.
+    return { main, focus: document.activeElement,
+      layout: [innerWidth, innerHeight, bounds.width, bounds.height, getComputedStyle(main).direction,
+        shell?.getAttribute("data-nav-posture"), shell?.getAttribute("data-short-height")].join("|") };
+  }
+
+  #refuseBrowseLane() {
+    const main = this.#browseLane?.main;
+    this.#clearBrowseLane();
+    if (main) this.#browseLaneRefusal = this.#browseLaneLayout(main);
+  }
+
+  #positionInBrowseLane(launcher?: HTMLButtonElement) {
+    // This is space in the current main's padding, not another floating search
+    // over its content. Keep the same reservation while its Assistant is open.
+    const owner = this.parentElement, shell = owner?.closest<HTMLElement>(".application-creative");
+    const main = shell?.querySelector<HTMLElement>("#main-content");
+    const available = getComputedStyle(this).getPropertyValue?.("--forma-assistant-browse-lane-available")?.trim();
+    const panels = shell ? [...shell.querySelectorAll("forma-assistant-panel")]
+      .filter(panel => panel.closest(".application-creative") === shell) : [];
+    if (!this.isConnected || !owner?.matches("forma-creative-assistant") || !shell
+      || owner.parentElement !== shell || this.closest("[hidden], [inert], [aria-hidden='true']")
+      || shell.getAttribute("data-layout-intent") !== "browse" || !main?.isConnected
+      || main.parentElement !== shell || main.closest(".application-creative") !== shell
+      || main.closest("[hidden], [inert], [aria-hidden='true']")
+      || main.getAttribute("aria-busy") === "true" || panels.length !== 1 || panels[0] !== this
+      || available !== "1") { this.#clearBrowseLane(); return false; }
+    const finite = (box: Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">) =>
+      [box.left, box.top, box.right, box.bottom, box.width, box.height].every(Number.isFinite);
+    let style = getComputedStyle(main);
+    const direction = style.direction;
+    if (!["ltr", "rtl"].includes(direction) || getComputedStyle(this).direction !== direction) {
+      this.#clearBrowseLane(); return false;
+    }
+    const posture = shell.getAttribute("data-nav-posture"), shortHeight = shell.getAttribute("data-short-height");
+    if (this.#browseLane && (this.#browseLane.main !== main || this.#browseLane.direction !== direction
+      || this.#browseLane.posture !== posture || this.#browseLane.shortHeight !== shortHeight)) {
+      this.#clearBrowseLane(); return false;
+    }
+    const property = "--forma-assistant-browse-lane-base-inset";
+    const previousTop = launcher?.getBoundingClientRect().top;
+    if (!this.#browseLane) {
+      const current = this.#browseLaneLayout(main), refused = this.#browseLaneRefusal;
+      if (refused?.main === current.main && refused.focus === current.focus && refused.layout === current.layout) return false;
+      const base = Number.parseFloat(direction === "rtl" ? style.paddingLeft : style.paddingRight);
+      if (!Number.isFinite(base) || base < 0 || !launcher) return false;
+      this.#browseLane = { main, direction, posture, shortHeight, value: main.style.getPropertyValue(property),
+        priority: main.style.getPropertyPriority(property), written: `${base}px` };
+      main.style.setProperty(property, this.#browseLane.written);
+      this.dataset.browseLane = "true";
+    }
+    const previousCompact = this.dataset.compactLauncher, previousTight = this.dataset.tightLauncher;
+    let accepted = false;
+    try {
+      if (main.style.getPropertyValue(property) !== this.#browseLane.written
+        || main.style.getPropertyPriority(property) !== "") return false;
+      style = getComputedStyle(main);
+      const bounds = main.getBoundingClientRect();
+      const padding = Number.parseFloat(direction === "rtl" ? style.paddingLeft : style.paddingRight);
+      const border = Number.parseFloat(direction === "rtl" ? style.borderLeftWidth : style.borderRightWidth);
+      const base = Number.parseFloat(this.#browseLane.written);
+      if (!finite(bounds) || !Number.isFinite(innerWidth) || !Number.isFinite(innerHeight)
+        || ![padding, border, base].every(value => Number.isFinite(value) && value >= 0)
+        || style.display === "none" || style.visibility !== "visible" || Number(style.opacity) === 0
+        || padding <= base || bounds.width <= padding || bounds.right <= 0 || bounds.left >= innerWidth) return false;
+      for (let ancestor: HTMLElement | null = main; ancestor; ancestor = ancestor.parentElement) {
+        const computed = getComputedStyle(ancestor);
+        if (computed.display === "none" || computed.visibility !== "visible" || Number(computed.opacity) === 0
+          || [computed.transform, computed.translate, computed.rotate, computed.scale, computed.perspective,
+            computed.filter, computed.clipPath, computed.maskImage].some(value => value && value !== "none")
+          || Boolean(computed.zoom && !["normal", "1", "100%"].includes(computed.zoom))) return false;
+      }
+      if (!launcher) { accepted = true; return true; }
+      this.dataset.compactLauncher = "true";
+      this.dataset.tightLauncher = "true";
+      const size = launcher.getBoundingClientRect();
+      const gap = (padding - base - size.width) / 2;
+      if (!finite(size) || size.width < 44 || size.height < 44 || size.width !== size.height
+        || !Number.isFinite(gap) || gap < 8) return false;
+      const left = direction === "rtl" ? bounds.left + border + padding - gap - size.width
+        : bounds.right - border - padding + gap;
+      const floor = Math.max(8, bounds.top + Number.parseFloat(style.borderTopWidth));
+      const ceiling = Math.min(innerHeight - 8, bounds.bottom - Number.parseFloat(style.borderBottomWidth));
+      const top = Math.max(floor, Math.min(previousTop ?? size.top, ceiling - size.height));
+      const box = { left, right: left + size.width, top, bottom: top + size.height };
+      if (![floor, ceiling, top].every(Number.isFinite) || floor > ceiling - size.height
+        || box.left < 0 || box.right > innerWidth) return false;
+      this.style.setProperty("--forma-assistant-browse-lane-left", `${left}px`);
+      this.style.setProperty("--forma-assistant-browse-lane-top", `${top}px`);
+      const actual = launcher.getBoundingClientRect();
+      // Native layout can quantize the requested position. The observed button
+      // must still fit wholly in the measured strip and vertical visible band.
+      if (!finite(actual) || actual.width !== size.width || actual.height !== size.height
+        || Math.abs(actual.left - left) > 1 / 64 || Math.abs(actual.top - top) > 1 / 64
+        || actual.left < box.left - gap + 8 || actual.right > box.right + gap - 8
+        || actual.top < floor || actual.bottom > ceiling) return false;
+      for (let ancestor: HTMLElement | null = main; ancestor; ancestor = ancestor.parentElement) {
+        const computed = getComputedStyle(ancestor);
+        const clipsX = /^(auto|scroll|hidden|clip)$/.test(computed.overflowX);
+        const clipsY = /^(auto|scroll|hidden|clip)$/.test(computed.overflowY);
+        if (!clipsX && !clipsY) continue;
+        if ([computed.borderTopLeftRadius, computed.borderTopRightRadius, computed.borderBottomLeftRadius,
+          computed.borderBottomRightRadius].some(radius => typeof radius !== "string"
+          || !/^0(?:\.0+)?(?:px|%)?(?:\s+0(?:\.0+)?(?:px|%)?)?$/u.test(radius.trim()))) return false;
+        const clip = ancestor.getBoundingClientRect(), x = clip.left + ancestor.clientLeft, y = clip.top + ancestor.clientTop;
+        if (clipsX && (actual.left < x || actual.right > x + ancestor.clientWidth)
+          || clipsY && (actual.top < y || actual.bottom > y + ancestor.clientHeight)) return false;
+      }
+      this.style.removeProperty("--forma-assistant-obstacle-offset");
+      this.#browseLaneRefusal = null;
+      accepted = true;
+      return true;
+    } finally {
+      if (!accepted) {
+        this.#refuseBrowseLane();
+        if (previousCompact === undefined) delete this.dataset.compactLauncher;
+        else this.dataset.compactLauncher = previousCompact;
+        if (previousTight === undefined) delete this.dataset.tightLauncher;
+        else this.dataset.tightLauncher = previousTight;
+      }
+    }
   }
 
   #positionInStudioSlot() {
@@ -347,6 +508,133 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     return true;
   }
 
+  #positionInBrowseSlot(launcher?: HTMLButtonElement) {
+    // CSS declares either the existing row or the short-landscape rail cell.
+    // A failed measurement restores the original five-link layout in this pass.
+    if (!this.isConnected) return false;
+    const posture = getComputedStyle(this).getPropertyValue?.("--forma-assistant-browse-slot")?.trim();
+    const rail = posture === "rail";
+    if (!rail && posture !== "1") return false;
+    const owner = this.parentElement, shell = owner?.closest<HTMLElement>(".application-creative");
+    if (!owner?.matches("forma-creative-assistant") || !shell
+      || shell.getAttribute("data-layout-intent") !== "browse" || (shell.getAttribute("data-nav-posture") !== "compact"
+        && (!rail || shell.getAttribute("data-nav-posture") !== "rail"
+          || shell.getAttribute("data-short-height") !== "true"))) return false;
+    const panels = [...shell.querySelectorAll("forma-assistant-panel")]
+      .filter(panel => panel.closest(".application-creative") === shell);
+    const main = shell.querySelector<HTMLElement>("#main-content");
+    if (panels.length !== 1 || panels[0] !== this || !main
+      || main.closest(".application-creative") !== shell || main.getAttribute("aria-busy") === "true") return false;
+    const hosts = [...shell.querySelectorAll<HTMLElement>(':scope > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"]')]
+      .filter(host => host.isConnected && host.parentElement === shell && host.closest(".application-creative") === shell);
+    if (hosts.length !== 1) return false;
+    const host = hosts[0]!;
+    if (host.closest("[hidden], [inert], [aria-hidden='true']")) return false;
+    const navs = [...host.querySelectorAll<HTMLElement>(":scope > .ui-audience-navigation")], nav = navs[0];
+    if (navs.length !== 1 || nav?.parentElement !== host) return false;
+    const lists = [...nav.querySelectorAll<HTMLElement>(":scope > .ui-audience-navigation-list")], list = lists[0];
+    if (lists.length !== 1 || list?.parentElement !== nav) return false;
+    const links = [...list.querySelectorAll<HTMLAnchorElement>(":scope > li > a[href]")];
+    if (links.length !== 5 || links.some(link => !link.isConnected || link.parentElement?.parentElement !== list)) return false;
+    let accepted = false;
+    const compact = this.dataset.compactLauncher, tight = this.dataset.tightLauncher;
+    this.dataset.browseSlot = "true";
+    try {
+      const style = getComputedStyle(host), bounds = host.getBoundingClientRect(), navBox = nav.getBoundingClientRect();
+      const finite = (box: Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">) =>
+        [box.left, box.top, box.right, box.bottom, box.width, box.height].every(Number.isFinite);
+      const columns = style.gridTemplateColumns?.trim().split(/\s+/u).map(value => Number.parseFloat(value)) ?? [];
+      const tracks = rail ? style.gridTemplateRows?.trim().split(/\s+/u).map(value => Number.parseFloat(value)) ?? [] : columns;
+      const gap = Number.parseFloat(rail ? style.rowGap : style.columnGap), size = tracks[1];
+      if (style.display !== "grid" || columns.length !== (rail ? 1 : 2) || !columns.every(value => Number.isFinite(value) && value > 0)
+        || tracks.length !== 2 || !tracks.every(value => Number.isFinite(value) && value > 0)
+        || size === undefined || size < 44 || !Number.isFinite(gap) || gap < 0 || !finite(bounds) || !finite(navBox)
+        || !Number.isFinite(innerWidth) || !Number.isFinite(innerHeight)
+        || bounds.left < 0 || bounds.top < 0 || bounds.right > innerWidth
+        || navBox.width <= 0 || navBox.height < size) return false;
+      if (bounds.bottom > innerHeight) {
+        // Tab zoom can expose a fractional final CSS pixel while innerHeight is
+        // integral. Only the rail host may use it; every target stays inside.
+        const viewport = rail ? window.visualViewport : null;
+        if (!viewport || !Number.isFinite(viewport.height) || viewport.scale !== 1
+          || viewport.offsetTop !== 0 || viewport.offsetLeft !== 0
+          || viewport.height < innerHeight || viewport.height - innerHeight >= 1
+          || bounds.bottom > viewport.height) return false;
+      }
+      let left: number, top: number;
+      if (rail) {
+        const start = Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.paddingLeft);
+        const end = Number.parseFloat(style.borderRightWidth) + Number.parseFloat(style.paddingRight);
+        const before = Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.paddingTop);
+        const after = Number.parseFloat(style.borderBottomWidth) + Number.parseFloat(style.paddingBottom);
+        if (![start, end, before, after].every(value => Number.isFinite(value) && value >= 0)
+          || bounds.width - start - end < size
+          || navBox.left < bounds.left + start || navBox.right > bounds.right - end
+          || navBox.top < bounds.top + before) return false;
+        left = bounds.left + start + (bounds.width - start - end - size) / 2;
+        top = bounds.bottom - after - size;
+      } else {
+        const inset = style.direction === "rtl"
+          ? Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.paddingLeft)
+          : Number.parseFloat(style.borderRightWidth) + Number.parseFloat(style.paddingRight);
+        if (!Number.isFinite(inset) || inset < 0) return false;
+        left = style.direction === "rtl" ? bounds.left + inset : bounds.right - inset - size;
+        // The navigation row excludes its host's bottom safe-area padding.
+        top = navBox.top + (navBox.height - size) / 2;
+      }
+      const box = { left, right: left + size, top, bottom: top + size };
+      if (box.left < bounds.left || box.right > bounds.right || box.top < bounds.top || box.bottom > bounds.bottom
+        || (rail ? navBox.bottom + gap > box.top || box.bottom > innerHeight
+          : style.direction === "rtl" ? box.right + gap > navBox.left : navBox.right + gap > box.left)) return false;
+      if (links.some(link => {
+        const rect = link.getBoundingClientRect(), computed = getComputedStyle(link);
+        return !finite(rect) || rect.width < size || rect.height < size
+          || rect.left < navBox.left || rect.right > navBox.right || rect.top < navBox.top || rect.bottom > navBox.bottom
+          || (rail && (rect.left < 0 || rect.top < 0 || rect.right > innerWidth || rect.bottom > innerHeight))
+          || link.scrollWidth > link.clientWidth || link.scrollHeight > link.clientHeight
+          || computed.display === "none" || computed.visibility !== "visible" || Number(computed.opacity) === 0;
+      })) return false;
+      // Reuse the Studio cell's conservative native clipping boundary.
+      for (let ancestor: HTMLElement | null = host; ancestor; ancestor = ancestor.parentElement) {
+        const computed = getComputedStyle(ancestor);
+        if (computed.display === "none" || computed.visibility !== "visible" || Number(computed.opacity) === 0
+          || [computed.transform, computed.translate, computed.rotate, computed.scale, computed.perspective,
+            computed.filter, computed.clipPath, computed.maskImage].some(value => value && value !== "none")
+          || Boolean(computed.zoom && !["normal", "1", "100%"].includes(computed.zoom))) return false;
+        const clipsX = /^(auto|scroll|hidden|clip)$/.test(computed.overflowX), clipsY = /^(auto|scroll|hidden|clip)$/.test(computed.overflowY);
+        if (!clipsX && !clipsY) continue;
+        if ([computed.borderTopLeftRadius, computed.borderTopRightRadius, computed.borderBottomLeftRadius,
+          computed.borderBottomRightRadius].some(radius => typeof radius !== "string"
+          || !/^0(?:\.0+)?(?:px|%)?(?:\s+0(?:\.0+)?(?:px|%)?)?$/u.test(radius.trim()))) return false;
+        const clip = ancestor.getBoundingClientRect(), x = clip.left + ancestor.clientLeft, y = clip.top + ancestor.clientTop;
+        if (clipsX && (box.left < x || box.right > x + ancestor.clientWidth)
+          || clipsY && (box.top < y || box.bottom > y + ancestor.clientHeight)) return false;
+      }
+      if (launcher) {
+        this.dataset.compactLauncher = "true";
+        this.dataset.tightLauncher = "true";
+        this.dataset.browseLauncher = "true";
+        this.style.setProperty("--forma-assistant-browse-left", `${left}px`);
+        this.style.setProperty("--forma-assistant-browse-top", `${top}px`);
+        this.style.setProperty("--forma-assistant-browse-size", `${size}px`);
+        const actual = launcher.getBoundingClientRect();
+        if (!finite(actual) || actual.width !== size || actual.height !== size || actual.left < box.left || actual.right > box.right
+          || (rail ? actual.top < box.top || actual.bottom > box.bottom || actual.left < 0 || actual.top < 0
+            || actual.right > innerWidth || actual.bottom > innerHeight
+            : actual.top < navBox.top || actual.bottom > navBox.bottom)) return false;
+        this.style.removeProperty("--forma-assistant-obstacle-offset");
+      }
+      accepted = true;
+      return true;
+    } finally {
+      if (!accepted) {
+        this.#clearBrowseLauncher();
+        if (compact === undefined) delete this.dataset.compactLauncher; else this.dataset.compactLauncher = compact;
+        if (tight === undefined) delete this.dataset.tightLauncher; else this.dataset.tightLauncher = tight;
+      }
+    }
+  }
+
   #ordinaryCopyObstacles() {
     const obstacles: Array<{ element: HTMLElement; box: Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height"> }> = [];
     const owner = this.parentElement;
@@ -359,6 +647,23 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       || main.closest(".application-creative") !== shell || main.getAttribute("aria-busy") === "true") return obstacles;
     // Only current, owned copy families participate. Text is not native focus
     // authority. Whitespace is protected only by explicit box-level contracts.
+    const libraryOutputCopySelector = ".library-main > .library-body > .library-content > section > .library-output-grid > article.library-output > forma-output-card > article.output-card > .output-info > div:first-child";
+    const libraryWeightFormSelector = ".library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form";
+    const libraryWeightLabelSelector = ':scope > fieldset[aria-labelledby="library-block-content"] > label.library-weight';
+    const libraryWeightCopySelector = `${libraryWeightFormSelector} > fieldset[aria-labelledby="library-block-content"] > label.library-weight > output`;
+    const libraryWeightLabelCopySelector = `${libraryWeightFormSelector} > fieldset[aria-labelledby="library-block-content"] > label.library-weight`;
+    const libraryStateEditorSelector = ".library-main > forma-library-block-editor";
+    const libraryStateCopySelector = `${libraryStateEditorSelector} > section.library-block-editor > header.library-block-editor-header > div:first-child > p.context-library-state`;
+    const librarySearchFormSelector = ".library-main > .library-body > form.library-toolbar";
+    const librarySearchCopySelector = `${librarySearchFormSelector} > forma-ui-search.searchbox > div.ui-search > label`;
+    const documentStatePanelSelector = ':scope > section.workspace-page[data-workbench="document"] > .studio-main > .studio-grid > section#document-context-panel.context-column';
+    const documentStateHostsSelector = ':scope > .block-list[data-forma-content="primary"] > forma-context-block';
+    const documentSummarySelector = "article.context-block.context-block--summary[data-block-id]";
+    const documentStatusPath = " > div.block-body > header.block-heading > div.block-heading-state > span.context-lock-state";
+    const documentStateCopySelector = `${documentStatePanelSelector} > .block-list[data-forma-content="primary"] > forma-context-block > section.context-decision[data-controls-open="false"] > div[id^="context-controls-document-"] ${documentSummarySelector}${documentStatusPath}`;
+    const documentBodyPath = ' > div.block-body > p.block-copy[data-forma-content="primary"][dir="auto"]';
+    const documentBodyCopySelector = `${documentStatePanelSelector} > .block-list[data-forma-content="primary"] > forma-context-block > section.context-decision[data-controls-open="false"] > div[id^="context-controls-document-"] ${documentSummarySelector}${documentBodyPath}`;
+    type DocumentContextHost = HTMLElement & { surface?: string; block?: { id?: string } };
     const families = [
       ["forma-workspace-settings", [
         ".page-header-copy > :is(.eyebrow,h1,p)",
@@ -375,6 +680,11 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         '.library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form > fieldset[aria-labelledby="library-block-content"] > h3#library-block-content',
         '.library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form > fieldset[aria-labelledby="library-block-content"] > forma-ui-rich-text.block-editor-copy > .ui-rich-text > :is(label.ui-rich-text-label,small:not(.ui-field-error))',
         '.library-main > .library-body > .library-content > section:has(> .section-heading > forma-ui-segmented-control.compact-segmented) > .family-empty[data-forma-empty-state] > :is(h3,p)',
+        libraryOutputCopySelector,
+        libraryWeightCopySelector,
+        libraryWeightLabelCopySelector,
+        libraryStateCopySelector,
+        librarySearchCopySelector,
       ]],
       ["forma-reality-layers", [
         ':scope > .workspace-page.studio-alternative > .studio-main > .studio-subpage-body > .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector] > label:has(> input[name="weight"][type="range"])',
@@ -385,6 +695,9 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > p.output-requirement-note:first-child',
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > p.output-requirement-note:first-child + p:not([class])',
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > label.output-requirement-field:has(> :is(input[name="packageLabel"],textarea[name="originalText"])) > :is(span,small:not(.output-requirement-error))',
+        '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > footer.output-requirement-form-footer > p',
+        documentStateCopySelector,
+        documentBodyCopySelector,
       ]],
       ['.application-loading[role="status"]', [":scope > div > :is(b,p)"]],
       ["forma-document-generations", [
@@ -398,16 +711,116 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
           && (ownerSelector !== '.application-loading[role="status"]' || surface.parentElement === main));
       if (surfaces.length !== 1) continue;
       const surface = surfaces[0]!;
-      const elements = new Set(selectors.flatMap(selector => [...surface.querySelectorAll<HTMLElement>(selector)]));
+      let libraryStates: HTMLElement[] = [];
+      let librarySearchLabels: HTMLElement[] = [];
+      let documentStates: HTMLElement[] = [];
+      let documentBodies: HTMLElement[] = [];
+      const elements = new Set(selectors.flatMap(selector => {
+        const selected = [...surface.querySelectorAll<HTMLElement>(selector)];
+        if (selector === libraryStateCopySelector) libraryStates = selected;
+        if (selector === librarySearchCopySelector) librarySearchLabels = selected;
+        if (selector === documentStateCopySelector) documentStates = selected;
+        if (selector === documentBodyCopySelector) documentBodies = selected;
+        return selected;
+      }));
       for (const element of elements) {
         if (!element.isConnected || element.closest(ownerSelector) !== surface
           || element.closest("[hidden], [inert], [aria-hidden='true']")) continue;
+        const documentBody = documentBodies.includes(element);
+        const documentState = documentStates.includes(element) || documentBody;
+        if (documentState) {
+          const panels = [...surface.querySelectorAll<HTMLElement>(documentStatePanelSelector)];
+          const panel = panels[0];
+          if (panels.length !== 1 || !panel?.isConnected || element.closest("#document-context-panel") !== panel) continue;
+          const hosts = [...panel.querySelectorAll<DocumentContextHost>(documentStateHostsSelector)];
+          const host = element.closest<DocumentContextHost>("forma-context-block"), blockId = host?.block?.id;
+          if (!host?.isConnected || host.surface !== "document" || typeof blockId !== "string" || !blockId.trim()
+            || !hosts.includes(host) || hosts.filter(candidate => candidate.block?.id === blockId).length !== 1) continue;
+          const decisions = [...host.querySelectorAll<HTMLElement>(":scope > section.context-decision")];
+          const decision = decisions[0];
+          if (decisions.length !== 1 || !decision?.isConnected || decision.dataset.controlsOpen !== "false") continue;
+          const wrappers = [...decision.querySelectorAll<HTMLElement>(':scope > div[id^="context-controls-"]')];
+          const wrapper = wrappers[0];
+          if (wrappers.length !== 1 || !wrapper?.isConnected || wrapper.id !== `context-controls-document-${blockId}`) continue;
+          const roots = [...wrapper.querySelectorAll<HTMLElement>(`:scope > ${documentSummarySelector}`)];
+          const root = roots[0], card = element.closest<HTMLElement>(documentSummarySelector);
+          if (roots.length !== 1 || !root?.isConnected || root.dataset.blockId !== blockId || !card?.isConnected) continue;
+          // Peers and recursive authored summaries each own their own copy.
+          // Only the renderer's exact child chain can reach this bound root.
+          let ancestor: HTMLElement | null = card;
+          while (ancestor && ancestor !== root) {
+            const item: HTMLElement | null = ancestor.parentElement, children: HTMLElement | null | undefined = item?.parentElement;
+            const body: HTMLElement | null | undefined = children?.parentElement, parent: HTMLElement | null | undefined = body?.parentElement;
+            if (!item?.matches?.("li") || !children?.matches?.("ol.context-authored-children")
+              || !body?.matches?.("div.block-body") || !parent?.matches?.(documentSummarySelector)) {
+              ancestor = null; break;
+            }
+            ancestor = parent;
+          }
+          if (ancestor !== root) continue;
+          const copies = [...card.querySelectorAll<HTMLElement>(`:scope${documentBody ? documentBodyPath : documentStatusPath}`)];
+          if (copies.length !== 1 || copies[0] !== element) continue;
+        }
+        const libraryState = libraryStates.includes(element);
+        if (libraryState) {
+          const editors = [...surface.querySelectorAll<HTMLElement>(libraryStateEditorSelector)];
+          if (libraryStates.length !== 1 || editors.length !== 1 || !editors[0]?.isConnected
+            || element.closest("forma-library-block-editor") !== editors[0]) continue;
+        }
+        const librarySearchLabel = librarySearchLabels.includes(element);
+        if (librarySearchLabel) {
+          const forms = [...surface.querySelectorAll<HTMLFormElement>(librarySearchFormSelector)];
+          const form = forms[0], box = element.parentElement, search = box?.parentElement;
+          if (librarySearchLabels.length !== 1 || !(element instanceof HTMLLabelElement)
+            || forms.length !== 1 || !(form instanceof HTMLFormElement) || !form.isConnected
+            || !box?.isConnected || !search?.isConnected || search.parentElement !== form) continue;
+          const searches = [...form.querySelectorAll<HTMLElement>(":scope > forma-ui-search.searchbox")];
+          const boxes = [...search.querySelectorAll<HTMLElement>(":scope > div.ui-search")];
+          const labels = [...box.querySelectorAll<HTMLLabelElement>(":scope > label")];
+          const fields = [...box.querySelectorAll<HTMLInputElement>(':scope > div.ui-search-control > input[type="search"]')];
+          const field = fields[0];
+          if (searches.length !== 1 || searches[0] !== search || boxes.length !== 1 || boxes[0] !== box
+            || labels.length !== 1 || labels[0] !== element || fields.length !== 1
+            || !(field instanceof HTMLInputElement) || !field.isConnected || field.type !== "search"
+            || !field.id || element.control !== field || element.htmlFor !== field.id
+            || element.form !== form || field.form !== form
+            || field.labels?.length !== 1 || field.labels[0] !== element) continue;
+          const ids = [...document.querySelectorAll(`[id="${CSS.escape(field.id)}"]`)];
+          if (ids.length !== 1 || ids[0] !== field) continue;
+        }
+        const libraryWeightLabel = ownerSelector === "forma-library" && element.tagName === "LABEL"
+          && element.matches(libraryWeightLabelCopySelector);
         if (ownerSelector === "forma-workspace-settings" && element.tagName === "LABEL") {
           const field = element.querySelector<HTMLInputElement>(':scope > input[name="name"]');
           if (!(element instanceof HTMLLabelElement) || !field || element.control !== field
             || field.form !== element.parentElement) continue;
         }
-        if (ownerSelector === "forma-library" && ["LABEL", "SMALL"].includes(element.tagName)) {
+        if (ownerSelector === "forma-library" && (element.tagName === "OUTPUT" || libraryWeightLabel)) {
+          const forms = [...surface.querySelectorAll<HTMLFormElement>(libraryWeightFormSelector)];
+          const form = forms[0], label = libraryWeightLabel ? element : element.parentElement;
+          if (forms.length !== 1 || !(form instanceof HTMLFormElement)
+            || !(label instanceof HTMLLabelElement) || !label.isConnected) continue;
+          const labels = [...form.querySelectorAll<HTMLLabelElement>(libraryWeightLabelSelector)];
+          const outputs = [...label.querySelectorAll<HTMLOutputElement>(":scope > output")];
+          const fields = [...label.querySelectorAll<HTMLInputElement>(':scope > input[type="range"]')];
+          const field = fields[0], output = outputs[0];
+          // The visible label names the current range; OUTPUT refers to that
+          // same range while retaining its separately measured copy box.
+          if (labels.length !== 1 || labels[0] !== label || outputs.length !== 1
+            || !(output instanceof HTMLOutputElement) || !output.isConnected || output.form !== form
+            || !libraryWeightLabel && output !== element
+            || fields.length !== 1 || !(field instanceof HTMLInputElement) || !field.isConnected
+            || field.form !== form || field.previousElementSibling !== output
+            || !field.id || label.htmlFor !== field.id || label.control !== field
+            || field.labels?.length !== 1 || field.labels[0] !== label
+            || output.htmlFor.length !== 1 || output.htmlFor[0] !== field.id
+            || field.min !== "0" || field.max !== "1" || field.step !== ".05") continue;
+          const value = Number(field.value);
+          if (!field.value.trim() || !Number.isFinite(value) || value < 0 || value > 1
+            || output.value !== `${Math.round(value * 100)}%`
+            || output.textContent?.trim() !== output.value) continue;
+        }
+        if (ownerSelector === "forma-library" && ["LABEL", "SMALL"].includes(element.tagName) && !libraryWeightLabel && !librarySearchLabel) {
           const rich = element.parentElement;
           const field = rich?.querySelector<HTMLTextAreaElement>(":scope > textarea.ui-rich-text-input");
           const label = rich?.querySelector<HTMLLabelElement>(":scope > label.ui-rich-text-label");
@@ -434,7 +847,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
             || field.form !== form || output.form !== form || field.previousElementSibling !== output
             || element !== label && element !== output) continue;
         }
-        if (ownerSelector === "forma-workspace" && ["SPAN", "SMALL"].includes(element.tagName)) {
+        if (ownerSelector === "forma-workspace" && !documentState && ["SPAN", "SMALL"].includes(element.tagName)) {
           const label = element.parentElement;
           const field = label?.querySelector<HTMLInputElement | HTMLTextAreaElement>(':scope > input[name="packageLabel"], :scope > textarea[name="originalText"]');
           if (!(label instanceof HTMLLabelElement) || !field?.id || label.control !== field
@@ -443,16 +856,23 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
             || !field.getAttribute("aria-describedby")?.split(/\s+/u).includes(element.id))) continue;
         }
         // The Document editor, associated Library field/empty-state regions and
-        // native Layers weight label/output and full Image-history header copy
+        // current Library weight output, native Layers weight label/output and full Image-history header copy
         // carry box-level copy contracts, including their intentional whitespace.
         // Other admitted copy keeps text fragments.
-        const wholeRegion = ownerSelector === "forma-workspace"
-          || ownerSelector === "forma-library" && (["LABEL", "SMALL"].includes(element.tagName)
-            || element.tagName === "P" && element.parentElement?.matches(".family-empty[data-forma-empty-state]"))
+        const wholeRegion = ownerSelector === "forma-workspace" && !documentState
+          || ownerSelector === "forma-library" && (["LABEL", "SMALL"].includes(element.tagName) && !libraryWeightLabel && !librarySearchLabel
+            || element.tagName === "OUTPUT"
+            || element.tagName === "P" && element.parentElement?.matches(".family-empty[data-forma-empty-state]")
+            || element.tagName === "DIV" && element.matches(libraryOutputCopySelector))
           || ownerSelector === "forma-reality-layers" && ["LABEL", "OUTPUT"].includes(element.tagName)
           || ownerSelector === "forma-document-generations";
-        const walker = wholeRegion ? null : document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-        for (let text: Node | null = wholeRegion ? element : walker!.nextNode(); text; text = walker?.nextNode() ?? null) {
+        // Search/weight labels, editor metadata and closed-card authored copy have direct
+        // fragment contracts. Never include icon descendants or the whole row.
+        const directText = libraryWeightLabel || librarySearchLabel || libraryState || documentState ? [...element.childNodes].filter(node => node.nodeType === 3) : null;
+        const walker = wholeRegion || directText ? null : document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+        let directIndex = 0;
+        for (let text: Node | null = wholeRegion ? element : directText?.[directIndex++] ?? walker?.nextNode() ?? null;
+          text; text = directText ? directText[directIndex++] ?? null : walker?.nextNode() ?? null) {
           const parent = wholeRegion ? element : text.parentElement;
           if (!text.textContent?.trim() || !parent
             || parent.closest("[hidden], [inert], [aria-hidden='true'], script, style, svg, .forma-icon")
@@ -504,14 +924,30 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     return obstacles;
   }
 
-  #positionLauncher() {
+  #positionLauncher(allowReservation = true) {
+    if (this.open) {
+      if (this.dataset.browseSlot === "true") {
+        this.#clearBrowseLauncher();
+        this.#positionInBrowseSlot();
+      }
+      if (this.dataset.browseLane === "true") this.#positionInBrowseLane();
+      return;
+    }
     const launcher = this.querySelector<HTMLButtonElement>(".forma-assistant-launcher");
     this.#clearStudioLauncher();
+    this.#clearBrowseLauncher();
     // Following the same reserved cell is layout reflow, even under its own
     // focus/hover. No collision search or lane change runs in that cell.
-    if (launcher && !this.open && this.#positionInStudioSlot()) return;
+    if (launcher && (this.#positionInStudioSlot() || this.#positionInBrowseSlot(launcher))) {
+      const reserved = this.dataset.browseLane === "true";
+      this.#clearBrowseLane();
+      this.#browseLaneRefusal = null;
+      if (reserved) this.#positionLauncher(false);
+      return;
+    }
+    const reserved = this.dataset.browseLane === "true" && this.#positionInBrowseLane(launcher ?? undefined);
     const focused = document.activeElement;
-    if (!launcher || this.open || launcher.contains(focused)) return;
+    if (!launcher || this.open || launcher.contains(focused) && !reserved) return;
     const hovered = launcher.matches(":hover");
 
     let exactFocusPaint = !focused?.shadowRoot?.activeElement;
@@ -541,6 +977,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
           || ownStyle.boxShadow && ownStyle.boxShadow !== "none"
           || unboundedFocusPaint(ownStyle))) exactFocusPaint = false;
         left -= outline; top -= outline; right += outline; bottom += outline;
+        const focusEnvelope = control === focused ? { left, top, right, bottom } : null;
         const topLayer = paint.closest(":modal, :popover-open");
         for (let ancestor = paint === topLayer ? null : paint.parentElement; ancestor;
           ancestor = ancestor === topLayer ? null : ancestor.parentElement) {
@@ -565,7 +1002,11 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
             top = Math.max(top, start); bottom = Math.min(bottom, start + ancestor.clientHeight);
           }
         }
-        return { element: control, paint, box: { left, top, right, bottom, width: right - left, height: bottom - top } };
+        const completeFocus = Boolean(focusEnvelope && left === focusEnvelope.left && top === focusEnvelope.top
+          && right === focusEnvelope.right && bottom === focusEnvelope.bottom
+          && left >= 0 && top >= 0 && right <= innerWidth && bottom <= innerHeight);
+        return { element: control, paint, focusEnvelope, completeFocus,
+          box: { left, top, right, bottom, width: right - left, height: bottom - top } };
       })
       .filter(({ paint, box }) => box.width > 0 && box.height > 0 && box.bottom > 0
         && box.top < innerHeight && box.right > 0 && box.left < innerWidth
@@ -579,7 +1020,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     // Hover stays stationary unless the launcher obstructs exactly measured
     // current page focus. This includes a compact fallback retained after a
     // popover closes; a settled position does not keep moving.
-    if (hovered && (!exactFocusPaint || !intersections(launcher.getBoundingClientRect())
+    if (!reserved && hovered && (!exactFocusPaint || !intersections(launcher.getBoundingClientRect())
       .some(({ element }) => element === focused))) return;
     // Placement uses both lists; only native controls above authorize a
     // hovered move or establish exact current-focus paint.
@@ -587,6 +1028,23 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     const placementIntersections = (box: Pick<DOMRect, "left" | "top" | "right" | "bottom">) =>
       placementObstacles.filter(({ box: obstacle }) => box.left < obstacle.right && box.right > obstacle.left
         && box.top < obstacle.bottom && box.bottom > obstacle.top);
+    if (reserved) {
+      // Native Tab may leave page focus at a viewport edge. Keep the real gutter
+      // when its complete, untrimmed focus envelope is clear of the inline lane;
+      // restoring main's width here would reflow content during keyboard travel.
+      const pageFocus = focused && focused !== document.body && focused !== document.documentElement
+        && !this.contains(focused);
+      const launcherBox = launcher.getBoundingClientRect();
+      const currentFocus = controls.find(control => control.element === focused);
+      const inlineClearFocus = currentFocus?.focusEnvelope
+        && (currentFocus.focusEnvelope.right <= launcherBox.left || currentFocus.focusEnvelope.left >= launcherBox.right);
+      if (placementIntersections(launcherBox).length
+        || pageFocus && (!exactFocusPaint || !(currentFocus?.completeFocus || inlineClearFocus))) {
+        this.#refuseBrowseLane();
+        this.#positionLauncher(false);
+      }
+      return;
+    }
     delete this.dataset.compactLauncher;
     delete this.dataset.tightLauncher;
     this.style.setProperty("--forma-assistant-obstacle-offset", "0px");
@@ -604,6 +1062,12 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
 
     this.style.setProperty("--forma-assistant-obstacle-offset", "0px");
     this.dataset.compactLauncher = "true";
+    // Reserve real browse space before accepting a temporary compact gap.
+    // Native Tab can scroll different controls through that floating gap.
+    if (allowReservation && exactFocusPaint && this.#positionInBrowseLane(launcher)) {
+      this.#positionLauncher(false);
+      return;
+    }
     if (!placementIntersections(launcher.getBoundingClientRect()).length) return;
 
     for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -631,12 +1095,12 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
           return;
         }
       }
-      if (box.top - (next - offset) < 8) return;
+      if (box.top - (next - offset) < 8) break;
       this.style.setProperty("--forma-assistant-obstacle-offset", `${next}px`);
     }
 
-    // The last compact write can exhaust the pass budget on another obstacle.
-    // Complete only that tail from the same sampled owners, in the same lane.
+    // An upward boundary or the pass budget can leave a lower gap unexplored.
+    // Complete the search from the same sampled owners, in the same lane.
     if (!exactFocusPaint) return;
     const box = launcher.getBoundingClientRect();
     const finiteBox = (value: Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">) =>

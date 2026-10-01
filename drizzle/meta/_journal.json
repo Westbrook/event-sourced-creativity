@@ -169,6 +169,76 @@
       "when": 1788192000000,
       "tag": "0022_output_model3d",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1788729041955,
+      "tag": "0023_experience_release_heads",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1788730101318,
+      "tag": "0025_memory_live_base",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1788730143428,
+      "tag": "0026_memory_live_conversation",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "6",
+      "when": 1788730175657,
+      "tag": "0027_memory_native_origins",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1788730227871,
+      "tag": "0028_memory_document_profile",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1788744860180,
+      "tag": "0029_image_recovery_scan",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1788746381757,
+      "tag": "0030_experience_maintenance_adoption",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1788750660772,
+      "tag": "0031_image_recovery_terminal_scan",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1788774976000,
+      "tag": "0032_memory_structured_conversation_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1788790887000,
+      "tag": "0033_memory_structured_answer_provenance",
+      "breakpoints": true
     }
   ]
 }

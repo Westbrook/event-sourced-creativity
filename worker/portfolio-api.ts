@@ -1,3 +1,6 @@
+import { isMaintenanceDecisionId } from "../src/experiences/maintenance-adoption-contract.ts";
+import { handleExperienceMaintenanceDeliveryTransition, handleExperienceDeliveryTransition, readExperienceReleaseJson } from "./experience-release-api.ts";
+import { isExperienceDecisionId } from "../src/experiences/release-contract.ts";
 import { createDeliveryWithReceipt } from "./product-delivery-create.ts";
 import { APPLICATIONS } from "../src/platform/applications.ts";
 import type { FormaCapability } from "../src/platform/capabilities.ts";
@@ -61,7 +64,14 @@ async function validateDeliveryState(env:WorkerEnv,actor:PilotUser,status:Delive
 async function mutateDelivery(request: Request, env: WorkerEnv, actor: PilotUser) {
   if (!hasCapability(actor, "product.delivery.manage")) return Response.json({ error: "access_denied" }, { status: 403, headers: privateHeaders });
   let body: Record<string, unknown>;
-  try { body = await request.json() as Record<string, unknown>; } catch { return Response.json({ error: "invalid_delivery_decision" }, { status: 400 }); }
+  try { body = await readExperienceReleaseJson(request) as Record<string, unknown>; } catch (error) {
+    return Response.json({ error: error instanceof Error && error.message === "experience_release_request_limit" ? error.message : "invalid_delivery_decision" },
+      { status: error instanceof Error && error.message === "experience_release_request_limit" ? 413 : 400 });
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return Response.json({ error: "invalid_delivery_decision" }, { status: 400 });
+  // This namespace is never a legacy milestone, even when its binding is missing or damaged.
+  if (request.method === "PATCH" && isMaintenanceDecisionId(typeof body.decisionId === "string" ? body.decisionId.trim() : body.decisionId)) return handleExperienceMaintenanceDeliveryTransition(request, env, actor, body);
+  if (request.method === "PATCH" && isExperienceDecisionId(typeof body.decisionId === "string" ? body.decisionId.trim() : body.decisionId)) return handleExperienceDeliveryTransition(request, env, actor, body);
   const refuseCreate = (error: string, status: number) => Response.json({ error,
     ...(request.method === "POST" && Object.hasOwn(body, "requestId") ? { createDisposition: "rejected_before_write" } : {}) }, { status });
   const title = typeof body.title === "string" ? body.title.trim() : "";

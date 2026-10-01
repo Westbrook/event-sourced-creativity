@@ -15,6 +15,51 @@ const currentDelivery = f => [...f.renderer.instances.values()].map(row => row.i
 const canonical = f => ({ decisions: f.decisions(), events: f.creationEvents(), receipts: f.storeHost.worker.sqlite
   .prepare("SELECT * FROM event_client_receipts WHERE stream_id='platform:product-delivery' ORDER BY client_event_id").all() });
 
+// Observe registration/removal around the unchanged actual public lifecycles.
+// Retain the exact callbacks, not names, a larger allowed count or replacements.
+function observeHistoryOwners(f, classes, restore) {
+  const registrations = new Map();
+  const current = () => new Set(f.listeners.get("popstate") ?? []);
+  for (const Class of classes) for (const method of ["connectedCallback", "disconnectedCallback"]) {
+    const original = Object.getOwnPropertyDescriptor(Class.prototype, method);
+    assert.equal(typeof original?.value, "function");
+    const observed = function (...args) {
+      const before = current(), result = original.value.apply(this, args), after = current();
+      if (method === "connectedCallback") {
+        assert.equal(registrations.has(this), false, "one current history registration per actual owner");
+        assert.deepEqual([...before].filter(callback => !after.has(callback)), []);
+        const added = [...after].filter(callback => !before.has(callback));
+        assert.equal(added.length, 1, "this actual lifecycle adds its one history callback");
+        registrations.set(this, added[0]);
+      } else {
+        const callback = registrations.get(this);
+        assert.equal(typeof callback, "function", "only an observed connected owner can retire");
+        assert.deepEqual([...before].filter(item => !after.has(item)), [callback], "retirement removes the exact owned callback");
+        assert.deepEqual([...after].filter(item => !before.has(item)), []);
+        registrations.delete(this);
+      }
+      return result;
+    };
+    Object.defineProperty(Class.prototype, method, { ...original, value: observed });
+    restore.push(() => {
+      assert.equal(Object.getOwnPropertyDescriptor(Class.prototype, method)?.value, observed);
+      Object.defineProperty(Class.prototype, method, original);
+    });
+  }
+  f.assertHistoryOwners = () => {
+    const delivery = currentDelivery(f), review = f.renderer.component("forma-experience-review");
+    const expected = [f.host, ...(delivery ? [delivery, review] : [])];
+    assert.ok(expected.every(owner => owner?.isConnected), "every expected history owner is connected");
+    if (delivery) assert.equal(review.parentElement, delivery, "the history-owning Review belongs to this exact Delivery");
+    assert.equal(registrations.size, expected.length);
+    assert.ok(expected.every(owner => registrations.has(owner)), "no predecessor or unrelated owner is registered");
+    const callbacks = expected.map(owner => registrations.get(owner));
+    assert.equal(new Set(callbacks).size, callbacks.length);
+    assert.deepEqual(current(), new Set(callbacks), "the native port retains only these exact current callbacks");
+    return callbacks;
+  };
+}
+
 // Adapt the existing nativeCreateForms lifetime port only to a nested current
 // Delivery owner. Capture the exact TemplateResult passed to RendererPort.value;
 // never replace render(), #retire, #create, session, receipt, or Store behavior.
@@ -74,6 +119,7 @@ function nativeCreateForms(f) {
     return form;
   };
   f.draw = () => {
+    if (f.flushReviewUpdate?.()) return f.renderer.markup;
     ports.bindFixture(f); f.requested = false; emitted.clear(); capturing = true;
     let markup;
     try { markup = f.renderer.draw(f.host); } finally { capturing = false; }
@@ -114,23 +160,32 @@ function nativeCreateForms(f) {
   return f;
 }
 
-async function platformDeliveryFixture(t) {
-  const cleanup = [], fixtureTest = { after(callback) { cleanup.push(callback); } };
-  const f = await productDeliveryFixture(fixtureTest);
-  let historyBefore, titleBefore, oldModules = [], globalsCaptured = false;
+async function platformDeliveryFixture(t, { maintenanceAdoption = false } = {}) {
+  const cleanup = [], lifecycleRestores = [], fixtureTest = { after(callback) { cleanup.push(callback); } };
+  let f, historyBefore, titleBefore, oldModules = [], globalsCaptured = false;
+  // Register before awaiting the nested fixture: a failed new child/read setup
+  // must still close the real DB and restore every earlier installed port.
   t.after(async () => {
-    ports.bindFixture(f);
-    for (const { instance } of f.renderer.instances.values()) if (instance.isConnected) { instance.isConnected = false; instance.disconnectedCallback(); }
-    try { for (const callback of cleanup) await callback(); }
-    finally {
-      if (globalsCaptured) {
-        if (historyBefore) Object.defineProperty(globalThis, "history", historyBefore); else delete globalThis.history;
-        if (titleBefore) Object.defineProperty(ports.documentPort, "title", titleBefore); else delete ports.documentPort.title;
+    const failures = [], attempt = async action => { try { await action(); } catch (error) { failures.push(error); } };
+    if (f) {
+      ports.bindFixture(f);
+      for (const { instance } of f.renderer.instances.values()) if (instance.isConnected) {
+        await attempt(() => { instance.isConnected = false; instance.disconnectedCallback(); });
       }
-      for (const [key, had, value] of oldModules) { if (had) ports.moduleCache.set(key, value); else ports.moduleCache.delete(key); }
     }
+    for (const callback of cleanup) await attempt(callback);
+    for (const restore of lifecycleRestores.reverse()) await attempt(restore);
+    if (globalsCaptured) {
+      await attempt(() => { if (historyBefore) Object.defineProperty(globalThis, "history", historyBefore); else delete globalThis.history; });
+      await attempt(() => { if (titleBefore) Object.defineProperty(ports.documentPort, "title", titleBefore); else delete ports.documentPort.title; });
+    }
+    for (const [key, had, value] of oldModules) await attempt(() => { if (had) ports.moduleCache.set(key, value); else ports.moduleCache.delete(key); });
+    if (failures.length) throw new AggregateError(failures, "Full Product fixture teardown failed");
   });
-  const isolated = f.host; isolated.isConnected = false; isolated.disconnectedCallback();
+  f = await productDeliveryFixture(fixtureTest, { maintenanceAdoption });
+  const isolated = f.host;
+  for (const { instance } of f.renderer.instances.values()) if (instance.isConnected) { instance.isConnected = false; instance.disconnectedCallback(); }
+  isolated.isConnected = false; isolated.disconnectedCallback();
   // Existing fixture performs its initial actual read before we mount the full
   // hierarchy. No draft or POST exists at this setup transition.
   assert.equal(posts(f).length, 0); assert.equal(f.decisions().length, 0);
@@ -168,6 +223,7 @@ async function platformDeliveryFixture(t) {
     return response;
   };
   const { FormaProductDelivery } = await ports.loadActual("src/apps/product/delivery.ts");
+  const { FormaExperienceReview } = await ports.loadActual("src/apps/product/experience-review.ts");
   const { FormaProductApplication } = await ports.loadActual("src/apps/product/entry.ts");
   const { FormaProductInsights } = await ports.loadActual("src/apps/product/insights.ts");
   const { FormaUiCluster } = await ports.loadActual("src/components/design-system/layout.ts");
@@ -179,7 +235,7 @@ async function platformDeliveryFixture(t) {
   f.renderer = new ports.RendererPort(f, { "forma-platform-assistant": FormaPlatformAssistant,
     "forma-assistant-panel": FormaAssistantPanel, "forma-product-delivery": FormaProductDelivery,
     "forma-product-application": FormaProductApplication, "forma-product-insights": FormaProductInsights,
-    "forma-ui-cluster": FormaUiCluster,
+    "forma-ui-cluster": FormaUiCluster, "forma-experience-review": FormaExperienceReview,
     "forma-ui-workspace-switcher": navigation.FormaUiWorkspaceSwitcher,
     "forma-ui-audience-navigation": navigation.FormaUiAudienceNavigation, "forma-ui-language-picker": language.FormaUiLanguagePicker });
   f.host = new FormaPlatformShell(); f.host.tag = "forma-platform-shell"; f.host.attributes = {}; f.host.isConnected = true;
@@ -187,7 +243,7 @@ async function platformDeliveryFixture(t) {
   f.tree = () => fullPageTree(f);
   // Reuse B1's finite microtask/update scheduling. No deliberate module hold or
   // changed session is introduced to manufacture a loading interval.
-  f.tick = async () => { await Promise.resolve(); f.draw(); return true; };
+  f.tick = async () => { await Promise.resolve(); if (!maintenanceAdoption || f.requested) f.draw(); return true; };
   f.flush = async () => { for (let step = 0; step < 8; step++) { await Promise.resolve(); if (f.requested) f.draw(); }
     await new Promise(setImmediate); if (f.requested) f.draw(); };
   f.settle = async () => {
@@ -197,7 +253,11 @@ async function platformDeliveryFixture(t) {
         : Boolean(currentDelivery(f) && f.renderer.ownNodes(currentDelivery(f), "form").some(node => String(node.handlers.submit).includes("#create")))); }, "actual full Platform route/report is ready");
     await f.flush();
   };
+  observeHistoryOwners(f, [FormaPlatformShell, FormaProductDelivery, FormaExperienceReview], lifecycleRestores);
   f.host.connectedCallback(); f.draw(); await f.settle();
+  await untilScene(() => {
+    f.draw(); return f.reviewReady();
+  }, maintenanceAdoption ? "the actual nested review shows its one code-owned candidate" : "the actual nested review certifies the current default empty registry");
   const owner = currentDelivery(f);
   assert.equal(f.host instanceof FormaPlatformShell, true); assert.equal(owner instanceof FormaProductDelivery, true);
   assert.equal(owner.parentElement instanceof FormaProductApplication, true); assert.equal(owner.parentElement.parentElement === f.host, true);
@@ -211,6 +271,7 @@ async function platformDeliveryFixture(t) {
   assert.equal(f.calls.some(call => call.url.includes("/api/platform/assistant")), false, "closed actual assistant has not made a read or command");
   assert.equal(f.platformSession.get() === session, true); assert.equal(f.calls.filter(call => call.url === "/api/session?audience=product").length, 1);
   assert.equal(f.calls.filter(call => call.method !== "GET").length, 0); assert.equal(f.formResets, 0);
+  f.assertHistoryOwners();
   return f;
 }
 
@@ -244,10 +305,12 @@ async function historyDelivery(f, destination, { skip = false } = {}) {
   history.pushState({}, "", next.pathname + next.search + next.hash);
   assert.equal(f.store.route.get(), storeRoute, "native location did not mutate the unrelated Creator Store route");
   if (main) focus(f, main.port);
+  const callbacks = f.assertHistoryOwners();
   const popstate = emit(f, "popstate", { state: null });
-  assert.equal(popstate, owner ? 2 : 1, "the full Shell and current Delivery own the actual registered history listeners");
+  assert.equal(popstate, callbacks.length, "deliver history once to each exact current Shell, Delivery and Review callback");
   const hashchange = old.hash === next.hash ? 0 : emit(f, "hashchange", { oldURL: old.href, newURL: next.href });
   await f.settle();
+  f.assertHistoryOwners();
   assert.equal(f.nativeHistoryLocation.pathname + f.nativeHistoryLocation.search + f.nativeHistoryLocation.hash, next.pathname + next.search + next.hash);
   return { from: old.pathname + old.search + old.hash, to: next.pathname + next.search + next.hash, popstate, hashchange,
     skipHref: skip ? "#main-content" : null, sameDelivery: currentDelivery(f) === owner,

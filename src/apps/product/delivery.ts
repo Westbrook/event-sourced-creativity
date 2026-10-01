@@ -9,6 +9,10 @@ import { APPLICATIONS } from "../../platform/applications";
 import { DELIVERY_DECISION_STATUSES, deliveryNeedsReleaseAuthority, deliveryTransitionAllowed } from "../../platform/delivery-lifecycle";
 import { deliveryCreateIntentDigest, readDeliveryCreateReceipt, type DeliveryCreateIntent } from "../../platform/delivery-create-receipt";
 import { platformSession } from "../../platform/session-controller";
+import { isExperienceDecisionId, validExperienceDecisionId } from "../../experiences/release-contract";
+import { isMaintenanceDecisionId, validMaintenanceDecisionId } from "../../experiences/maintenance-adoption-contract";
+import "./experience-review";
+import type { ExperienceOperationSavedDetail, FormaExperienceReview } from "./experience-review";
 
 type DeliveryNotice = { key: string; fallback: string; fallbackKey?: string; values?: Record<string, string | number>; afterRefresh?: DeliveryNotice };
 
@@ -27,7 +31,15 @@ export class FormaProductDelivery extends FormaRoleDashboard {
   #createIntent: { requestId: string; intent: DeliveryCreateIntent; originalFields: string;
     actorUserId: string; scope: string; form: HTMLFormElement | null; uncertain: boolean; digest?: string } | null = null;
   #unsubscribe?: () => void;
+  #experienceReview() { return this.querySelector<FormaExperienceReview>("forma-experience-review"); }
+  #experienceSaved = (event: CustomEvent<ExperienceOperationSavedDetail>) => {
+    if (event.target !== event.currentTarget || event.currentTarget !== this.#experienceReview()) return;
+    const completion = this.refresh().then(() => this.updateComplete);
+    void completion.catch(() => { /* A missing or throwing recipient cannot orphan the existing refresh. */ });
+    if (typeof event.detail?.registerDeliveryRefresh === "function") event.detail.registerDeliveryRefresh(completion);
+  };
   #retire = () => {
+    this.#experienceReview()?.retireAccess(false);
     this.#lifetime += 1; this.#save = null; this.#saving = false; this.#createIntent = null;
     this.#notice = null; this.#failed = false; this.#editingDecisionId = ""; this.#noticeDecisionId = "";
     this.report = null; this.issue = ""; this.reportReadOutcome = "unavailable"; this.requestUpdate();
@@ -88,18 +100,20 @@ export class FormaProductDelivery extends FormaRoleDashboard {
 
   captureCommandDeparture(): Omit<CommandDeparture, "element"> & { readonly element: HTMLElement } {
     const lifetime = this.#lifetime, scope = this.#scope(), session = platformSession.get(), forms = this.#departureForms();
+    const review = this.#experienceReview(), reviewDeparture = review?.reviewContext.available ? review.captureCommandDeparture() : undefined;
     let retired = false;
     const current = () => {
       if (retired) return false;
       const now = this.#departureForms();
       if (!this.isConnected || lifetime !== this.#lifetime || scope !== this.#scope()
-        || session !== platformSession.get() || now.create !== forms.create
+        || session !== platformSession.get() || review !== this.#experienceReview()
+        || reviewDeparture && !reviewDeparture.current() || now.create !== forms.create
         || now.decisions.length !== forms.decisions.length
         || forms.decisions.some(form => !form.isConnected
           || this.#decisionForm(form.getAttribute("data-delivery-decision-id")!) !== form)) retired = true;
       return !retired;
     };
-    return { element: this, current, blocked: () => this.#departureBlocked(),
+    return { element: this, current, blocked: () => this.#departureBlocked() || reviewDeparture?.blocked() === true,
       reason: () => "next.lifecycle.currentWorkOpen" };
   }
 
@@ -109,6 +123,7 @@ export class FormaProductDelivery extends FormaRoleDashboard {
   }
 
   protected override reportDenied() {
+    this.#experienceReview()?.retireAccess();
     super.reportDenied();
     // Revoke presentation and in-flight publication, not the identity of a
     // dispatched original. Never reconnect its former private draft form.
@@ -285,6 +300,7 @@ export class FormaProductDelivery extends FormaRoleDashboard {
   }
 
   #currentDecision(form: HTMLFormElement, decisionId: string) {
+    if (isExperienceDecisionId(decisionId) || isMaintenanceDecisionId(decisionId)) return null;
     if (!this.#scope() || !this.isConnected || !form.isConnected || !this.contains(form)
       || form.getAttribute("data-delivery-decision-id") !== decisionId
       || this.reportReadOutcome !== "ready" || this.issue
@@ -400,9 +416,18 @@ export class FormaProductDelivery extends FormaRoleDashboard {
     const decision = this.report?.decisions?.find(candidate => candidate.decisionId === decisionId);
     const canManage = platformSession.get()?.capabilities.includes("product.delivery.manage") ?? false;
     if (!this.#scope() || this.issue || !this.isConnected || !invoker?.isConnected || !this.contains(invoker)
-      || !decision || !canManage || ["approved", "revoked"].includes(decision.status) && this.report?.approvalAuthority !== true) return;
+      || !decision || isExperienceDecisionId(decisionId) || isMaintenanceDecisionId(decisionId) || !canManage || ["approved", "revoked"].includes(decision.status) && this.report?.approvalAuthority !== true) return;
     this.#editingDecisionId = this.#editingDecisionId === decisionId ? "" : decisionId;
     this.requestUpdate();
+  }
+
+  #openExperienceDecision(event: Event, decisionId: string) {
+    const invoker = event.currentTarget;
+    if (!(invoker instanceof HTMLElement) || !invoker.isConnected || !this.contains(invoker) || !this.#scope()
+      || !this.report || this.issue || this.reportReadOutcome !== "ready"
+      || !platformSession.get()?.capabilities.includes("product.delivery.manage")
+      || !(validExperienceDecisionId(decisionId) || validMaintenanceDecisionId(decisionId)) || !this.report.decisions?.some(row => row.decisionId === decisionId)) return;
+    void this.#experienceReview()?.openDecision(decisionId);
   }
 
   #decisionNames(decisions: readonly DeliveryDecision[]) {
@@ -419,7 +444,9 @@ export class FormaProductDelivery extends FormaRoleDashboard {
     ownerNames: ReturnType<typeof qualifyDisplayCollisions>, names: ReadonlyMap<string, string>,
     canManage: boolean, approvalAuthority: boolean) {
     const locked = ["approved", "revoked"].includes(decision.status) && !approvalAuthority;
-    const editable = canManage && !locked, editing = editable && this.#editingDecisionId === decision.decisionId;
+    const experience = isExperienceDecisionId(decision.decisionId) || isMaintenanceDecisionId(decision.decisionId);
+    const reviewable = validExperienceDecisionId(decision.decisionId) || validMaintenanceDecisionId(decision.decisionId);
+    const editable = canManage && !locked && !experience, editing = editable && this.#editingDecisionId === decision.decisionId;
     const editForm=this.#decisionForm(decision.decisionId),dirty=editForm?.getAttribute("data-delivery-dirty")==="true";const ownerValue=dirty?String((editForm?.elements.namedItem("ownerUserId") as HTMLSelectElement|null)?.value??""):decision.ownerUserId??"",statusValue=dirty?String((editForm?.elements.namedItem("status") as HTMLSelectElement|null)?.value??""):decision.status;const statuses=DELIVERY_DECISION_STATUSES.filter((status)=>deliveryTransitionAllowed(decision.status,status)&&(approvalAuthority||!deliveryNeedsReleaseAuthority(status))),ownerUnavailable=dirty&&!owners.some(owner=>owner.userId===ownerValue),statusUnavailable=dirty&&!statuses.some(status=>status===statusValue),conflict=dirty&&editForm?.getAttribute("data-delivery-revision")!==decision.updatedAt;
     const identity = encodeURIComponent(decision.decisionId), headingId = "delivery-decision-title-" + identity;
     const formId = "delivery-decision-edit-" + identity, named = "\u2068" + name + "\u2069";
@@ -427,6 +454,8 @@ export class FormaProductDelivery extends FormaRoleDashboard {
       ? this.#saving ? this.i18n.t("delivery.saving", "Saving…") : this.#noticeText() : "";
     return html`<li data-forma-content="primary" data-delivery-decision-id=${decision.decisionId}><article>
       <header><h2 id=${headingId} dir="auto">${name}</h2><span>${this.i18n.t(`shell.${decision.audience}`, decision.audience)}</span>
+        ${reviewable && canManage ? html`<button type="button" class="button secondary compact delivery-editor-toggle"
+          data-experience-decision-review=${decision.decisionId} @click=${(event: Event) => this.#openExperienceDecision(event, decision.decisionId)}>${this.i18n.t("experience.review.Review", "Review")}</button>` : nothing}
         ${editable ? html`<button type="button" class="button secondary compact delivery-editor-toggle"
           data-delivery-editor-toggle=${decision.decisionId} aria-controls=${formId} aria-expanded=${String(editing)}
           @click=${(event: Event) => this.#toggleDecisionEditor(event, decision.decisionId)}>${this.i18n.t(
@@ -455,6 +484,17 @@ export class FormaProductDelivery extends FormaRoleDashboard {
 
 
   override render() {
+    return html`${this.#renderDelivery()}
+      <forma-experience-review .reviewContext=${{
+        available: Boolean(this.report) && this.reportReadOutcome !== "denied"
+          && Boolean(platformSession.get()?.capabilities.includes("product.delivery.manage")),
+        approvalAuthority: this.reportReadOutcome === "ready" && !this.issue && this.report?.approvalAuthority === true,
+        writable: Boolean(this.report) && this.reportReadOutcome === "ready" && !this.issue,
+        owners: this.report?.owners ?? [],
+      }} @experience-proposal-saved=${this.#experienceSaved} @experience-operation-saved=${this.#experienceSaved}></forma-experience-review>`;
+  }
+
+  #renderDelivery() {
     const notice=this.#noticeText();
     const decisions=this.report?.decisions??[];
     const readsDecisions=Array.isArray(this.report?.decisions);
@@ -475,7 +515,7 @@ export class FormaProductDelivery extends FormaRoleDashboard {
     const unavailableCreateDependencies = createSelection.dependencyIds.filter(id => !byId.has(id));
     const createUnavailable = createOwnerUnavailable || unavailableCreateDependencies.length > 0;
     const selected = byId.get(this.#editingDecisionId);
-    if (!selected || !canManage || ["approved", "revoked"].includes(selected.status) && !approvalAuthority) this.#editingDecisionId = "";
+    if (!selected || isExperienceDecisionId(selected.decisionId) || isMaintenanceDecisionId(selected.decisionId) || !canManage || ["approved", "revoked"].includes(selected.status) && !approvalAuthority) this.#editingDecisionId = "";
     if (!byId.has(this.#noticeDecisionId)) this.#noticeDecisionId = "";
     const externalNotice = notice || (this.#saving && this.issue ? this.i18n.t("delivery.saving", "Saving…") : "");
     const decisionPriority:Record<string,number>={failed:0,approval_required:1,running:2,planned:3,passed:4,approved:5,revoked:6,superseded:7};

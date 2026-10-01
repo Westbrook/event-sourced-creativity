@@ -102,11 +102,11 @@ function specificity(selector) {
   return direct.map((value, index) => value + functional[index]);
 }
 
-function winning(selectors, property, viewport, container) {
+function winning(selectors, property, viewport, container, sourceSheets = sheets) {
   const matching = new Set(Array.isArray(selectors) ? selectors : [selectors]);
   let winner;
   let order = 0;
-  for (const sheet of sheets) sheet.root.walkRules((rule) => {
+  for (const sheet of sourceSheets) sheet.root.walkRules((rule) => {
     if (!ruleActive(rule, viewport, container)) return;
     for (const selector of rule.selectors ?? []) {
       if (!matching.has(selector)) continue;
@@ -520,6 +520,83 @@ test("the final responsive cascade keeps Search, Ask, and every collection acces
   assert.doesNotMatch(responsive, /\.project-rail\.expanded \.rail-content\s*\{[^}]*position:\s*absolute/s, "overlaid navigation uses the existing native top layer, not a body-relative float");
   assert.match(projectRail, /popover=\$\{this\.#nativePanel\?"auto":nothing\}/);
   assert.match(projectRail, /popovertarget=\$\{this\.#nativePanel\?this\.#contentId:nothing\}/);
+});
+
+test("the mobile platform language picker overrides the shared cap without changing Creative sizing", async () => {
+  // Parsed source-selector contract, not computed layout, native option/arrow
+  // paint or a browser pass. The full Product header has a separate native QA gate.
+  const [platformShell, pickerSource] = await Promise.all([
+    read("../src/components/forma-platform-shell.ts"),
+    read("../src/components/design-system/language-picker.css"),
+  ]);
+  assert.ok(platformShell.includes('<header class="topbar platform-topbar">'), "the actual platform header matches both competing selectors");
+  assert.ok(shell.includes('<header class="topbar">'), "the actual Creative shell retains its non-platform header");
+  const native = "forma-ui-language-picker > .locale-switcher > select";
+  const shared = ".topbar .locale-switcher > select";
+  const platform = ".platform-topbar .locale-switcher > select";
+  const compactCreative = 'html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar .locale-switcher > select';
+  const ordinaryCreative = 'html:not([data-document-focus]) .application-creative > .topbar > .top-actions .locale-switcher > select';
+  const responsiveSheet = sheets.find(sheet => sheet.name === "responsive-foundation.css");
+  const overrides = [];
+  responsiveSheet.root.walkRules(rule => { if (rule.selectors?.includes(platform)) overrides.push(rule); });
+  assert.equal(overrides.length, 1, "one platform-only selector owns this exception");
+  const override = overrides[0], media = override.parent;
+  assert.deepEqual(override.selectors, [platform], "do not add Creative or general topbars to the exception");
+  assert.equal(media.type, "atrule");
+  assert.equal(media.name, "media");
+  assert.equal(media.params, "(max-width: 47.99rem)");
+  assert.equal(media.parent.type, "root", "no ignored container/supports/layer condition may qualify the exception");
+  assert.ok(override.nodes.every(node => node.type === "decl" || node.type === "comment"), "the source winner must not read declarations through an unassessed nested condition");
+  assert.deepEqual(override.nodes.filter(node => node.type === "decl").map(node => node.prop),
+    ["inline-size", "min-inline-size", "max-inline-size", "flex"], "only intrinsic allocation changes; no physical-size or padding override may bypass this selector contract");
+  const sharedCaps = media.nodes.filter(rule => rule.type === "rule" && rule.selectors?.includes(shared)
+    && rule.nodes.some(node => node.type === "decl" && node.prop === "max-inline-size"));
+  assert.equal(sharedCaps.length, 1);
+  assert.ok(media.nodes.indexOf(sharedCaps[0]) < media.nodes.indexOf(override), "the equally specific platform rule must follow the shared mobile cap");
+  assert.deepEqual(specificity(shared), [0, 2, 1]);
+  assert.deepEqual(specificity(platform), specificity(shared));
+  assert.ok(override.nodes.filter(node => node.type === "decl").every(node => !node.important), "normal source order, not important priority, owns the exception");
+
+  const pickerSheet = { name: "language-picker.css", root: postcss.parse(pickerSource, { from: "language-picker.css" }) };
+  // Component loading order is not inferred from this suite's sheet list. Test
+  // both orders: the header-specific winners must dominate the shared component.
+  for (const sourceSheets of [[pickerSheet, ...sheets], [...sheets, pickerSheet]]) {
+    for (const width of [320, 760, 761, 767.84, 767.85, 768, 1050, 1051]) {
+      const viewport = { name: `${width}px language-picker source boundary`, width, height: 900, pointer: "fine" };
+      const choose = (selectors, property) => winning(selectors, property, viewport, undefined, sourceSheets);
+      const common = ["select", native, shared], actualPlatform = [...common, platform];
+      // The suite models media-query rem at 16px; this is a source boundary,
+      // not a claim about browser zoom or a user's default font settings.
+      if (width <= 47.99 * 16) {
+        for (const [property, value] of [["inline-size", "max-content"], ["min-inline-size", "var(--forma-hit-target)"], ["max-inline-size", "none"], ["flex", "0 0 auto"]]) {
+          const winner = choose(actualPlatform, property);
+          assert.equal(winner?.value, value, `${width}px: the platform control keeps its intrinsic allocation and hit floor`);
+          assert.equal(winner?.selector, platform, `${width}px: ${property} belongs to the platform exception`);
+          assert.equal(winner?.file, "responsive-foundation.css");
+          assert.equal(winner?.important, false);
+        }
+        assert.equal(choose(common, "max-inline-size")?.value, "clamp(3rem, 18vi, 5.5rem)", "the shared non-platform mobile cap remains present");
+        assert.equal(choose(actualPlatform, "padding-inline")?.value, choose(common, "padding-inline")?.value, "the exception does not replace shared native padding");
+      } else {
+        for (const property of ["inline-size", "min-inline-size", "max-inline-size", "flex"])
+          assert.deepEqual(choose(actualPlatform, property), choose(common, property), `${width}px: the platform exception is inactive above its viewport boundary`);
+      }
+      // Ordinary Creative already has stronger intrinsic-size rules. Omitting
+      // them would falsely call the shared mobile cap its actual winner.
+      const creative = [...common, ordinaryCreative, compactCreative];
+      for (const [property, value] of [["inline-size", "max-content"], ["max-inline-size", "none"], ["flex", "0 0 auto"]]) {
+        const winner = choose(creative, property);
+        assert.equal(winner?.value, value, `${width}px: compact Creative retains its existing intrinsic policy`);
+        assert.equal(winner?.selector, width <= 1050 ? ordinaryCreative : compactCreative, "the existing equally specific Creative rules retain their own order");
+      }
+      if (width <= 1050) {
+        assert.equal(choose([...common, ordinaryCreative], "max-inline-size")?.selector, ordinaryCreative);
+        assert.equal(choose([...common, ordinaryCreative], "max-inline-size")?.value, "none", "ordinary Creative retains its stronger viewport exception");
+      } else {
+        assert.deepEqual(choose([...common, ordinaryCreative], "max-inline-size"), choose(common, "max-inline-size"), "the existing Creative viewport exception still ends at 1050px");
+      }
+    }
+  }
 });
 
 test("the collapsed document rail stays coherent across the 760–768px compact-posture seam", () => {
@@ -1585,8 +1662,8 @@ test("E6 short native-rail Document keeps a usable pane behind scrollable header
     { name: "native owner above existing 760px static-header seam", width: 767, height: 390, pointer: "fine" },
     { name: "existing short-height boundary", width: 700, height: 600, pointer: "fine" },
   ]) {
-    assert.equal(winning([baseStage, stage], "grid-template-rows", viewport)?.value, "auto auto minmax(16rem, 1fr)",
-      viewport.name + ": header rows cannot consume the complete editing pane");
+    assert.equal(winning([baseStage, stage], "grid-template-rows", viewport)?.value, "auto max-content minmax(16rem, 1fr)",
+      viewport.name + ": task choices keep their intrinsic row above the usable editing pane");
     assert.equal(winning(stage, "overflow-y", viewport)?.value, "auto", "native scrollIntoView can reveal the pane through this ancestor");
     assert.equal(winning(stage, "overscroll-behavior", viewport)?.value, "contain");
     assert.equal(winning([".studio-header-stack", stage + " > .studio-header-stack"], "position", viewport)?.value, "static",
@@ -1682,4 +1759,309 @@ test("E6 short shared chrome removes only the application title already represen
     const shortLandscape = viewport.height <= 600 && viewport.width > viewport.height;
     assert.equal(ruleActive(rules[0], viewport), shortLandscape, viewport.name + ": retain the existing short-chrome media scope");
   }
+});
+test("Canvas View-menu padding clears the recorded full focus envelope at rounded boundaries", () => {
+  // B6 attachment canvas-path-semantic-action, observation7 / sequentialKey11:
+  // Accessible reading order was fully visible, but the conservative rounded
+  // proof did not contain its 6px focus envelope. This is a source/geometry
+  // regression, not a browser layout, glyph-paint, zoom or native PASS claim.
+  const panel = ".canvas-view-menu .ui-popover-panel";
+  const panels = [".ui-popover-panel[popover]", panel, ".application-canvas " + panel];
+  const actions = ".application-canvas .canvas-view-actions";
+  const recorded = {
+    rootPixels: 16, paddingPixels: .45 * 16, extent: 6, radius: 9,
+    raw: { left: 834.46875, top: 520.921875, right: 1122.09375, bottom: 567.6875 },
+    // Retain the observer's one-pixel integer-client inset, including the
+    // fractional bottom deficit. Do not substitute the larger painted box.
+    clip: { left: 828.28125, top: 62.390625, right: 1128.28125, bottom: 573.390625 },
+  };
+  const envelope = raw => ({ left: raw.left - recorded.extent, top: raw.top - recorded.extent,
+    right: raw.right + recorded.extent, bottom: raw.bottom + recorded.extent });
+  const withinRectangle = (box, clip) => box.left >= clip.left && box.right <= clip.right
+    && box.top >= clip.top && box.bottom <= clip.bottom;
+  const withinRounded = (box, clip) => {
+    if (!withinRectangle(box, clip)) return false;
+    return [box.left, box.right].every(x => [box.top, box.bottom].every(y => {
+      const dx = Math.max(clip.left + recorded.radius - x, 0, x - clip.right + recorded.radius);
+      const dy = Math.max(clip.top + recorded.radius - y, 0, y - clip.bottom + recorded.radius);
+      return dx * dx + dy * dy <= recorded.radius * recorded.radius;
+    }));
+  };
+  const projected = padding => {
+    const delta = padding - recorded.paddingPixels;
+    // Fixed outer inline size: symmetric padding narrows the control. The
+    // recorded intrinsic menu grows by two block insets; target height stays
+    // unchanged. Actual line wrapping and max-height scrolling remain native
+    // obligations; neither is simulated by this recorded-layout projection.
+    return {
+      raw: { left: recorded.raw.left + delta, top: recorded.raw.top + delta,
+        right: recorded.raw.right - delta, bottom: recorded.raw.bottom + delta },
+      clip: { ...recorded.clip, bottom: recorded.clip.bottom + 2 * delta },
+    };
+  };
+  const originalEnvelope = envelope(recorded.raw);
+  assert.equal(originalEnvelope.bottom - recorded.clip.bottom, .296875);
+  assert.equal(withinRounded(originalEnvelope, recorded.clip), false, "retain the exact recorded unresolved boundary");
+  const rectangleOnly = projected(.6 * recorded.rootPixels);
+  assert.equal(withinRectangle(envelope(rectangleOnly.raw), rectangleOnly.clip), true);
+  assert.equal(withinRounded(envelope(rectangleOnly.raw), rectangleOnly.clip), false,
+    "a rectangular containment check alone misses the still-unsafe rounded corners");
+
+  for (const viewport of viewports) {
+    const padding = winning(panels, "padding", viewport);
+    assert.equal(padding?.file, "canvas.css", "the existing View-menu owner supplies its inset");
+    const length = padding?.value.match(/^([\d.]+)(rem|px)$/);
+    assert.ok(length, "inspect the actual symmetric single-length padding rather than assuming its value");
+    const pixels = Number(length[1]) * (length[2] === "rem" ? recorded.rootPixels : 1);
+    const next = projected(pixels);
+    for (const direction of ["ltr", "rtl"]) {
+      const raw = direction === "ltr" ? next.raw : { ...next.raw,
+        left: next.clip.left + next.clip.right - next.raw.right,
+        right: next.clip.left + next.clip.right - next.raw.left };
+      assert.ok(withinRounded(envelope(raw), next.clip),
+        viewport.name + "/" + direction + ": the complete recorded 6px envelope must clear every rounded corner");
+      assert.ok(raw.right - raw.left >= 44 && raw.bottom - raw.top >= 44,
+        "clearance must not consume the recorded native target's 44px floor");
+      assert.equal(raw.bottom - raw.top, recorded.raw.bottom - recorded.raw.top,
+        "padding does not shrink the recorded control height");
+    }
+    for (const property of ["padding-inline", "padding-block", "padding-inline-start", "padding-inline-end", "padding-block-start", "padding-block-end"])
+      assert.equal(winning(panels, property, viewport), undefined, "no axis-specific rule may silently undo the symmetric inset");
+    assert.equal(winning(panels, "width", viewport)?.value, "min(19rem,calc(100vw - 2rem))");
+    assert.equal(winning(panels, "max-height", viewport)?.value, "min(34rem,75dvh)");
+    assert.equal(winning(panels, "max-block-size", viewport)?.value,
+      "min(34rem,var(--forma-popover-max-height,calc(100dvb - 1rem)))");
+    assert.equal(winning(panels, "overflow", viewport)?.value, "auto", "retain the native menu scroll owner");
+    assert.equal(winning(panels, "border-radius", viewport)?.value, recorded.radius + "px");
+    assert.equal(winning(actions, "display", viewport)?.value, "grid");
+    assert.equal(winning(actions, "row-gap", viewport)?.value, "var(--forma-space-2,.5rem)",
+      "retain the accepted separation between Resume, Outcome Desk and subsequent actions");
+  }
+});
+
+
+test("Canvas reading-order list retains the full focus envelope inside its scroll boundary", () => {
+  // B7 canvas-path-semantic-document, ordinal1 / sequentialKey12, desktop:
+  // Tab reached Document0 after the native modal's Close control passed.
+  // The button body and all text were visible, but its OL clipped the entire
+  // outward ring. This finite recorded-geometry projection does not simulate
+  // browser focus scrolling, rewrapping, zoom or native pixel paint.
+  const list = ".canvas-semantic-dialog ol";
+  const recorded = {
+    rootPixels: 16, extent: 6,
+    raw: { left: 337, top: 459.265625, right: 928, bottom: 542.171875 },
+    clip: { left: 337, top: 458.265625, right: 928, bottom: 542.171875 },
+  };
+  const envelope = raw => ({ left: raw.left - recorded.extent, top: raw.top - recorded.extent,
+    right: raw.right + recorded.extent, bottom: raw.bottom + recorded.extent });
+  const contains = (clip, box) => box.left >= clip.left && box.right <= clip.right
+    && box.top >= clip.top && box.bottom <= clip.bottom;
+  const projectIntrinsic = inset => ({
+    raw: { left: recorded.raw.left + inset, right: recorded.raw.right - inset,
+      top: recorded.raw.top + inset, bottom: recorded.raw.bottom + inset },
+    clip: { ...recorded.clip, bottom: recorded.clip.bottom + 2 * inset },
+  });
+  const original = envelope(recorded.raw);
+  assert.deepEqual({ left: recorded.clip.left - original.left, right: original.right - recorded.clip.right,
+    top: recorded.clip.top - original.top, bottom: original.bottom - recorded.clip.bottom },
+  { left: 6, right: 6, top: 5, bottom: 6 }, "retain the exact failed four-edge observation");
+  assert.equal(contains(recorded.clip, original), false);
+  const insufficient = projectIntrinsic(recorded.extent - 1);
+  assert.equal(contains(insufficient.clip, envelope(insufficient.raw)), false,
+    "a positive inset that is still smaller than the outward ring must fail");
+
+  const pixels = (value, viewport) => {
+    const variable = value?.match(/^var\((--[\w-]+),\s*([\d.]+(?:rem|px))\)$/);
+    const resolved = variable ? winning(":root", variable[1], viewport)?.value ?? variable[2] : value;
+    if (resolved === "0") return 0;
+    const length = resolved?.match(/^([\d.]+)(rem|px)$/);
+    assert.ok(length, "resolve the actual winning source length, including its shared token fallback");
+    return Number(length[1]) * (length[2] === "rem" ? recorded.rootPixels : 1);
+  };
+  const height = recorded.raw.bottom - recorded.raw.top;
+  for (const viewport of viewports) {
+    const padding = winning(list, "padding", viewport);
+    assert.equal(padding?.file, "canvas.css", "the shared reading-order list owns its physical inset");
+    const inset = pixels(padding?.value, viewport);
+    const next = projectIntrinsic(inset);
+    for (const direction of ["ltr", "rtl"]) {
+      const raw = direction === "ltr" ? next.raw : { ...next.raw,
+        left: next.clip.left + next.clip.right - next.raw.right,
+        right: next.clip.left + next.clip.right - next.raw.left };
+      assert.ok(contains(next.clip, envelope(raw)), viewport.name + "/" + direction + ": first/last single-row envelope");
+      assert.equal(raw.bottom - raw.top, height, "the recorded target height is preserved");
+      assert.ok(raw.right - raw.left >= 44 && height >= 44, "the inset must not consume the recorded native target floor");
+    }
+    // In a capped multi-row list, a middle row can be revealed at either edge.
+    // The existing native scroll owner's declared optimal viewing region must
+    // reserve the ring there as well. These are ideal edge placements derived
+    // from scroll-padding, not a claim that Chromium performed those scrolls.
+    const scrollInset = pixels(winning(list, "scroll-padding-block", viewport)?.value, viewport);
+    const cap = { ...recorded.clip, bottom: recorded.clip.top + .6 * viewport.height };
+    const edgeRaw = (edge, gutter) => {
+      const top = edge === "start" ? cap.top + gutter : cap.bottom - gutter - height;
+      return { left: next.raw.left, right: next.raw.right, top, bottom: top + height };
+    };
+    for (const edge of ["start", "end"]) {
+      assert.equal(contains(cap, envelope(edgeRaw(edge, 0))), false,
+        "physical endpoint padding alone is not a focus-scroll gutter for a middle row");
+      assert.ok(contains(cap, envelope(edgeRaw(edge, scrollInset))), viewport.name + ": capped " + edge + " viewing region");
+    }
+    assert.equal(winning(list, "max-height", viewport)?.value, "60vh", "retain the bounded native list");
+    assert.equal(winning(list, "overflow", viewport)?.value, "auto", "do not remove or waive the clipping owner");
+    assert.equal(winning(list, "list-style", viewport)?.value, "none");
+  }
+});
+
+test("Short create-dialog footers reserve disclosure capacity without shrinking native controls", () => {
+  // P9 zoom attachment24: SUMMARY focus passed while FOOTER obstructed UL.
+  // The report has no full DETAILS rect or native form offsetHeight. Combine
+  // the saved SUMMARY/UL boxes with the separately pinned unchanged detail
+  // padding/border, and explicitly sweep consistent integer-metric scenarios.
+  // This exercises the unchanged helper's complete-box interval, not a new
+  // browser observation, text-layout simulation or native-paint certificate.
+  const footer = ".document-artifact-dialog > footer";
+  const control = [".button", ".document-artifact-dialog > footer .button", footer + " > .button"];
+  const recorded = { width: 419, height: 398, pointer: "fine", clipHeight: 365,
+    summaryEnvelopeTop: 172.4921875, listBottom: 443.4375,
+    summaryTop: 178.4921875, summaryBottom: 222.4921875, summaryHeight: 44,
+    footerBottom: 383.5, footerWidth: 385, footerInlinePadding: 16,
+    primaryLabelWidth: 238.8125,
+    footerHeight: 137, oldPadding: 16, oldGap: 16, border: 1, rootPixels: 16 };
+  const requiredSpan = recorded.listBottom - recorded.summaryEnvelopeTop;
+  const oldStack = 44 + 44 + recorded.oldGap + 2 * recorded.oldPadding + recorded.border;
+  assert.equal(oldStack, recorded.footerHeight, "preserve the observed stacked-footer counterexample");
+  assert.ok(recorded.clipHeight - oldStack < requiredSpan,
+    "moving only the summary cannot fit the recorded list above the old footer");
+
+  const pixels = value => {
+    const match = value?.match(/^([\d.]+)(px|rem)$/);
+    assert.ok(match, "inspect the actual source length instead of guessing its pixel value");
+    return Number(match[1]) * (match[2] === "rem" ? recorded.rootPixels : 1);
+  };
+  const blockPadding = viewport => {
+    const logical = winning(footer, "padding-block", viewport)?.value;
+    return pixels(logical ?? winning(footer, "padding", viewport)?.value.split(/\s+/)[0]);
+  };
+  const footerHeight = (viewport, cancel, primary) => {
+    const display = winning(footer, "display", viewport)?.value;
+    const gap = pixels(winning(footer, "gap", viewport)?.value);
+    if (display === "grid") {
+      assert.equal(winning(footer, "grid-template-columns", viewport)?.value, "auto minmax(0,1fr)",
+        "Cancel retains intrinsic space while the complete primary label can wrap in the remaining track");
+      return Math.max(cancel, primary) + 2 * blockPadding(viewport) + recorded.border;
+    }
+    assert.equal(display, "flex");
+    assert.equal(winning(footer, "flex-direction", viewport)?.value, "column");
+    return cancel + primary + gap + 2 * blockPadding(viewport) + recorded.border;
+  };
+  // Preserve the critical existing helper formula in its source owner. The
+  // inline model below uses the same conservative bounds and branch test.
+  for (const source of [
+    "minScale=rect.height/(element.offsetHeight+.5),maxScale=rect.height/(element.offsetHeight-.5)",
+    "top=rect.top+(element.clientTop+.5)*maxScale",
+    "bottom=rect.top+Math.max(0,element.clientTop+element.clientHeight-1)*minScale",
+    "const targetScale=rect.height/(target.offsetHeight-.5)",
+    "const expandedStart=Math.min(start,expanded.top),expandedEnd=Math.max(end,expanded.bottom)",
+    "const lower=(expandedEnd-bottom)/(expandedEnd>bottom?formBounds.minScale:formBounds.maxScale)",
+    "const upper=(expandedStart-top)/(expandedStart<top?formBounds.minScale:formBounds.maxScale)",
+    "if(lower<=upper){start=expandedStart;end=expandedEnd;}",
+  ]) assert.ok(artifacts.includes(source), "keep this capacity model attached to the existing reveal helper");
+  const bounds = (rectTop, rectHeight, offsetHeight, clientTop, clientHeight) => {
+    const minScale = rectHeight / (offsetHeight + .5), maxScale = rectHeight / (offsetHeight - .5);
+    return { minScale, maxScale, top: rectTop + (clientTop + .5) * maxScale,
+      bottom: rectTop + Math.max(0, clientTop + clientHeight - 1) * minScale };
+  };
+  // Source-derived, not captured: unchanged .model3d-settings-advanced has
+  // 1px border, .25rem top and .85rem bottom padding. SUMMARY is its first
+  // child; UL is last. Neither unrecorded DETAILS bounds nor integer native
+  // metrics are described as actual P9 measurements here.
+  const details = { top: recorded.summaryTop - .25 * 16 - 1,
+    bottom: recorded.listBottom + .85 * 16 + 1 };
+  const outline = 6 * recorded.summaryHeight / (44 - .5);
+  const expandedStart = Math.min(recorded.summaryTop - outline, details.top);
+  const expandedEnd = Math.max(recorded.summaryBottom + outline, details.bottom);
+  assert.ok(expandedEnd - expandedStart > requiredSpan,
+    "the old list-only span omitted bottom padding/border and the helper's scaled outline");
+  const interval = (primaryHeight, formOffset, formClient, dialogOffset, extraBottom = 0) => {
+    const form = bounds(17, 366.5, formOffset, 0, formClient);
+    const dialog = bounds(16, 366.5, dialogOffset, 1, 365);
+    const top = Math.max(form.top, dialog.top, 0);
+    const bottom = Math.min(form.bottom, dialog.bottom, 398.5,
+      recorded.footerBottom - footerHeight(recorded, 44, primaryHeight));
+    const end = expandedEnd + extraBottom;
+    const lower = (end - bottom) / (end > bottom ? form.minScale : form.maxScale);
+    const upper = (expandedStart - top) / (expandedStart < top ? form.minScale : form.maxScale);
+    return { lower, upper };
+  };
+  for (const formOffset of [366, 367]) for (const formClient of [366, 367]) for (const dialogOffset of [366, 367]) {
+    for (const [height, fits] of [[44, true], [64, false], [96, false]]) {
+      const { lower, upper } = interval(height, formOffset, formClient, dialogOffset);
+      assert.equal(lower <= upper, fits,
+        "only the complete DETAILS/summary interval may admit a disclosure; 64px wrap must now be refused");
+      if (!fits) continue;
+      const scrollTop = 581, delta = Math.max(lower, Math.min(upper, 0));
+      const rounded = delta > 0 ? Math.ceil(scrollTop + delta) : Math.floor(scrollTop + delta);
+      const movement = rounded - scrollTop;
+      const requested = movement >= lower && movement <= upper ? rounded : scrollTop + (lower + upper) / 2;
+      assert.ok(requested - scrollTop >= lower && requested - scrollTop <= upper,
+        "retain the existing helper's safe interval and conditional outward-rounding behavior");
+    }
+    // These heights were observed in different, tall P9 profiles. Projecting
+    // them here is explicitly conditional: it is not a new zoom measurement.
+    const englishTwoLine = interval(62.78125, formOffset, formClient, dialogOffset);
+    assert.ok(englishTwoLine.upper - englishTwoLine.lower > 0 && englishTwoLine.upper - englishTwoLine.lower < .25);
+    assert.equal(interval(62.78125, formOffset, formClient, dialogOffset, .25).lower
+      <= englishTwoLine.upper, false, "a quarter-pixel unobserved detail extension removes that fragile projected clearance");
+    const arabicTwoLine = interval(65.59375, formOffset, formClient, dialogOffset);
+    assert.equal(arabicTwoLine.lower <= arabicTwoLine.upper, false,
+      "do not generalize the one-line projection into translated-layout clearance");
+  }
+  const innerWidth = recorded.footerWidth - 2 * recorded.footerInlinePadding;
+  assert.equal(innerWidth, 353, "use the observed 385px footer, not the 322px collision or 419px viewport");
+  const inlinePadding = pixels(winning(control, "padding-inline", recorded)?.value);
+  assert.ok(inlinePadding >= 6, "compact padding must not consume the retained focus-ring clearance");
+  const buttonInsets = 2 * (inlinePadding + 1), gap = pixels(winning(footer, "gap", recorded)?.value);
+  const cancelLabelLimit = innerWidth - recorded.primaryLabelWidth - 2 * buttonInsets - gap;
+  assert.ok(cancelLabelLimit >= 70,
+    "compact control insets must permit a bounded Cancel label beside the saved one-line primary label");
+  // Cancel's new-grid glyph width was not captured. These are declared
+  // synthetic constraints, not a claim that every translation fits one line.
+  for (const cancelTextWidth of [44, 60, 70]) {
+    const cancelWidth = Math.max(44, cancelTextWidth + buttonInsets);
+    assert.ok(innerWidth - cancelWidth - gap >= recorded.primaryLabelWidth + buttonInsets);
+  }
+  assert.ok(innerWidth - (80 + buttonInsets) - gap < recorded.primaryLabelWidth + buttonInsets,
+    "a wider translated Cancel can wrap the primary; no one-line guarantee or truncation is allowed");
+
+  const inside = [{ ...recorded }, { width: 320, height: 400, pointer: "coarse" },
+    { width: 720, height: 512, pointer: "fine" }];
+  const outside = [{ width: 320, height: 513, pointer: "coarse" },
+    { width: 721, height: 398, pointer: "fine" }, ...viewports];
+  for (const viewport of [...inside, ...outside]) {
+    const shortNarrow = viewport.width <= 720 && viewport.height <= 512;
+    assert.equal(winning(footer, "display", viewport)?.value, shortNarrow ? "grid" : "flex");
+    assert.equal(winning(footer, "position", viewport)?.value, "sticky", "retain the visible owned footer");
+    assert.equal(winning(footer, "inset-block-end", viewport)?.value, "0");
+    assert.equal(winning(".document-artifact-dialog", "overflow", viewport)?.value, "auto",
+      "the existing complete form remains the native scroll owner");
+    assert.equal(winning(".document-artifact-reader > footer", "display", viewport)?.value, "flex",
+      "this create-form correction does not take the reader's layout lease");
+    if (!shortNarrow) continue;
+    for (const axis of ["min-inline-size", "min-block-size"]) {
+      const value = winning(control, axis, viewport)?.value;
+      assert.equal(value, "max(44px,var(--forma-hit-target,var(--forma-control-min-size,2.75rem)))");
+      for (const rootPixels of [12, 16, 20]) for (const inheritedTarget of [undefined, 44, 60]) {
+        const minimum = Math.max(44, inheritedTarget ?? 2.75 * rootPixels);
+        assert.ok(minimum >= 44 && minimum >= (inheritedTarget ?? 2.75 * rootPixels),
+          "both logical axes retain the 44px floor and larger inherited target tokens");
+      }
+    }
+    assert.equal(winning(control, "width", viewport)?.value, "auto");
+    assert.equal(winning(control, "white-space", viewport)?.value, "normal");
+    assert.equal(winning(control, "overflow-wrap", viewport)?.value, "anywhere");
+    for (const property of ["height", "block-size", "max-height", "max-block-size", "text-overflow", "line-clamp", "-webkit-line-clamp"])
+      assert.equal(winning(control, property, viewport), undefined, "do not force fit by capping or truncating labels");
+  }
+  assert.equal(winning("*", "box-sizing", recorded)?.value, "border-box");
 });

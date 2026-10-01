@@ -56,5 +56,10 @@ export default defineConfig({
       { name: "isolated-e6-noncanvas", testMatch: "**/isolated-e6-noncanvas.spec.mjs",
         use: { baseURL: localTestOrigin("http://127.0.0.1:4186") } },
     ] : []),
+    ...(process.env.FORMA_A11Y_PROFILE_FOCUS === "1" ? [
+      { name: "profile-focus-native", testMatch: "**/profile-focus.spec.mjs",
+        use: { baseURL: localTestOrigin("http://127.0.0.1:4187"),
+          geometry: { viewport: { width: 1280, height: 900 }, zoom: 1, locale: "en-US" } } },
+    ] : []),
   ],
 });

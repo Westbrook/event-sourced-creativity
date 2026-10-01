@@ -17,6 +17,7 @@ import { FORMA_CONTEXT_CONTROL_MESSAGES } from "../src/components/design-system/
 import { FORMA_MODEL3D_MESSAGES } from "../src/components/design-system/locales/model3d-messages.ts";
 import { FORMA_MODEL3D_VIEWER_MESSAGES } from "../src/components/design-system/locales/model3d-viewer-messages.ts";
 import { REFERENCE_COMPOSITION_MESSAGES } from "../src/components/design-system/locales/reference-composition-messages.ts";
+import { FORMA_EXPERIENCE_REVIEW_MESSAGES } from "../src/components/design-system/locales/experience-review-messages.ts";
 import marketingEnglish from "../src/marketing/locales/en.ts";
 import marketingFrench from "../src/marketing/locales/fr.ts";
 import marketingArabic from "../src/marketing/locales/ar.ts";
@@ -42,6 +43,7 @@ const normalize = (value) => String(value).replace(/\s+/gu, " ").trim();
 const placeholders = (value) => [...String(value).matchAll(/\{([^{}]+)\}/gu)].map((match) => match[1]).sort().join("|");
 const sharedCatalogs=[FORMA_RESPONSIVE_MESSAGES,FORMA_NEXT_ACTION_MESSAGES,FORMA_CONTEXT_CONTROL_MESSAGES,FORMA_MODEL3D_MESSAGES,FORMA_MODEL3D_VIEWER_MESSAGES,REFERENCE_COMPOSITION_MESSAGES];
 sharedCatalogs.push(FORMA_OUTCOME_MESSAGES);
+sharedCatalogs.push(FORMA_EXPERIENCE_REVIEW_MESSAGES);
 const outputMessageBundles = { outputDelivery: FORMA_OUTPUT_DELIVERY_MESSAGES, outputRequirement: FORMA_OUTPUT_REQUIREMENT_MESSAGES };
 const defaults = new Map([
   ...sharedCatalogs.flatMap((catalog)=>Object.entries(catalog.en)),

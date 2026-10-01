@@ -359,3 +359,38 @@ for (const locale of locales) test("image concise More keeps final qualified con
   assert.deepEqual(finance(f), beforeFinance);
   assert.equal(f.storeHost.requests.length, beforeRequests);
 });
+
+// Append after the original E2 image20. Reuse its complete current imagePage.
+// Added synthetic metadata is not a newly generated image or provider receipt.
+for (const [locale, latencyMs, seconds, label] of [
+  ["en", 1150, 1.1, "Latency"], ["fr", 1000, 1, "Latence"],
+  ["ar", 13456, 13.5, "زمن الاستجابة"], ["ja", 1150, 1.1, "レイテンシー"],
+]) test("image comparison explicitly labels retained generation latency " + locale, async t => {
+  const x = await imagePage(t, locale, false), { f } = x, initialCounts = f.storeHost.worker.counts();
+  const id = "comparison-timing-image-" + locale;
+  f.appendEvent("GenerationCompleted", {
+    generation_id: "comparison-timing-generation-" + locale, object_ids: [id],
+    title: "Retained comparison timing " + locale, model_id: "fixture-image-model", provider: "fixture",
+    media_url: x.original.mediaUrl, media_type: x.original.mediaType, image_width: 1536, image_height: 1024,
+    latency_ms: latencyMs, quality: "high", purpose: "final",
+  });
+  f.store.patchUi({ selectedOutputId: id }); await f.settle();
+  const cards = f.components().filter(component => component.tag === "forma-output-card" && component.output?.id === id);
+  assert.equal(cards.length, 1); x.card = cards[0];
+  x.original = structuredClone(x.card.output); x.beforeEvents = structuredClone(f.store.events.get());
+  x.beforeFinance = finance(f); x.beforeRequests = f.storeHost.requests.length;
+  const beforeContent = structuredClone(f.store.content.get()), { card } = x, out = card.output;
+  assert.equal(out.latency, latencyMs); assert.equal(out.width, 1536); assert.equal(out.height, 1024);
+  assert.equal(out.modelId, "fixture-image-model"); assert.equal(out.quality, "high"); assert.equal(out.discarded, false);
+  assert.equal(f.store.ui.selectedOutputId, id); assert.equal(f.i18n.system("Latency"), label);
+  assert.equal(actionRows(f, card).length, 2, "the ordinary full image keeps direct Open and its one existing More owner");
+  assert.equal(f.find("button", node => node.owner === card && hasClass(node, "output-open")).text, f.i18n.t("output.open"));
+  assert.equal(menuFor(f, card).querySelector(".ui-popover-panel").matches(":popover-open"), false);
+  const quality = f.find("span", node => node.owner === card && hasClass(node, "output-quality"));
+  assert.equal(quality.text, f.i18n.system("Full quality"));
+  const metadata = f.find("small", node => node.owner === card && within(node, parent => hasClass(parent, "output-info")));
+  assert.ok(metadata.text.includes("1536 × 1024"), "dimensions remain visible text before the desired label assertion");
+  unchanged(x); assert.deepEqual(f.store.content.get(), beforeContent); assert.deepEqual(f.storeHost.worker.counts(), initialCounts);
+  const expected = label + " " + f.i18n.number(seconds, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + "s";
+  assert.ok(metadata.text.endsWith(" · " + expected), "latency is explicit and retains the original toFixed(1) rounding and fixed precision");
+});

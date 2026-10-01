@@ -568,7 +568,8 @@ test("E peer rows: Arrangement propagates same-line stretch through its actual C
 test("E peer rows healthy: Output requirement editing retains current native Save/Cancel and correction actions", () => {
   const source = ePeerSources["forma-output-requirement-card"];
   assert.ok(source.includes('import "./forma-output-requirement-card.css";'));
-  const footer = ePeerFragment("forma-output-requirement-card", '<footer class="output-requirement-form-footer">', "</footer>");
+  const footer = ePeerFragment("forma-output-requirement-card", '<footer class="output-requirement-form-footer"', "</footer>");
+  assert.ok(footer.includes("@focusin=" + "$" + "{this.#revealFooter}"), "focus keeps the current action row visible");
   assert.ok(footer.includes('<div class="output-requirement-actions">'));
   assert.equal((footer.match(/<button\b/gu) ?? []).length, 2);
   assert.ok(footer.includes('type="submit" form=') && footer.includes('type="button"'));

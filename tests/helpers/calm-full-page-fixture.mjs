@@ -37,7 +37,137 @@ replacePort('const child = this.value(rendered, instance, id, caches);','const c
 // Observe only the actual factory return inside an explicitly opted-in host construction.
 replacePort("else if (/\\/icons$/.test(specifier)) dependencies.set(specifier, { icon: () => nothing, registerIcons() {} });","else if (/\\/adaptive-proposal-review(?:\\.ts)?$/u.test(specifier)) {\n      const actual = await loadActual(\"src/components/adaptive-proposal-review.ts\");\n      dependencies.set(specifier, { ...actual, createAdaptiveProposalReview(...args) {\n        const controller = Reflect.apply(actual.createAdaptiveProposalReview, this, args);\n        if (adaptiveProposalConstruction) {\n          assert.equal(args[0], adaptiveProposalConstruction.fixture.store, \"observe the actual owning Store argument\");\n          assert.ok(controller instanceof actual.AdaptiveProposalReviewController, \"observe the actual factory result\");\n          adaptiveProposalConstruction.controllers.push(controller);\n        }\n        return controller;\n      } });\n    }\n    else if (/\\/icons$/.test(specifier)) dependencies.set(specifier, { icon: () => nothing, registerIcons() {} });");
 replacePort('const instance = new this.registry[tag]();','const instance = constructObservedComponent(this.fixture, tag, this.registry[tag]);');
+// The actual review alone owns a second Lit root inside its normal root. Keep
+// every other Lit import unchanged; this is the existing native-template port,
+// not a replacement component or a canned empty-material view.
+replacePort('if (specifier === "lit") dependencies.set(specifier, lit);',
+  'if (specifier === "lit") dependencies.set(specifier, relative === "src/apps/product/experience-review.ts" ? { ...lit, render: renderReviewNativeMount } : lit);');
 const fullPageNativePorts=String.raw`
+// Separate native render-root port for the current actual review's native-only
+// view. It forwards the original TemplateResult/directives to value()/collect().
+// It models synchronous root replacement and ownership, not browser DOM layout,
+// Lit RootPart APIs, IME, focus, or native FormData/OPTION identity. Existing
+// focused form ports and real-browser tests retain those separate obligations.
+const reviewMountOwners = new WeakMap(), reviewMountContainers = new WeakMap();
+const reviewMountMarker = "data-experience-review-mount";
+const reviewOwner = (renderer, owner) => owner?.tag === "forma-experience-review"
+  && typeof renderer.registry[owner.tag] === "function" && owner instanceof renderer.registry[owner.tag];
+const markerCount = text => [...String(text).matchAll(/<div\b[^>]*\bdata-experience-review-mount(?=[\s=>])[^>]*>/gu)].length;
+const originalReviewValue = RendererPort.prototype.value;
+RendererPort.prototype.value = function(value, owner, path, caches) {
+  // This is the actual outer mount TemplateResult, not an inferred inner view.
+  if (reviewOwner(this, owner) && value?.strings && markerCount(value.strings.join(""))) {
+    assert.equal(markerCount(value.strings.join("")), 1, "one actual review root mount");
+    const state = reviewMountOwners.get(owner);
+    const part = { strings: value.strings, path: path + "/template:" + templateId(value.strings) };
+    if (state) { assert.equal(state.renderer, this, "review owner cannot cross native renderers"); state.nextPart = part; }
+    else reviewMountOwners.set(owner, { owner, renderer: this, nextPart: part, innerNodes: new Set(), innerMarkup: "" });
+  }
+  return originalReviewValue.call(this, value, owner, path, caches);
+};
+const originalReviewCollect = RendererPort.prototype.collect;
+RendererPort.prototype.collect = function(markup, owner) {
+  const start = this.nodes.length, result = originalReviewCollect.call(this, markup, owner);
+  if (!reviewOwner(this, owner) || !markerCount(markup)) return result;
+  const state = reviewMountOwners.get(owner);
+  assert.ok(state?.nextPart && state.renderer === this, "mount follows the actual outer TemplateResult");
+  const matches = this.nodes.slice(start).filter(node => node.owner === owner && node.tag === "div"
+    && Object.hasOwn(node.attributes, reviewMountMarker));
+  assert.equal(matches.length, 1, "one canonical own mount, excluding ancestor collection copies");
+  const fresh = matches[0], previous = state.mount;
+  const samePart = state.part?.strings === state.nextPart.strings && state.part?.path === state.nextPart.path;
+  if (previous && samePart && previous.isConnected && previous.parentElement === owner
+    && (this.previousNodes ?? []).includes(previous)) {
+    for (const key of ["full", "handlers", "attributes", "properties", "propertyParts"]) previous[key] = fresh[key];
+    previous.isConnected = true; previous.parentElement = owner;
+    this.nodes[this.nodes.indexOf(fresh)] = previous;
+    fresh.isConnected = false;
+  } else {
+    if (previous) { previous.isConnected = false; reviewMountContainers.delete(previous); }
+    for (const node of state.innerNodes) node.isConnected = false;
+    state.innerNodes.clear(); state.innerMarkup = ""; state.mount = fresh;
+  }
+  state.part = state.nextPart; state.opening = state.mount.full;
+  reviewMountContainers.set(state.mount, state);
+  return result;
+};
+const originalReviewQuery = RendererPort.prototype.query;
+RendererPort.prototype.query = function(owner, selector) {
+  if (selector !== "[data-experience-review-mount]" || !reviewOwner(this, owner))
+    return originalReviewQuery.call(this, owner, selector);
+  const nodes = this.updatingOwner ? this.previousNodes : this.nodes;
+  const matches = [...new Set((nodes ?? []).filter(node => node.owner === owner && node.tag === "div"
+    && node.isConnected && Object.hasOwn(node.attributes, reviewMountMarker)))];
+  assert.ok(matches.length <= 1, "exact own native mount selector");
+  // draw() disconnects removed components after collecting their successors,
+  // but before disconnecting old native ports. Supply only this exact owner's
+  // still-connected predecessor so its real disconnectedCallback can clear it.
+  if (!matches.length && !owner.isConnected) {
+    const state = reviewMountOwners.get(owner), mount = state?.mount;
+    if (state?.renderer === this && owner.fixture?.renderer === this && mount?.isConnected
+      && mount.parentElement === owner && (this.previousNodes ?? []).includes(mount)) return [mount];
+  }
+  return matches;
+};
+function renderReviewNativeMount(value, mount, options) {
+  const state = reviewMountContainers.get(mount), clearing = value === nothing;
+  assert.ok(state && state.mount === mount, "render uses the original canonical native mount");
+  const { renderer, owner } = state;
+  assert.equal(owner.fixture?.renderer, renderer, "render uses the owner's current native renderer");
+  assert.equal(mount.fixture, owner.fixture, "mount and owner share one fixture");
+  assert.equal(mount.parentElement, owner, "mount remains owned by this exact component");
+  assert.ok(mount.isConnected, "render cannot target a disconnected native container");
+  assert.ok(renderer.nodes.includes(mount) || (renderer.previousNodes ?? []).includes(mount), "mount belongs to the current commit or its retiring predecessor");
+  const currentMount = renderer.nodes.includes(mount);
+  if (!clearing) {
+    assert.equal(options?.host, owner, "positive render forwards the actual Lit event host");
+    assert.ok(owner.isConnected && mount.isConnected && renderer.nodes.includes(mount), "positive render requires the connected current mount");
+    assert.deepEqual(renderer.query(owner, "[data-experience-review-mount]"), [mount]);
+  } else if (options?.host !== undefined) assert.equal(options.host, owner);
+  // disconnectedCallback withdraws its own root after isConnected becomes
+  // false. Clearing is allowed for that exact root; it cannot recreate it.
+  const previousMarkup = state.innerMarkup;
+  const inner = clearing ? "" : renderer.value(value, owner, state.part.path + "/native-root", []);
+  const empty = state.opening + "</div>", before = state.opening + previousMarkup + "</div>", after = state.opening + inner + "</div>";
+  const replaceMount = markup => {
+    const count = markerCount(markup);
+    if (!count) return markup;
+    assert.equal(count, 1, "current Product hierarchy has one owned review mount");
+    const needle = markup.includes(before) ? before : empty;
+    assert.equal(markup.split(needle).length, 2, "replace the exact committed mount bytes");
+    return markup.replace(needle, after);
+  };
+  // The outer hierarchy was collected before updated(). Keep every complete
+  // markup view current without recursively drawing or invoking lifecycle hooks.
+  const ancestors = new Set();
+  for (let current = owner; current; current = current.parentElement) ancestors.add(current);
+  ancestors.add(renderer.fixture.host);
+  if (!clearing) {
+    assert.equal(markerCount(owner.markup), 1, "positive root is present in actual owner output");
+    assert.equal(markerCount(renderer.markup), 1, "positive root is present in complete output");
+  }
+  // A departing predecessor can clear its retained detached tree, but cannot
+  // touch a successor's identical outer mount in the newly committed hierarchy.
+  for (const ancestor of ancestors) if ((currentMount || ancestor === owner || ancestor?.isConnected === false)
+    && typeof ancestor?.markup === "string") ancestor.markup = replaceMount(ancestor.markup);
+  if (currentMount) renderer.markup = replaceMount(renderer.markup);
+  const previousInnerNodes = state.innerNodes;
+  for (const node of previousInnerNodes) node.isConnected = false;
+  renderer.nodes = renderer.nodes.filter(node => !previousInnerNodes.has(node));
+  state.innerNodes = new Set();
+  state.innerMarkup = inner; mount.markup = inner;
+  if (!clearing) {
+    const start = renderer.nodes.length;
+    // Preserve the existing property's committed-value port while collecting
+    // this same root; retirement is still synchronous and never revives nodes.
+    const previousNodes = renderer.previousNodes;
+    renderer.previousNodes = [...new Set([...(previousNodes ?? []), ...previousInnerNodes])];
+    try { renderer.collect(inner, owner); }
+    finally { renderer.previousNodes = previousNodes; }
+    for (const node of renderer.nodes.slice(start)) state.innerNodes.add(node);
+  }
+  if (renderer.previousNodes) renderer.previousNodes = renderer.previousNodes.filter(node => !previousInnerNodes.has(node));
+}
 // Opt-in read-only observation of the exact controller constructed by the
 // current complete host. Neither host nor controller gains an accessor.
 const adaptiveProposalControllers = new WeakMap();
@@ -248,7 +378,7 @@ const VOID_ELEMENTS=new Set(["area","base","br","col","embed","hr","img","input"
 const decode=value=>value.replaceAll("&lt;","<").replaceAll("&gt;",">").replaceAll("&amp;","&");
 export function fullPageTree(f,markup=f.renderer.markup){
   const root={tag:"#root",attributes:{},owner:f.host,children:[],parent:null,text:"",hiddenBy:null};
-  const stack=[root],nodes=[];
+  const stack=[root],nodes=[],usedPorts=new Set();
   for(const match of markup.matchAll(/<!--[\s\S]*?-->|<\/?[\w-]+\b[^>]*>|[^<]+/gu)){
     const token=match[0];
     if(token.startsWith("<!--"))continue;
@@ -267,7 +397,8 @@ export function fullPageTree(f,markup=f.renderer.markup){
     const owner=preservesAuthoredChildren?parent.owner:parent.component??parent.owner;
     const componentId=parsed.attributes["data-fixture-component"],component=componentId?f.renderer.instances.get(componentId)?.instance:null;
     if(tag.startsWith("forma-"))assert.ok(component,"full hierarchy includes actual "+tag);
-    const port=f.renderer.nodes.find(candidate=>candidate.owner===owner&&candidate.full===token)??null;
+    const port=f.renderer.nodes.find(candidate=>!usedPorts.has(candidate)&&candidate.owner===owner&&candidate.full===token)??null;
+    if(port)usedPorts.add(port);
     let hiddenBy=parent.hiddenBy;
     if(!hiddenBy&&Object.hasOwn(parsed.attributes,"hidden"))hiddenBy=parsed.attributes.id??tag+"[hidden]";
     if(!hiddenBy&&/display\s*:\s*none|visibility\s*:\s*hidden/iu.test(String(parsed.attributes.style??"")))hiddenBy=tag+"[style]";

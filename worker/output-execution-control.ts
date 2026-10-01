@@ -16,6 +16,7 @@ import type { authoritativeCreativeContext } from "./context-authority.ts";
 import { priceTextUsageBreakdownMicrousd, priceImageUsageBreakdownMicrousd } from "./replay-cost.ts";
 import { estimateOpenAITextCallMaximumMicrousd } from "./openai-text-cost.ts";
 import { estimateModel3dCostMicrousd } from "../src/model/model3d.ts";
+import { createImageRecoveryStore, type ImageRecovery } from "./image-server-recovery.ts";
 
 const parsed=(raw:string|null|undefined):Record<string,unknown>=>{try{const value:unknown=JSON.parse(raw??"{}");return value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};}catch{return{};}};
 export type OutputJobBinding={scope:OutputScope;slot:OutputOperationSlot;retentionPolicy:Record<string,unknown>|null};
@@ -31,6 +32,7 @@ export type OutputEventExecution={
  reference:{scopeKey:string;grantId:string;slotId:string;planRevisionId:string;targetId:string;targetContractDigest:string;sourceDigest:string};
  settings:Record<string,unknown>;
  imageRender?:{format:ImageFormat;size:`${number}x${number}`};
+ imageRecovery?:ImageRecovery;
  reservations:{reservationId:string;costReservationId:string;costReservationPeriod:string;costReservationMicrousd:number;maximumTokens:number};
  assertContext:(context:ReturnType<typeof authoritativeCreativeContext>)=>Promise<void>;
  beforeSourceTransmission:()=>Promise<void>;
@@ -62,7 +64,9 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const current=await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,sourceEvents:authority.events,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest});
  if(!current.available||await outputDigest(current)!==slot.routeDigest)throw new OutputConflictError("output_native_route_changed",409);
  const projectJobAuthority=documentJobProjectAuthority(user,job.document_id,job.job_id);
- const liveAssertions=()=>[...authority.assertions,...(projectJobAuthority?[projectJobAuthority]:[]),outputScopeAuthority(scope,"request"),{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND (status IN('running','committing') AND lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND lease_expires_at>=? OR status='completed'))",bindings:[job.job_id,user.userId,job.stream_id,job.correlation_id,new Date().toISOString(),job.lease_expires_at]},{sql:"EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS ? AND status IN('authorized','active') AND expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))",bindings:[scope.key,slot.grantId,scope.actorUserId,scope.contextId,new Date().toISOString()]}];
+ const executionAssertions=()=>[...(projectJobAuthority?[projectJobAuthority]:[]),outputScopeAuthority(scope,"request"),{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND (status IN('running','committing') AND lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND lease_expires_at>=? OR status='completed'))",bindings:[job.job_id,user.userId,job.stream_id,job.correlation_id,new Date().toISOString(),job.lease_expires_at]},{sql:"EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS ? AND status IN('authorized','active') AND expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))",bindings:[scope.key,slot.grantId,scope.actorUserId,scope.contextId,new Date().toISOString()]}];
+ const liveAssertions=()=>[...authority.assertions,...executionAssertions()];
+ const publicationAssertions=()=>[...authority.publicationAssertions,...executionAssertions()];
  const settings=authority.targetPreflight.settings as OutputNativeSettings;
  if(settings.kind!==job.kind)throw new OutputConflictError("output_job_route_mismatch",403);
  const billingOwner=user.billingUserId??user.userId;
@@ -79,12 +83,14 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const assertDispatchDeadline=()=>{if(dispatchStopError)throw dispatchStopError;const leaseDeadline=Date.parse(String(job.lease_expires_at));if(!Number.isFinite(dispatchDeadline)||!Number.isFinite(leaseDeadline)||Date.now()>=Math.min(dispatchDeadline,leaseDeadline)){
   dispatchStopError=new OutputConflictError("output_execution_deadline_expired",403);throw dispatchStopError;
  }};
- const claimedCalls=new Map<string,{callKey:string;provider:string;model:string;operation:string;pending:boolean;dispatched:boolean}>();
+ const claimedCalls=new Map<string,{callKey:string;requestDigest:string;provider:string;model:string;operation:string;pending:boolean;dispatched:boolean}>();
  const observedReceipts=new Map(providerSubmissions(checkpoint).map(receipt=>[receipt.clientRequestId,receipt]));
  const reference={scopeKey:slot.scopeKey,grantId:slot.grantId,slotId:slot.slotId,planRevisionId:slot.planRevisionId,targetId:slot.targetId,targetContractDigest:slot.targetContractDigest,sourceDigest:slot.sourceDigest};
  const guardedEnvironment=guardOutputPrivateWrites(env,scope,slot,async()=>liveAssertions(),{retentionPolicy:binding.retentionPolicy});
+ const imageRecovery=job.kind==="generate"?createImageRecoveryStore({env,user,job,scope,slot,liveAssertions,publicationAssertions}):undefined;
  let publicationScopesComplete=scope.kind==="personal";
  return {guardedEnvironment,
+  ...(imageRecovery?{imageRecovery}:{}),
   dispatchStop:error=>dispatchStopError!==null&&error===dispatchStopError?{code:"output_execution_deadline_expired",category:"access",scope:"project",action:"check_project",
    message:"The current source or execution authorization expired before this provider call could be sent. Earlier usage and unresolved allowances are retained; check current access before starting other work.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:403}:null,
   sourceEvents:authority.events,sourceHead:authority.head,
@@ -107,16 +113,20 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
    ...(scope.kind==="personal"&&events.length?outputAssertionStatements(env,{sql:`(SELECT COUNT(*) FROM events WHERE event_id IN(SELECT value FROM json_each(?)))=?
      OR (NOT EXISTS(SELECT 1 FROM events WHERE event_id IN(SELECT value FROM json_each(?))) AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)<>?)`,
     bindings:[JSON.stringify(events.map(event=>event.eventId)),events.length,JSON.stringify(events.map(event=>event.eventId)),job.stream_id,events[0]!.sequence-1]}):[]),
-   ...(events.some(event=>event.type==="GenerationCompleted"||event.type==="DocumentRenderCompleted")?[prepareProviderSuccess(env).statement]:[]),...prepareOutputNativeProjectPublicationStatements(env,{scope,slot,job},events)],
+   ...(events.some(event=>event.type==="GenerationCompleted"||event.type==="DocumentRenderCompleted")?[prepareProviderSuccess(env).statement]:[]),
+   ...(imageRecovery?.publicationStatements(events)??[]),
+   // Project publication stays last: eventWriteCommitted reads its final result.
+   ...prepareOutputNativeProjectPublicationStatements(env,{scope,slot,job},events)],
   eventWriteCommitted:results=>{if(scope.kind==="project")publicationScopesComplete=Number(results.at(-1)?.meta.changes??0)===1;},
   publicationScopesComplete:()=>publicationScopesComplete,reference,settings:settings.payload,...(settings.imageRender?{imageRender:settings.imageRender}:{}),reservations:{reservationId:slot.tokenReservationId,costReservationId:slot.costReservationId,costReservationPeriod:period,costReservationMicrousd:slot.maximumMicrousd,maximumTokens:slot.maximumTokens},
   async assertContext(context){if(context.documentRevision!==authority.context.documentRevision||await outputDigest(context.snapshot)!==await outputDigest(authority.context.snapshot))throw new OutputConflictError("output_source_changed",409);},
   async beforeSourceTransmission(){await env.DB.batch(liveAssertions().flatMap(assertion=>outputAssertionStatements(env,assertion)));},
   async beforeProviderAttempt(attempt){
    assertDispatchDeadline();
+   const requestDigest=attempt.requestDigest;
    const callKey=attempt.logicalCallKey;
    const route=settings.calls.find(route=>route.stage===callKey);
-   if(!callKey||!route||route.model!==attempt.model||!attempt.requestDigest||!Number.isSafeInteger(attempt.maximumInputTokens)||!Number.isSafeInteger(attempt.maximumOutputTokens)||attempt.maximumInputTokens<0||attempt.maximumOutputTokens<0)throw new OutputConflictError("output_provider_stage_not_authorized",403);
+   if(!callKey||!route||route.model!==attempt.model||!requestDigest||!Number.isSafeInteger(attempt.maximumInputTokens)||!Number.isSafeInteger(attempt.maximumOutputTokens)||attempt.maximumInputTokens<0||attempt.maximumOutputTokens<0)throw new OutputConflictError("output_provider_stage_not_authorized",403);
    if(artifactKind==="slides"&&(!route.presentationRoute||!attempt.presentationRoute
     ||!Number.isSafeInteger(route.maximumInputTokens)||attempt.maximumInputTokens>Number(route.maximumInputTokens)
     ||attempt.maximumOutputTokens!==route.maximumOutputTokens
@@ -138,9 +148,9 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
       ON token.owner_id=cost.owner_id AND token.stream_id=cost.stream_id AND token.correlation_id=cost.correlation_id AND token.period=cost.period AND token.operation=cost.operation
       WHERE cost.reservation_id=? AND token.reservation_id=? AND cost.owner_id=? AND cost.stream_id=? AND cost.correlation_id=? AND cost.operation=? AND cost.period=?
        AND cost.reserved_microusd=? AND token.reserved_tokens=? AND cost.status='executing' AND token.status='active')`,bindings:[slot.costReservationId,slot.tokenReservationId,billingOwner,job.stream_id,job.correlation_id,operation,period,slot.maximumMicrousd,slot.maximumTokens]}];
-   const claim=await claimOutputProviderCall(env,{scope,slotId:slot.slotId,jobId:slot.jobId,callKey,clientRequestId:attempt.clientRequestId,requestDigest:attempt.requestDigest,routeDigest:slot.routeDigest,stageKey:callKey,provider:route.provider,model:route.model,maximumMicrousd:route.maximumMicrousd,expectedHead:authority.head,sourceEpoch:authority.sourceEpoch,sourceDigest:authority.sourceDigest,assertions});
+   const claim=await claimOutputProviderCall(env,{scope,slotId:slot.slotId,jobId:slot.jobId,callKey,clientRequestId:attempt.clientRequestId,requestDigest,routeDigest:slot.routeDigest,stageKey:callKey,provider:route.provider,model:route.model,maximumMicrousd:route.maximumMicrousd,expectedHead:authority.head,sourceEpoch:authority.sourceEpoch,sourceDigest:authority.sourceDigest,assertions});
    if(!claim.claimed)throw new OutputConflictError("output_provider_call_already_consumed",409);
-   claimedCalls.set(attempt.clientRequestId,{callKey,provider:route.provider,model:route.model,operation:callKey.startsWith("planning:")?"planning":callKey==="model3d:initial"?"model3d":"image",pending:false,dispatched:false});
+   claimedCalls.set(attempt.clientRequestId,{callKey,requestDigest,provider:route.provider,model:route.model,operation:callKey.startsWith("planning:")?"planning":callKey==="model3d:initial"?"model3d":"image",pending:false,dispatched:false});
   },
   beforeProviderDispatch(clientRequestId){
    const call=claimedCalls.get(clientRequestId);
@@ -151,13 +161,13 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
   },
   async observeProvider(receipt){
    const call=claimedCalls.get(receipt.clientRequestId);
-   if(!call||receipt.provider!==call.provider||receipt.model!==call.model||receipt.operation!==call.operation)throw new OutputConflictError("output_provider_call_missing",403);
+   if(!call||receipt.provider!==call.provider||receipt.model!==call.model||receipt.operation!==call.operation||receipt.requestDigest!==undefined&&receipt.requestDigest!==call.requestDigest)throw new OutputConflictError("output_provider_call_missing",403);
    // The immutable pending call already exists before the adapter's legacy
    // checkpoint. A failed checkpoint keeps that durable exposure reserved.
    if(receipt.status==="pending"){call.pending=true;return;}
    // The independent operational checkpoint contains payment identities/counts only.
    // It remains writable after erasure and never copies an in-memory source/result body.
-   const safe:Record<string,unknown>={clientRequestId:receipt.clientRequestId,provider:receipt.provider,operation:receipt.operation,model:receipt.model,status:receipt.status};
+   const safe:Record<string,unknown>={clientRequestId:receipt.clientRequestId,requestDigest:call.requestDigest,provider:receipt.provider,operation:receipt.operation,model:receipt.model,status:receipt.status};
    if(receipt.providerRequestId)safe.providerRequestId=receipt.providerRequestId;
    for(const key of ["costMicrousd","inputTokens","outputTokens","totalTokens"] as const)if(Number.isSafeInteger(receipt[key])&&Number(receipt[key])>=0)safe[key]=receipt[key];
    observedReceipts.set(receipt.clientRequestId,receipt);

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { createSceneStoreHost, sceneDeferred, untilScene } from "./helpers/scene-cost-store-host.mjs";
 import { DEFAULT_MODEL3D_SETTINGS, RODIN_PROMPT_MAX_CHARS } from "../src/model/model3d.ts";
+import { model3dAdaptationReceipt } from "../src/model/model3d-prompt-adapter.ts";
 import { model3dPresetView } from "../src/model/model3d-view.ts";
 import { addReferenceCompositionLayer, createReferenceComposition, referenceCompositionSources } from "../src/model/reference-composition.ts";
 import { withDocumentInRoute } from "../src/model/routes.ts";
@@ -335,12 +336,58 @@ test("3D Store queue preserves exact prompt, settings and ordered selected refer
   assert.equal(request.documentId, DOCUMENT); assert.equal(request.kind, "render_document");
   assert.equal(request.payload.artifactKind, "model3d"); assert.equal(request.payload.productionMode, "manual");
   assert.equal(request.payload.model3dPrompt, prompt); assert.deepEqual(request.payload.model3dSettings, settings);
+  assert.equal(Object.hasOwn(request.payload,"model3dPromptSource"),false);assert.equal(Object.hasOwn(request.payload,"model3dAdaptation"),false);
   assert.deepEqual(request.payload.model3dReferenceBlockIds, ids); assert.equal(request.payload.paidMediaConfirmed, true);
   assert.equal(h.appendRequests().length, 0); assert.equal(h.mediaRequests().length, 0);
   assert.equal(await h.render({ model3dPrompt: prompt, model3dSettings: settings, model3dReferenceBlockIds: ids, onDispatch: () => { dispatches++; } }), true);
   assert.equal(dispatches, 1); assert.equal(h.jobRequests().length, 1, "the identical in-progress job is reused");
   assert.equal(await h.render({ model3dPrompt: prompt, model3dSettings: settings, model3dReferenceBlockIds: [...ids].reverse() }), true);
   assert.equal(h.jobRequests().length, 2); assert.notEqual(h.jobRequests()[1].body.payload.requestKey, request.payload.requestKey, "changing material-guidance reference order changes request identity");
+});
+
+test("3D Store document adaptation queues its exact prepared prompt and source receipt without a manual prompt", OPTIONS, async t => {
+  const h = await host(t), ids = ["image-b", "model-a"];
+  const adapted = h.store.documentModel3dAdaptation(DOCUMENT, ids.length);
+  assert.equal(adapted.valid, true); assert.ok(adapted.prompt.includes("A ceramic bird sculpture."));
+  const receipt = model3dAdaptationReceipt(adapted);
+  assert.equal(await h.render({ model3dPromptSource: "document", model3dPrompt: adapted.prompt, model3dAdaptation: receipt, model3dReferenceBlockIds: ids }), true, h.store.ui.toast);
+  const request = h.jobRequests()[0].body.payload;
+  assert.equal(request.model3dPromptSource, "document"); assert.equal(request.model3dPrompt, adapted.prompt);
+  assert.deepEqual(request.model3dAdaptation, receipt); assert.deepEqual(request.model3dReferenceBlockIds, ids);
+  assert.equal(h.appendRequests().length, 0); assert.equal(h.mediaRequests().length, 0);
+  assert.equal(await h.render({ model3dPrompt: adapted.prompt, model3dReferenceBlockIds: ids }), true);
+  assert.notEqual(h.jobRequests()[1].body.payload.requestKey, request.requestKey, "identical text in exact and Document modes is a different source contract");
+});
+
+test("3D Store refuses forged or stale Document adaptation before any queue request", OPTIONS, async t => {
+  const h = await host(t), adapted = h.store.documentModel3dAdaptation(DOCUMENT, 0);
+  const options = { model3dPromptSource: "document", model3dPrompt: adapted.prompt, model3dAdaptation: model3dAdaptationReceipt(adapted) };
+  for (const patch of [{ model3dPrompt: "A replacement not derived from the document" }, { model3dAdaptation: { ...options.model3dAdaptation, adapterVersion: "forged" } }, { model3dPromptSource: "unknown" }, { model3dPromptSource: undefined }]) {
+    assert.equal(await h.render({ ...options, ...patch }), false);
+  }
+  h.change("direction", "text", "An angular glass bird sculpture.");
+  assert.equal(await h.render(options), false); assert.equal(h.requests.length, 0);
+  const current = h.store.documentModel3dAdaptation(DOCUMENT, 0);
+  assert.equal(await h.render({ model3dPromptSource: "document", model3dPrompt: current.prompt, model3dAdaptation: model3dAdaptationReceipt(current) }), true);
+  assert.equal(h.jobRequests().length, 1); assert.equal(h.jobRequests()[0].body.payload.model3dPrompt, current.prompt);
+});
+
+test("3D Store retires a reviewed Document adaptation when context changes during a queue wait", OPTIONS, async t => {
+  const h = await host(t), gate = sceneDeferred(), adapted = h.store.documentModel3dAdaptation(DOCUMENT, 0);
+  h.store.sceneGateForTest("append", gate.promise);
+  const pending = h.render({ model3dPromptSource: "document", model3dPrompt: adapted.prompt, model3dAdaptation: model3dAdaptationReceipt(adapted) });
+  h.change("direction", "text", "A new model direction entered during the wait.");
+  gate.resolve(); assert.equal(await pending, false); assert.equal(h.requests.length, 0);
+});
+
+test("3D Store freezes the reviewed Document adaptation receipt before an asynchronous queue wait", OPTIONS, async t => {
+  const h = await host(t), gate = sceneDeferred(), adapted = h.store.documentModel3dAdaptation(DOCUMENT, 0);
+  const receipt = model3dAdaptationReceipt(adapted), reviewed = structuredClone(receipt);
+  h.store.sceneGateForTest("append", gate.promise);
+  const pending = h.render({ model3dPromptSource: "document", model3dPrompt: adapted.prompt, model3dAdaptation: receipt });
+  receipt.includedBlockIds.push("forged-after-review"); receipt.adapterVersion = "changed-after-review";
+  gate.resolve(); assert.equal(await pending, true, h.store.ui.toast);
+  assert.deepEqual(h.jobRequests()[0].body.payload.model3dAdaptation, reviewed);
 });
 
 test("3D Store freezes reviewed nested settings and reference order before an asynchronous queue wait", OPTIONS, async t => {

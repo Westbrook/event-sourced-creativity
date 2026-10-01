@@ -346,7 +346,7 @@ export function installOutputNavigationFocusNative(t, f, ports) {
     }
     // Bounded descendant grammar, resolved from current emitted ancestry.
     // The generic first-class port must not return the form for ".editor input".
-    const fieldDescendant = actual && selector.match(/^(\.[\w-]+)\s+(input|textarea)$/u);
+    const fieldDescendant = actual && selector.match(/^(\.[\w-]+)\s+(input|textarea|h2)$/u);
     const result = query(literalOwner?owner.owner:owner, fieldDescendant?.[2] ?? selector).filter(node=>{
       if (fieldDescendant) {
         const row = actual.byNode.get(node);

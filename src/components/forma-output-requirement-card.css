@@ -83,6 +83,10 @@ forma-output-requirement-card .output-requirement-coverage,
 forma-output-requirement-card .output-requirement-series,
 forma-output-requirement-card .output-requirement-formats,
 forma-output-requirement-card .output-requirement-form-footer { display: grid; min-inline-size: 0; gap: var(--forma-space-4, 1rem); }
+/* Keep the complete saving notice with its native footer actions on focus. */
+forma-output-requirement-card .output-requirement-form-footer { gap: var(--forma-space-2, .5rem); scroll-margin-block: var(--forma-focus-clearance, .5rem); }
+forma-output-requirement-card .output-requirement-form-footer > .output-requirement-actions { display: grid; grid-template-columns: minmax(0, 1fr) fit-content(50%); }
+forma-output-requirement-card .output-requirement-form-footer > .output-requirement-actions > button { min-inline-size: 0; }
 forma-output-requirement-card .output-requirement-form > button,
 forma-output-requirement-card .output-requirement-group > button,
 forma-output-requirement-card .output-requirement-subrow > button,

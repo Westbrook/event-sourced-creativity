@@ -71,7 +71,7 @@ function fixture(t,locale="en",{polling=false,scope=""}={}){
   const window={clearTimeout(){}};
   const fetch=(url,init={method:"GET"})=>{const reading=init.method==="GET";assert.ok(reading?polling&&(/^\/api\/document-jobs(?:\?|$)/u.test(url)||/^\/api\/document-jobs\/[^/]+\?inspection=1$/u.test(url)):url==="/api/document-jobs/adaptive"||/^\/api\/document-jobs\/[^/]+\/(?:cancel|force-fail)$/u.test(url));assert.equal(init.method,reading?"GET":"POST");const gate=deferred(),call={url,init,body:init.body?JSON.parse(init.body):null,gate};calls.push(call);if(takers.length)takers.shift()(call);else queues.push(call);return gate.promise;};
   const pollingMethods=polling?["syncDocumentJobs","#revalidateMissingAdaptivePlans"].map(name=>member(storeSyntax,"FormaStore",name)).join("\n"):'async syncDocumentJobs(){trace.push(["sync-jobs"]);}';
-  const Probe=eval(stripTypeScriptTypes(`((DOCUMENT_JOB_KINDS,isDocumentArtifactKind)=>(class {
+  const Probe=eval(stripTypeScriptTypes(`((DOCUMENT_JOB_KINDS,isDocumentArtifactKind,adaptiveSuggestionsForCanvas,adaptiveJobMatchesRequest,contextConsentFailure,documentJobTerminal,documentJobHasNoBudgetHold,planningStopBudget,cell,scope,currentFormaLocale,window,fetch)=>(class {
     #listeners=new Set();#planningConsentScope="";#planningConsentRoute="";#planningConsentResolve;
     #navigationCommit=null;#appendPipeline=Promise.resolve();#pendingAdaptiveIntents=new Map();#adaptiveStructureJobIds=new Map();#dismissedAdaptiveSuggestions=new Set();
     #planningRecoveryIdentities=new Map();#planningRecoverySequence=0;#planningLocaleRevision=0;
@@ -90,7 +90,7 @@ function fixture(t,locale="en",{polling=false,scope=""}={}){
     ${member(storeSyntax,"FormaStore","#clearPendingAdaptiveSelection")}
     ${member(storeSyntax,"FormaStore","#canPresentAdaptivePlanningJob")}
     ${pollingMethods}
-  }))`))(DOCUMENT_JOB_KINDS,isDocumentArtifactKind);
+  }))`))(DOCUMENT_JOB_KINDS,isDocumentArtifactKind,adaptiveSuggestionsForCanvas,adaptiveJobMatchesRequest,contextConsentFailure,documentJobTerminal,documentJobHasNoBudgetHold,planningStopBudget,cell,scope,currentFormaLocale,window,fetch);
   const host=new Probe();t.after(()=>host.closePlanningConsent());
   return{host,calls,trace,take:()=>queues.length?Promise.resolve(queues.shift()):new Promise(resolve=>takers.push(resolve)),async reply(call,body,status=200,beforeJson=()=>{}){call.gate.resolve({ok:status>=200&&status<300,status,json:async()=>{beforeJson();return body;}});await turn();}};
 }
@@ -138,12 +138,12 @@ function render(f,focusPort={}){
   const handlers=[],nothing=Symbol("nothing"),value=item=>Array.isArray(item)?item.map(value).join(""):typeof item==="function"?`__handler_${handlers.push(item)-1}__`:item===nothing?"":String(item??"");
   const html=(parts,...values)=>parts.reduce((result,part,index)=>result+part+(index<values.length?value(values[index]):""),""),icon=()=>"",i18n={t:(key,_fallback,values)=>values?key+JSON.stringify(values):key,number:String};
   const functionNode=previewSyntax.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==="consequentialPreview");assert.ok(functionNode);
-  const consequentialPreview=eval(stripTypeScriptTypes("("+functionNode.getText(previewSyntax).replace(/^export\s+/,"")+")"));
+  const consequentialPreview=eval(stripTypeScriptTypes("((html,icon,i18n)=>("+functionNode.getText(previewSyntax).replace(/^export\s+/,"")+"))"))(html,icon,i18n);
   const dialog=focusPort.dialog??{open:true,close(){this.open=false;f.trace.push(["dialog-close"]);}},store=f.host;
   const nativeDocument=planningFocusDocument(focusPort.ownerDocument??document);
   // Fixture request identifiers are plain ASCII; no browser selector behavior is claimed.
   const CSS={escape:value=>String(value)};
-  const Probe=eval(stripTypeScriptTypes(`(class {store=store;i18n=i18n;get isConnected(){return focusPort.connected!==false;}get updateComplete(){return focusPort.updateComplete??Promise.resolve(true);}get ownerDocument(){return nativeDocument;}requestUpdate(){}querySelector(selector){if(selector===".planning-consent-dialog")return dialog;return focusPort.querySelector?.(selector)??null;}querySelectorAll(selector){return focusPort.querySelectorAll?.(selector)??[];}render(){return this.#planningConsent();}${planningShellMembers()}})`)),probe=new Probe(),markup=probe.render();
+  const Probe=eval(stripTypeScriptTypes(`((html,icon,i18n,consequentialPreview,dialog,store,CSS)=>(class {store=store;i18n=i18n;get isConnected(){return focusPort.connected!==false;}get updateComplete(){return focusPort.updateComplete??Promise.resolve(true);}get ownerDocument(){return nativeDocument;}requestUpdate(){}querySelector(selector){if(selector===".planning-consent-dialog")return dialog;return focusPort.querySelector?.(selector)??null;}querySelectorAll(selector){return focusPort.querySelectorAll?.(selector)??[];}render(){return this.#planningConsent();}${planningShellMembers()}}))`))(html,icon,i18n,consequentialPreview,dialog,store,CSS),probe=new Probe(),markup=probe.render();
   assert.equal(probe.ownerDocument,nativeDocument,"The extracted Shell keeps the actual native focus document");
   const buttons=[...markup.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)].map(([,attrs,label])=>({label,disabled:/\?disabled=true\b/.test(attrs),click:handlers[Number(attrs.match(/@click=__handler_(\d+)__/)?.[1])]}));
   return{markup,buttons,probe,nativeClose:handlers[Number(markup.match(/@close=__handler_(\d+)__/)?.[1])],cancel:handlers[Number(markup.match(/@cancel=__handler_(\d+)__/)?.[1])],keydown:handlers[Number(markup.match(/@keydown=__handler_(\d+)__/)?.[1])]};
@@ -151,9 +151,9 @@ function render(f,focusPort={}){
 function entryHost(f,kind,draft="  Keep my exact original intent.\n"){
   const store=f.host,trace=f.trace;
   if(kind==="canvas"){
-    const Probe=eval(stripTypeScriptTypes(`(class {store=store;i18n={t:(_key,fallback)=>fallback};#intent=${JSON.stringify(draft)};#intentSubmitting=false;#selected=new Set();#canEditCanvas(){return true;}#anchorDocumentId(){return "doc-a";}#settleCanvasWrites(){return Promise.resolve(true);}#trackCanvasInteraction(...args){trace.push(["interaction",...args]);}requestUpdate(){}get draft(){return this.#intent;}set draft(value){this.#intent=value;}ask(){return this.#askIntent();}${member(canvasSyntax,"CanvasApplication","#askIntent")}})`));return new Probe();
+    const Probe=eval(stripTypeScriptTypes(`((store,trace)=>(class {store=store;i18n={t:(_key,fallback)=>fallback};#intent=${JSON.stringify(draft)};#intentSubmitting=false;#selected=new Set();#canEditCanvas(){return true;}#anchorDocumentId(){return "doc-a";}#settleCanvasWrites(){return Promise.resolve(true);}#trackCanvasInteraction(...args){trace.push(["interaction",...args]);}requestUpdate(){}get draft(){return this.#intent;}set draft(value){this.#intent=value;}ask(){return this.#askIntent();}${member(canvasSyntax,"CanvasApplication","#askIntent")}}))`))(store,trace);return new Probe();
   }
-  const Probe=eval(stripTypeScriptTypes(`(class {store=store;#intentPrompt=${JSON.stringify(draft)};requestUpdate(){}get draft(){return this.#intentPrompt;}ask(){return this.#askForma({preventDefault(){}});}tool(event){this.#assistantTool(event);}${member(adaptiveSyntax,"FormaAdaptivePath","#askForma")}${member(adaptiveSyntax,"FormaAdaptivePath","#assistantTool")}})`));return new Probe();
+  const Probe=eval(stripTypeScriptTypes(`((store)=>(class {store=store;#intentPrompt=${JSON.stringify(draft)};requestUpdate(){}get draft(){return this.#intentPrompt;}ask(){return this.#askForma({preventDefault(){}});}tool(event){this.#assistantTool(event);}${member(adaptiveSyntax,"FormaAdaptivePath","#askForma")}${member(adaptiveSyntax,"FormaAdaptivePath","#assistantTool")}}))`))(store);return new Probe();
 }
 
 
@@ -913,7 +913,7 @@ function planningFocusPort(f,executionId,{matching=true,nativeReturn=false,headi
       addEventListener(type,handler,options){const key=name+":"+type;listeners.set(key,[...(listeners.get(key)??[]),{handler,once:Boolean(options?.once)}]);},
       focus(options){focusCalls.push({name,options,rendered,dialogOpen:port.dialog.open,reviewOpen:Boolean(f.host.planningConsent.get()),tabindex:values.get("tabindex")??null});ownerDocument.activeElement=target;},
     };
-    Object.defineProperty(target,"tabIndex",{get:()=>values.has("tabindex")?Number(values.get("tabindex")):tagName==="BUTTON"?0:-1,set:value=>values.set("tabindex",String(value))});
+    Object.defineProperty(target,"tabIndex",{get:()=>values.has("tabindex")?Number(values.get("tabindex")):tagName==="BUTTON"?0:-1,set:value=>{values.set("tabindex",String(value));}});
     nodes.push(target);return target;
   }
   port.original=node("removed-opener");port.original.isConnected=false;
@@ -1573,7 +1573,7 @@ async function adaptiveWorkerSerializationR7(saved,{rawQuoteCheckpoint=false,job
   // These are actual serialization helpers, including the real quote-removal
   // rules. Unrelated rendering/provider branches are not exercised by this row.
   const helpers=["parseResult","parseRequest","safeResult","generationRevisionFromRequest","generationRequestIdentity","parentJobIdFromRequest","fanKindFromRequest","errorDetailFromResult","queueRecoveryPresentation","serializeJob","safeScopedJob"].map(declaration).join("\n");
-  const serializer=eval(stripTypeScriptTypes("(()=>{const certifiedAdaptiveRows=new WeakSet();const consentedAdaptiveJob="+consent.initializer.getText(workerSyntax)+";"+helpers+";return{safeResult,serializeJob,safeScopedJob,certify:row=>certifiedAdaptiveRows.add(row)};})()"));
+  const serializer=eval(stripTypeScriptTypes("((normalizePromptTechnique,documentGenerationRevision,documentGenerationRequestKey)=>{const certifiedAdaptiveRows=new WeakSet();const consentedAdaptiveJob="+consent.initializer.getText(workerSyntax)+";"+helpers+";return{safeResult,serializeJob,safeScopedJob,certify:row=>certifiedAdaptiveRows.add(row)};})"))(normalizePromptTechnique,documentGenerationRevision,documentGenerationRequestKey);
   const result={...saved.body.job.result,executionId:saved.executionId,bindingHash:saved.originalQuote.bindingHash,requestKey:saved.request.requestKey,sourceHash:saved.originalQuote.sourceHash,billingStatus:jobStatus==="completed"?"settled":"pending",quote:saved.originalQuote};
   const safe=serializer.safeResult(result);
   assert.equal(Object.hasOwn(safe,"quote"),false,"The real safeResult must not forward private quotes");
@@ -2264,7 +2264,7 @@ async function terminalWinnerSnapshotR9(state,status,budget){
   const declaration=name=>{const node=syntax.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text===name);assert.ok(node);return node.getText(syntax);};
   const consentedAdaptiveJob=()=>true,readAdaptivePlanningJobResult=async()=>null;
   const adaptiveStopBudget=async()=>budget,adaptivePlanningReviewAvailable=async()=>true;
-  const certify=eval(stripTypeScriptTypes("(()=>{"+["parseResult","certifiedAdaptiveJob"].map(declaration).join("\n")+";return certifiedAdaptiveJob;})()"));
+  const certify=eval(stripTypeScriptTypes("((consentedAdaptiveJob,readAdaptivePlanningJobResult,adaptiveStopBudget,adaptivePlanningReviewAvailable)=>{"+["parseResult","certifiedAdaptiveJob"].map(declaration).join("\n")+";return certifiedAdaptiveJob;})"))(consentedAdaptiveJob,readAdaptivePlanningJobResult,adaptiveStopBudget,adaptivePlanningReviewAvailable);
   const certified=await certify({}, {}, {status,result_json:JSON.stringify(serialized.scoped.result)},false,true);
   const terminal={...serialized.scoped,result:JSON.parse(certified.result_json)};
   assert.equal(terminal.status,status);assert.equal(Object.hasOwn(terminal.result,"quote"),false);
@@ -2749,7 +2749,7 @@ function liveCapacityCanvasR11(f,saved){
   const dockMembers=["#controlsScope","#currentControlsScope","#canEditCanvas","#closePopovers","#intentDock"]
     .map(name=>member(canvasSyntax,"CanvasApplication",name)).join("\n");
   const code='(class {store=store;i18n={system:source=>source,t:(key,fallback)=>fallback??key};#intent="";#intentSubmitting=false;#anchorDocumentId(){return saved.request.documentId;}#intentMatches(){return [];}#placeSource(){}#useSuggestion(){}#askIntent(){}render(){return this.#intentDock();}'+dockMembers+'})';
-  const markup=new (eval(stripTypeScriptTypes(code)))().render(),cards=new Map();
+  const markup=new (eval(stripTypeScriptTypes("((html,icon,blockTypeDefinition,store,saved)=>"+code+")"))(html,icon,blockTypeDefinition,store,saved))().render(),cards=new Map();
   for(const match of markup.matchAll(/<article\b[^>]*data-suggestion-id=([^\s>]+)[^>]*>[\s\S]*?<\/article>/gu)){
     const handler=match[0].match(/<header>[\s\S]*?<button\b[^>]*@click=__capacity_handler_(\d+)__/u);
     assert.ok(handler,"The actual suggestion card has its exact dismissal control");
@@ -3298,7 +3298,7 @@ async function paidReuseWorkerBodyR13(saved,status){
   };
   const canPrepareNewPlanning=()=>true;
   const preparedAdaptivePlanning=async()=>assert.fail("Paid reuse must stop at the existing verified receipt; do not prepare a purchase");
-  const route=eval(stripTypeScriptTypes("(()=>{"+["settingsFor","originalPlanningRequest","handleAdaptivePlanning"].map(functionText).join("\n")+";return handleAdaptivePlanning;})()"));
+  const route=eval(stripTypeScriptTypes("((adaptiveRequestLocale,record,fail,response,errorCode,errorStatus,prepareDocumentAuthority,priorPlanningRequest,canPrepareNewPlanning,preparedAdaptivePlanning)=>{"+["settingsFor","originalPlanningRequest","handleAdaptivePlanning"].map(functionText).join("\n")+";return handleAdaptivePlanning;})"))(adaptiveRequestLocale,record,fail,response,errorCode,errorStatus,prepareDocumentAuthority,priorPlanningRequest,canPrepareNewPlanning,preparedAdaptivePlanning);
   const result=await route(new Request("https://forma.invalid/api/document-jobs/adaptive",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...saved.request,action:"quote"})}),{},{});
   assert.equal(result.status,200);
   const body=await result.json();
@@ -3394,7 +3394,7 @@ async function finishPaidReuseR13(state){
 }
 for(const canvasId of[null,"original-board"])for(const status of["completed","uncertain"])for(const order of["verified-before-denial","denial-while-pending"]){
   test("adaptive paid reuse certification R13: "+(canvasId?"Canvas":"Document")+" "+status+" "+order,{timeout:5000},async t=>{
-    const state=await beginPaidReuseQuoteR13(t,canvasId,status),{f,saved,quoting}=state;
+    const state=await beginPaidReuseQuoteR13(t,canvasId,status),{f,saved}=state;
     const body=await paidReuseWorkerBodyR13(saved,status);
     if(order==="verified-before-denial"){
       await finishPaidQuoteReplyR13(state,body);assertPaidReuseReceiptR13(state,status);
@@ -3424,7 +3424,7 @@ const invalidPaidReuseBodiesR13=[
 ];
 for(const canvasId of[null,"original-board"])for(const[label,change,httpStatus=200]of invalidPaidReuseBodiesR13){
   test("adaptive paid reuse certification R13: "+(canvasId?"Canvas":"Document")+" "+label+" cannot certify an older paid view",{timeout:5000},async t=>{
-    const state=await beginPaidReuseQuoteR13(t,canvasId),{f,saved,quoting}=state;
+    const state=await beginPaidReuseQuoteR13(t,canvasId),{f,saved}=state;
     const body=await paidReuseWorkerBodyR13(saved,"completed");change(body);
     await finishPaidQuoteReplyR13(state,body,httpStatus);
     await denyOlderPaidReadR13(state);
@@ -3561,7 +3561,7 @@ function noHoldOriginalBodyR15(saved, job, status) {
     error: status === "failed" ? "adaptive_force_failed" : "adaptive_execution_in_progress"};
 }
 async function noHoldReceiptFixtureR15(t, canvasId, sample) {
-  const state = await personalPlanningDetailFixtureR7(t, canvasId), {f, saved} = state;
+  const state = await personalPlanningDetailFixtureR7(t, canvasId), {saved} = state;
   const current = await terminalWinnerSnapshotR9({
     winnerId: saved.executionId, request: saved.request,
     pendingQuote: saved.originalQuote, pendingJob: saved.originalJob,
@@ -4099,7 +4099,7 @@ async function actualJobVisibilityR15(f,job,{visibility="visible"}={}) {
   const store=f.host,document={visibilityState:visibility};
   const code='(class {route=store.route;projection=store.projection;canvasProjection=store.canvasProjection;adaptiveStructures=store.adaptiveStructures;adaptiveSuggestionSets=store.adaptiveSuggestionSets;#adaptiveStructureJobIds={get:id=>store.knownPlanJob(id)};canvasPlanningDocumentId(){return store.canvasPlanningDocumentId();}visible(job){return this.#jobResultVisible(job);}'+
     member(storeSyntax,"FormaStore","adaptiveStructureFor")+member(storeSyntax,"FormaStore","adaptiveSuggestionSetsFor")+member(storeSyntax,"FormaStore","#jobResultVisible")+'})';
-  return new(eval(stripTypeScriptTypes(code)))().visible(job);
+  return new(eval(stripTypeScriptTypes("((documentJobMatchesSurface,isDocumentViewRoute,documentViewFromRoute,documentIdFromRoute,canvasIdFromRoute,store,document)=>"+code+")"))(documentJobMatchesSurface,isDocumentViewRoute,documentViewFromRoute,documentIdFromRoute,canvasIdFromRoute,store,document))().visible(job);
 }
 
 test("adaptive pending selection R15: accepted A preserves healthy B until A completes, then displays the exact new result",{timeout:7000},async t=>{
@@ -5046,7 +5046,7 @@ async function actualLocaleBootstrapR18(t,locale,{preference="saved",catalogFirs
   const timeZones=new Map(),subscribers=new Set(),STORAGE_KEY="forma:locale";
   let defaultTimeZone="",requestedRevision=0;
   let active={locale:"en",formatLocale:"en",direction:"ltr",timeZone:"UTC",messages:FORMA_DEFAULT_MESSAGES,revision:0};
-  const initializer=eval(stripTypeScriptTypes("(function(){"+actualFunctions+";return {initializeFormaLocale,setFormaLocale};})()"));
+  const initializer=eval(stripTypeScriptTypes("(function(FORMA_SUPPORTED_LOCALES,localStorage,navigator,catalogFor,RTL_SCRIPTS,timeZones,subscribers,STORAGE_KEY,defaultTimeZone,requestedRevision){"+actualFunctions+";return {initializeFormaLocale,setFormaLocale};})"))(FORMA_SUPPORTED_LOCALES,localStorage,navigator,catalogFor,RTL_SCRIPTS,timeZones,subscribers,STORAGE_KEY,defaultTimeZone,requestedRevision);
   const previousLanguage=document.documentElement.lang,previousDirection=document.documentElement.dir;
   const previousDispatch=document.dispatchEvent,previousQuery=document.querySelector;
   document.documentElement.lang="en";document.documentElement.dir="ltr";

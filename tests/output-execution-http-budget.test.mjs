@@ -6,10 +6,10 @@ import {snapshot,outputFor,flexible} from './output-presentation-fixtures.mjs';
 registerOutputSourceImports();
 const [
  {handleSession,POLICY_VERSION,reconcileFailedBudgetReservations,requireUser},
- {handleEvents}, {handleDocumentJobs}, {handleWorkspaces}, {outputImageBudget},
- {reconcileOutputNativeStorage}, {handleOutputRequirements},
- {outputDocumentExecutionBridge,outputExactImageRender},
- {appendAuditEvent,streamHead,readWorkspaceEvents,makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}, {parseOutputRequirement}, {inspectOutputAsset},
+ {handleEvents}, {handleDocumentJobs}, {handleWorkspaces}, ,
+ , {handleOutputRequirements},
+ {outputDocumentExecutionBridge},
+ {appendAuditEvent,streamHead,makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}, {parseOutputRequirement}, {inspectOutputAsset},
 ]=await Promise.all([
  import('../worker/pilot-policy.ts'),import('../worker/events-api.ts'),import('../worker/document-jobs-api.ts'),
  import('../worker/workspaces-api.ts'),import('../worker/output-image-budget.ts'),import('../worker/output-private-execution.ts'),
@@ -194,7 +194,7 @@ for(const shared of[false,true])for(const lateKnown of[false,true])test(`four-mi
  const slot=f.sqlite.prepare('SELECT * FROM output_operation_slots').get(),jobId=slot.job_id;
  const m=meter(f),entered=Promise.withResolvers(),release=Promise.withResolvers();let monotonic=0,networkCalls=0;
  t.mock.timers.enable({apis:['Date','setTimeout'],now:Date.now()});t.mock.method(performance,'now',()=>monotonic);
- t.mock.method(globalThis,'fetch',async(_url,_request)=>{m.metrics.provider++;networkCalls++;entered.resolve();await release.promise;
+ t.mock.method(globalThis,'fetch',async()=>{m.metrics.provider++;networkCalls++;entered.resolve();await release.promise;
   if(!lateKnown)throw new Error('Provider outcome remains unknown');
   return Response.json({id:'late-known-response',model:'gpt-5.6-terra',output_text:JSON.stringify(outputFor()),usage:{input_tokens:120,output_tokens:80,total_tokens:200}});
  });
@@ -301,7 +301,7 @@ for(const shared of[false,true])test(`121 authorized-only native jobs do not hid
  await m.profile('bounded-expiration-next-'+shared,()=>reconcileFailedBudgetReservations(f.env,user));assertBudget(m,'next bounded maintenance pass');assert.ok(f.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations WHERE status='released'").get().n>firstReleased,'already settled older siblings cannot starve later work');
 });
 
-test('cold legacy GET initializes one composed schema and a failed initialization never installs a ready marker',async t=>{
+test('cold legacy GET initializes one composed schema and a failed initialization never installs a ready marker',async()=>{
  const {outputSchemaIsReady}=await import('../worker/output-schema-state.ts');
  for(const lostAck of[false,true]){const f=outputTestDatabase();try{let fail=true,calls=0;const original=f.DB.batch.bind(f.DB);f.DB.batch=async statements=>{calls++;if(fail){fail=false;if(lostAck)await original(statements);throw new Error('schema initialization failed');}return original(statements);};
   await assert.rejects(()=>handleDocumentJobs(new Request('http://localhost/api/document-jobs'),f.env,''));assert.equal(outputSchemaIsReady(f.DB),false);

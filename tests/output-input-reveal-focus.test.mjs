@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
+import ts from "typescript";
 import { Signal } from "signal-polyfill";
 import { registerOutputSourceImports } from "./output-server-test-helpers.mjs";
 
@@ -191,8 +192,15 @@ test("Store input reveal native bridge preserves focus identity, subtree lookup,
 // replace the full runtime/native cases above.
 test("Store input reveal owns no paid or authored mutation and keeps one shared focus observer",()=>{
   const source=fs.readFileSync(new URL("../src/state/store.ts",import.meta.url),"utf8");
-  const start=source.indexOf("  async revealOutputInput("),end=source.indexOf("\n  async addArtifactAsContext(",start),body=source.slice(start,end);
-  assert.ok(body.includes("captureOutputNavigationFocus(document"));
+  const parsed=ts.createSourceFile("store.ts",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+  assert.equal(parsed.parseDiagnostics.length,0,"Store source parses before method-scoped inspection");
+  const stores=parsed.statements.filter(node=>ts.isClassDeclaration(node)&&node.name?.text==="FormaStore");
+  assert.equal(stores.length,1,"one actual FormaStore class");
+  const methods=stores[0].members.filter(node=>ts.isMethodDeclaration(node)&&ts.isIdentifier(node.name)&&node.name.text==="revealOutputInput");
+  assert.equal(methods.length,1,"one actual revealOutputInput method");
+  assert.ok(methods[0].body,"revealOutputInput has an implementation");
+  const body=methods[0].getText(parsed);
+  assert.equal(body.match(/captureOutputNavigationFocus\(document/g)?.length,1,"one shared focus observer");
   assert.ok(body.includes('this.openDocument(destinationDocumentId,destination,"output-input",{current,focus})'));
   assert.ok(body.includes("candidate?.focus===focus"));
   for(const forbidden of["addEventListener(",".append(",".appendBatch(","guardedFetch(","fetch(",".sourceEvents.join("])assert.equal(body.includes(forbidden),false,forbidden);

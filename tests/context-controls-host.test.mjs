@@ -2085,3 +2085,268 @@ async function cContextLibraryNavigationParent(t, f) {
   f.contextLibraryNavigation = { shell, library, native, boundary: "actual Shell admission / explicitly finite original Store route port" };
   return f.contextLibraryNavigation;
 }
+
+// Actual full Library/editor rendering and input handlers, using the existing
+// keyed-cache port. Native attribute bindings are observable here; the port
+// does not implement browser label.control, accessible-name or focus semantics.
+for (const [locale, expectedName] of Object.entries({
+  en: "Default influence", fr: "Influence par défaut", ar: "التأثير الافتراضي", ja: "デフォルトの影響",
+})) test("Library influence range has a stable localized label through " + locale + " input and cache", { concurrency: false }, t => {
+  const f = fixture(locale);
+  t.after(() => f.i18n.hostDisconnected());
+  for (const id of ["decision-0", "decision-1"]) {
+    const created = f.state.events.find(event => event.type === "BlockCreated" && event.payload.block_id === id);
+    created.payload.scope = "library"; delete created.payload.document_id;
+  }
+  const originalEvents = structuredClone(f.state.events), originalRequests = structuredClone(f.state.requests);
+  f.state.route = libraryBlockEditorRoute("decision-0");
+  activeFixture = f; f.host = new FormaLibrary(); f.draw();
+  assert.equal(f.i18n.system("Default influence"), expectedName, "use the exact current locale catalog");
+  const readWeight = (editor, value, expectedId) => {
+    assert.ok(editor instanceof registry["forma-library-block-editor"] && editor.isConnected);
+    const ranges = f.renderer.ownNodes(editor, "input").filter(node => node.attributes.type === "range");
+    assert.equal(ranges.length, 1);
+    const range = ranges[0], id = range.attributes.id;
+    assert.equal(typeof id, "string"); assert.ok(id.length > 0 && !/\s/u.test(id), "the real range has a usable ID");
+    if (expectedId !== undefined) assert.equal(id, expectedId, "redraw/cache never allocates a replacement range ID");
+    const labels = f.renderer.ownNodes(editor, "label").filter(node => node.attributes.class === "library-weight");
+    const outputs = f.renderer.ownNodes(editor, "output").filter(node => node.attributes.for === id);
+    assert.equal(labels.length, 1); assert.equal(outputs.length, 1);
+    assert.equal(labels[0].attributes.for, id, "the visible label addresses the range, not its preceding OUTPUT");
+    assert.equal(outputs[0].attributes.for, id, "the percentage records which range produced it");
+    assert.equal(range.attributes["aria-label"], expectedName, "the explicit range name excludes the changing percentage");
+    assert.equal(range.attributes.min, "0"); assert.equal(range.attributes.max, "1"); assert.equal(range.attributes.step, ".05");
+    assert.equal(range.value, String(value)); assert.equal(typeof range.handlers.input, "function");
+    const groups = [...editor.markup.matchAll(/<label\b[^>]*class="library-weight"[^>]*>([\s\S]*?)<\/label>/gu)];
+    assert.equal(groups.length, 1);
+    const parts = groups[0][1].match(/^([^<]*)<output\b[^>]*>([^<]*)<\/output>\s*<input\b/u);
+    assert.ok(parts, "the real emitted label keeps its text, percentage and range in the existing order");
+    assert.equal(parts[1].trim(), escapeText(expectedName));
+    assert.equal(parts[2], `${Math.round(value * 100)}%`, "percentage text comes from the real editor render");
+    assert.equal(f.renderer.ownNodes(editor, "input").filter(node => node.attributes.id === id).length, 1);
+    return { range, id };
+  };
+  const first = f.renderer.component("forma-library-block-editor", "decision-0");
+  const initial = readWeight(first, .7);
+  f.draw(); readWeight(first, .7, initial.id);
+  const handle = () => f.renderer.ownNodes(first, "input").find(node => node.attributes.maxlength === "96");
+  const handleDraft = "Unfinished Library influence handle", copyDraft = "  Keep this exact draft العربية 日本語.\n";
+  handle().handlers.input.call(first, { target: { value: handleDraft } }); f.draw();
+  const richText = f.renderer.query(first, "forma-ui-rich-text").find(child => child.attributes.class === "block-editor-copy");
+  assert.ok(richText);
+  richText.dispatchEvent(new CustomEvent("forma-input", { detail: { value: copyDraft } })); f.draw();
+  const firstRange = readWeight(first, .7, initial.id).range;
+  firstRange.value = "0.35";
+  firstRange.handlers.input.call(first, { target: firstRange, currentTarget: firstRange }); f.draw();
+  readWeight(first, .35, initial.id);
+  assert.deepEqual(f.state.events, originalEvents); assert.deepEqual(f.state.requests, originalRequests);
+
+  f.state.route = libraryBlockEditorRoute("decision-1"); f.draw();
+  assert.equal(first.isConnected, false);
+  const second = f.renderer.component("forma-library-block-editor", "decision-1");
+  assert.notEqual(second, first);
+  const other = readWeight(second, .7);
+  assert.notEqual(other.id, initial.id, "separate retained editor instances cannot share their range ID");
+  other.range.value = "0.85";
+  other.range.handlers.input.call(second, { target: other.range, currentTarget: other.range }); f.draw();
+  readWeight(second, .85, other.id);
+  f.state.route = "/library"; f.draw();
+  assert.equal(second.isConnected, false);
+  f.state.route = libraryBlockEditorRoute("decision-0"); f.draw();
+  assert.equal(f.renderer.component("forma-library-block-editor", "decision-0"), first);
+  readWeight(first, .35, initial.id);
+  assert.equal(handle().value, handleDraft);
+  assert.equal(f.renderer.query(first, "forma-ui-rich-text").find(child => child.attributes.class === "block-editor-copy"), richText);
+  assert.equal(richText.value, copyDraft); assert.equal(f.renderer.ownNodes(richText, "textarea")[0].value, copyDraft);
+  f.draw(); readWeight(first, .35, initial.id);
+  f.state.route = libraryBlockEditorRoute("decision-1"); f.draw();
+  assert.equal(f.renderer.component("forma-library-block-editor", "decision-1"), second);
+  readWeight(second, .85, other.id);
+  assert.deepEqual(f.state.events, originalEvents, "input and cache navigation neither save nor append an event");
+  assert.deepEqual(f.state.requests, originalRequests, "the range has no provider or fetch interaction");
+  for (const id of ["decision-0", "decision-1"]) {
+    assert.equal(f.store.projection.get().libraryBlocks.find(block => block.id === id).properties.weight, .7,
+      "the saved source weight stays unchanged while each instance keeps its local draft");
+  }
+});
+
+// E9: execute the complete production footer method through this file's existing
+// AST/transpile/function pattern. Only DOM geometry, ownership and RAF delivery
+// are declared inputs. This is not browser layout, event timing or paint proof.
+let e9FooterMethodFactory;
+function e9FooterMethodFixture(options = {}) {
+  if (!e9FooterMethodFactory) {
+    const tree = syntax("src/components/forma-output-requirement-card.ts");
+    const owners = tree.statements.filter(node => ts.isClassDeclaration(node) && node.name?.text === "FormaOutputRequirementCard");
+    assert.equal(owners.length, 1);
+    const methods = owners[0].members.filter(node => ts.isMethodDeclaration(node) && node.name?.getText(tree) === "#revealFooter");
+    assert.equal(methods.length, 1, "extract the complete actual footer method");
+    const code = ts.transpileModule("return class extends HTMLElement { #session; constructor(session) { super(); this.#session = session; }"
+      + " sessionForTest() { return this.#session; } replaceSessionForTest(session) { this.#session = session; }"
+      + " deliver(event) { return this.#revealFooter(event); }\n" + methods[0].getText(tree) + "\n}",
+    { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+    e9FooterMethodFactory = new Function("HTMLElement", "HTMLButtonElement", "getComputedStyle", "requestAnimationFrame", code);
+  }
+  const frames = [], scrolls = [];
+  class FooterElement {
+    isConnected = true;
+    parentElement = null;
+    clientTop = 0;
+    clientHeight = 300;
+    tagName = "DIV";
+    style = { overflowY: "visible" };
+    box = { top: 0, bottom: 500, height: 500 };
+    getBoundingClientRect() { return { left: 20, right: 300, width: 280, ...this.box }; }
+    closest(selector) {
+      if (selector === "#document-context-panel" && this.id === "document-context-panel") return this;
+      if (selector === "forma-output-requirement-card" && this.tagName === "FORMA-OUTPUT-REQUIREMENT-CARD") return this;
+      return this.parentElement?.closest(selector) ?? null;
+    }
+    focus() { assert.fail("footer reveal must never assign focus"); }
+    scrollBy() { assert.fail("only the existing document panel may scroll"); }
+    requestUpdate() { assert.fail("footer reveal must not update authored state"); }
+    dispatchEvent() { assert.fail("footer reveal must not emit an action"); }
+  }
+  class FooterButton extends FooterElement {
+    keyboardVisible = true;
+    matches(selector) { assert.equal(selector, ":focus-visible"); return this.keyboardVisible; }
+  }
+  const view = { innerHeight: 500, visualViewport: { offsetTop: 0, height: 500, ...options.visual } };
+  const document = { defaultView: view, documentElement: { clientHeight: 500 }, activeElement: null };
+  const session = Object.freeze({ originalText: "Keep the exact unsaved request.\nنص — 元の文章。", dirty: true });
+  const Card = e9FooterMethodFactory(FooterElement, FooterButton, element => element.style,
+    callback => { frames.push(callback); return frames.length; });
+  const owner = new Card(session); owner.tagName = "FORMA-OUTPUT-REQUIREMENT-CARD";
+  const panel = new FooterElement(); panel.id = "document-context-panel";
+  panel.style = { overflowY: "auto" };
+  panel.box = { top: 100, bottom: 400, height: 300 };
+  panel.scrollTop = options.scrollTop ?? 200;
+  panel.scrollHeight = options.scrollHeight ?? 1000;
+  owner.parentElement = panel;
+  const form = new FooterElement(); form.tagName = "FORM"; form.parentElement = owner;
+  const footer = new FooterElement(); footer.tagName = "FOOTER"; footer.parentElement = form;
+  footer.style = { overflowY: "visible", scrollMarginBlockStart: "8px" };
+  const initialBox = { top: options.top ?? 50, bottom: options.bottom ?? 230 };
+  const initialScroll = panel.scrollTop;
+  footer.getBoundingClientRect = () => ({ left: 20, right: 300, width: 280,
+    top: initialBox.top - (panel.scrollTop - initialScroll), bottom: initialBox.bottom - (panel.scrollTop - initialScroll),
+    height: initialBox.bottom - initialBox.top });
+  const actions = new FooterElement(); actions.parentElement = footer;
+  const action = new FooterButton(), save = new FooterButton();
+  for (const button of [action, save]) {
+    button.parentElement = actions; button.form = form; button.ownerDocument = document;
+    button.style = { outlineWidth: "3px", outlineOffset: "3px" };
+  }
+  action.textContent = "Cancel"; save.textContent = "Save requirements";
+  save.disabled = false; // The Save-focus case declares an already reviewed native Save.
+  document.activeElement = action;
+  panel.scrollBy = args => { scrolls.push({ owner: panel, args }); panel.scrollTop += args.top; };
+  if (options.outerClip) {
+    const outer = new FooterElement(); outer.style = { overflowY: "clip" };
+    outer.box = { top: options.outerClip[0], bottom: options.outerClip[1] };
+    outer.clientHeight = options.outerClip[1] - options.outerClip[0]; panel.parentElement = outer;
+  }
+  const deliver = (target = action, currentTarget = footer) => owner.deliver({ target, currentTarget,
+    preventDefault() { assert.fail("native focus must not be canceled"); },
+    stopPropagation() { assert.fail("native focus must not be intercepted"); } });
+  const flush = () => {
+    assert.equal(frames.length, 1, "one pending callback, no polling or retry loop");
+    const callback = frames.shift(); callback();
+    assert.equal(frames.length, 0, "one reveal cannot schedule a later takeover");
+  };
+  const custody = () => ({ active: document.activeElement, session: owner.sessionForTest(),
+    text: session.originalText, dirty: session.dirty, form: action.form, actionParent: action.parentElement,
+    footerParent: footer.parentElement, connected: owner.isConnected, footerConnected: footer.isConnected,
+    saveDisabled: save.disabled, labels: [save.textContent, action.textContent] });
+  const unchanged = (before, label) => {
+    const after = custody();
+    for (const key of ["active", "session", "form", "actionParent", "footerParent"])
+      assert.equal(after[key], before[key], label + ": exact " + key + " identity");
+    assert.deepEqual(after, before, label + ": native and authored state");
+  };
+  return { owner, panel, form, footer, actions, action, save, document, frames, scrolls,
+    session, deliver, flush, custody, unchanged, FooterElement };
+}
+
+test("E9 footer method reveals the whole context with independently specified signed scrolls", () => {
+  const cases = [
+    { name: "above panel moves content down", top: 50, bottom: 230, expected: -58 },
+    { name: "below panel moves content up", top: 300, bottom: 480, expected: 88 },
+    { name: "exact beginning is reachable", top: 50, bottom: 230, scrollTop: 58, expected: -58 },
+    { name: "exact end is reachable", top: 300, bottom: 480, scrollTop: 200, scrollHeight: 588, expected: 88 },
+    { name: "outer clip reduces the available panel", top: 60, bottom: 220, outerClip: [150, 360], expected: -98 },
+    { name: "visual viewport reduces the available panel", top: 300, bottom: 470,
+      visual: { offsetTop: 125, height: 250 }, expected: 103 },
+  ];
+  for (const sample of cases) {
+    const x = e9FooterMethodFixture(sample), before = x.custody();
+    assert.equal(x.deliver(), undefined); assert.deepEqual(x.scrolls, [], sample.name + ": no synchronous move");
+    x.flush();
+    assert.equal(x.scrolls.length, 1, sample.name);
+    assert.equal(x.scrolls[0].owner, x.panel);
+    assert.deepEqual(x.scrolls[0].args, { top: sample.expected, behavior: "instant" }, sample.name);
+    x.unchanged(before, sample.name);
+    // Check the result against independently declared clip edges, not the solver.
+    const box = x.footer.getBoundingClientRect();
+    const edges = sample.outerClip ?? (sample.visual ? [125, 375] : [100, 400]);
+    assert.ok(box.top >= edges[0] + 8 && box.bottom <= edges[1] - 8, sample.name + ": complete footer is inside clearance");
+  }
+});
+
+test("E9 footer method refuses partial-fit scrolling and leaves an already visible context alone", () => {
+  for (const sample of [
+    { name: "already fits", top: 140, bottom: 320 },
+    { name: "exact clearance fits", top: 108, bottom: 392 },
+    { name: "one pixel taller cannot fit", top: 108, bottom: 393 },
+    { name: "both sides overflow", top: 50, bottom: 480 },
+    { name: "beginning prevents complete reveal", top: 50, bottom: 230, scrollTop: 57 },
+    { name: "end prevents complete reveal", top: 300, bottom: 480, scrollTop: 200, scrollHeight: 587 },
+  ]) {
+    const x = e9FooterMethodFixture(sample), before = x.custody(), scrollTop = x.panel.scrollTop;
+    x.deliver(); x.flush();
+    assert.deepEqual(x.scrolls, [], sample.name);
+    assert.equal(x.panel.scrollTop, scrollTop, sample.name + ": no clipped partial scroll");
+    x.unchanged(before, sample.name);
+  }
+});
+
+test("E9 footer method rechecks keyboard focus and current action, form, session and component at RAF", () => {
+  const cases = [
+    ["pointer focus", x => { x.action.keyboardVisible = false; }, () => {}],
+    ["pointer takes over queued keyboard focus", () => {}, x => { x.action.keyboardVisible = false; }],
+    ["focus moves to another action", () => {}, x => { x.document.activeElement = x.save; }],
+    ["action changes its form", () => {}, x => { x.action.form = new x.FooterElement(); }],
+    ["action leaves the footer row", () => {}, x => { x.action.parentElement = new x.FooterElement(); }],
+    ["footer moves to another form", () => {}, x => { x.footer.parentElement = new x.FooterElement(); }],
+    ["draft session replaced by equal content", () => {}, x => { x.owner.replaceSessionForTest(Object.freeze({ ...x.session })); }],
+    ["draft session retired", () => {}, x => { x.owner.replaceSessionForTest(null); }],
+    ["component disconnected", () => {}, x => { x.owner.isConnected = false; }],
+    ["footer disconnected", () => {}, x => { x.footer.isConnected = false; }],
+  ];
+  for (const [name, beforeQueue, beforeFrame] of cases) {
+    const x = e9FooterMethodFixture(); beforeQueue(x); x.deliver(); beforeFrame(x);
+    const before = x.custody(), scrollTop = x.panel.scrollTop;
+    x.flush();
+    assert.deepEqual(x.scrolls, [], name);
+    assert.equal(x.panel.scrollTop, scrollTop, name);
+    x.unchanged(before, name);
+  }
+});
+
+test("E9 footer method requires the same native form before queuing and only the latest action may reveal", () => {
+  for (const change of [x => { x.action.form = null; }, x => { x.action.parentElement = x.form; },
+    x => { x.owner.replaceSessionForTest(null); }]) {
+    const x = e9FooterMethodFixture(); change(x); const before = x.custody();
+    x.deliver(); assert.equal(x.frames.length, 0); assert.deepEqual(x.scrolls, []); x.unchanged(before, "initial guard");
+  }
+  const x = e9FooterMethodFixture();
+  x.document.activeElement = x.save; x.deliver(x.save);
+  x.document.activeElement = x.action; x.deliver();
+  assert.equal(x.frames.length, 2);
+  const before = x.custody(); x.frames.shift()();
+  assert.deepEqual(x.scrolls, [], "the old Save callback cannot scroll after focus moves to Cancel");
+  x.flush();
+  assert.equal(x.scrolls.length, 1); assert.equal(x.scrolls[0].owner, x.panel);
+  assert.deepEqual(x.scrolls[0].args, { top: -58, behavior: "instant" });
+  x.unchanged(before, "current action after queued predecessor");
+});

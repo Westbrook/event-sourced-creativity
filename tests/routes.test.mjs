@@ -172,3 +172,121 @@ test("scoped artifact deep links still reject malformed or duplicate delivery op
     assert.equal(projectTaskDocumentIdFromRoute(invalid), "doc-a"); assert.equal(artifactFocusOptionsFromRoute(invalid), "invalid");
   }
 });
+
+
+import { classifyExperienceRoute } from "../src/experiences/routes.ts";
+import { experienceIds } from "../src/experiences/intake.ts";
+import { parseRetainedStoryRoute } from "../src/model/retained-short-story.ts";
+import { resolveServerRoute } from "../src/platform/applications.ts";
+import { isProjectTaskRoute, withProjectTaskDocumentInRoute } from "../src/model/routes.ts";
+
+test("setup routes select an explicit chooser, registered fresh release or one exact recovery identity", () => {
+  const draft = "experience-draft-" + "0123456789abcdef".repeat(4);
+  const intent = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  for (const origin of ["", "http://localhost", "https://forma.example"]) {
+    for (const path of ["/make", "/make/"]) {
+      assert.deepEqual(classifyExperienceRoute(origin + path), { kind: "chooser" }, "A chooser never implicitly selects image");
+      assert.deepEqual(resolveServerRoute(origin + path), { application: "creative", entryPath: "/experiences.html", canonicalFamily: "/make" });
+    }
+    for (const experienceId of experienceIds) {
+      const path = origin + "/make/" + experienceId;
+      assert.deepEqual(classifyExperienceRoute(path), { kind: "fresh", experienceId });
+      assert.deepEqual(resolveServerRoute(path), { application: "creative", entryPath: "/experiences.html", canonicalFamily: "/make/" + experienceId });
+      for (const [key, id, byIntent] of [["draft", draft, false], ["intent", intent, true]]) {
+        assert.deepEqual(classifyExperienceRoute(path + "?" + key + "=" + id), { kind: "recover", experienceId, id, byIntent });
+        assert.deepEqual(resolveServerRoute(path + "?" + key + "=" + id), resolveServerRoute(path));
+      }
+    }
+  }
+  assert.deepEqual(classifyExperienceRoute("/make/image?%64raft=" + draft), { kind: "recover", experienceId: "image", id: draft, byIntent: false });
+  assert.deepEqual(classifyExperienceRoute("/make/scene?%69ntent=" + intent), { kind: "recover", experienceId: "scene", id: intent, byIntent: true });
+});
+
+test("setup classification rejects ambiguous raw addresses without repairing delimiters or paths", () => {
+  const draft = "experience-draft-" + "a".repeat(64), intent = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  // Pass the original strings directly. Native Request/URL construction can erase
+  // fragments or normalize dot segments before a Worker receives request.url.
+  const invalid = [
+    "/make?", "/make#", "/make?#", "/make/?", "/make/#",
+    "/make?draft=" + draft, "/make?intent=" + intent,
+    "/make/image?", "/make/image#", "/make/image?#",
+    "/make/image?draft=" + draft + "#", "/make/image?draft=" + draft + "#kept",
+    "/make/image?draft=" + draft + "&", "/make/image?&draft=" + draft,
+    "/make/image?draft=" + draft + "&&", "/make/image?draft=" + draft + "&draft=" + draft,
+    "/make/image?draft=" + draft + "&%64raft=" + draft,
+    "/make/image?%64raft=" + draft + "&dr%61ft=" + draft,
+    "/make/image?intent=" + intent + "&%69ntent=" + intent,
+    "/make/image?draft=" + draft + "&intent=" + intent,
+    "/make/image?draft=" + draft + "&document=doc-a",
+    "/make/image?%2564raft=" + draft, "/make/image?intentId=" + intent,
+    "/make/image?draft=", "/make/image?draft=experience-draft-" + "a".repeat(63),
+    "/make/image?draft=experience-draft-" + "A".repeat(64),
+    "/make/image?intent=" + intent.toUpperCase(), "/make/image?intent=not-an-intent",
+    "/make/image?document=doc-a", "/make/image?unknown=value",
+    "/make/unknown", "/make/image/", "/make/image/extra", "/make//image",
+    "/make/%69mage", "/make/./image", "/make/%2e/image",
+    "/make/image/../scene", "/make/%2e%2e/deliver", "/make/../deliver",
+    "/make/image\\extra", "/make/image?draft=" + draft + "\n",
+    "/make/image?unknown=" + "x".repeat(2048),
+  ];
+  for (const address of invalid) {
+    assert.deepEqual(classifyExperienceRoute(address), { kind: "invalid" }, JSON.stringify(address));
+    assert.equal(resolveServerRoute(address), null, JSON.stringify(address));
+  }
+  for (const address of ["/", "/deliver", "/activity?document=doc-a", "/make-other?draft=" + draft,
+    "/api/experiences/drafts?unrelated=" + "x".repeat(5000),
+    "https://forma.example/api/retained-story/doc-a/artifact-a?unrelated=" + "x".repeat(5000)]) {
+    assert.equal(classifyExperienceRoute(address), null, "Unrelated addresses retain their existing router: " + address.slice(0, 100));
+  }
+});
+
+test("the exact native retained four-tuple keeps its existing creative reader boundary", () => {
+  const selection = { documentId: "doc-a", artifactId: "artifact-a", revision: 3, contentSha256: "a".repeat(64) };
+  const query = "document=doc-a&artifact=artifact-a&revision=3&sha256=" + selection.contentSha256;
+  const canonical = "/make/short-story?" + query;
+  for (const relative of [canonical, "/make/short-story/?" + query,
+    "/make/short-story?sha256=" + selection.contentSha256 + "&revision=3&artifact=artifact-a&document=doc-a"]) {
+    assert.deepEqual(parseRetainedStoryRoute(relative), selection, "The native parser retains its established grammar");
+    for (const address of [relative, "https://forma.example" + relative]) {
+      assert.deepEqual(classifyExperienceRoute(address), { kind: "retained", selection });
+      assert.deepEqual(resolveServerRoute(address), { application: "creative", entryPath: "/creative/", canonicalFamily: "/make/short-story" });
+    }
+  }
+  for (const address of [
+    "/make/image?" + query, "/make?" + query,
+    "/make/short-story?artifact=artifact-a&revision=3&sha256=" + selection.contentSha256,
+    canonical + "&document=doc-a", canonical + "&%64ocument=doc-a",
+    canonical + "&draft=experience-draft-" + "b".repeat(64), canonical + "&unknown=1",
+    canonical.replace("revision=3", "revision=03"), canonical.replace("revision=3", "revision=-1"),
+    canonical.replace("revision=3", "revision=9007199254740992"),
+    canonical.replace(selection.contentSha256, "A".repeat(64)),
+  ]) {
+    assert.deepEqual(classifyExperienceRoute(address), { kind: "invalid" }, address);
+    assert.equal(resolveServerRoute(address), null, address);
+  }
+});
+
+test("make addresses never inherit a Document while native project-task membership remains unchanged", () => {
+  const draft = "experience-draft-" + "a".repeat(64), hash = "b".repeat(64);
+  const addresses = [
+    "/make", "/make/", "/make/image", "/make/short-story", "/make/unknown",
+    "/make/image?draft=" + draft,
+    "/make/short-story?document=original&artifact=a&revision=1&sha256=" + hash,
+    "/make?document=one&document=two#kept", "/make?", "/make#", "/make//image",
+    "/make/../deliver", "/make/%2e%2e/deliver", "/make/\\../deliver",
+    "/other/../make/short-story?artifact=a&revision=1&sha256=" + hash,
+    "https://forma.example/make/image?draft=" + draft,
+    "https://forma.example/make/../deliver#kept",
+  ];
+  for (const address of addresses) {
+    assert.equal(withProjectTaskDocumentInRoute(address, "replacement", "/deliver?document=current"), address);
+    assert.equal(withProjectTaskDocumentInRoute(address, "", "/activity?document=current"), address);
+    assert.equal(withProjectTaskDocumentInRoute(address, ""), address);
+  }
+  for (const address of ["/make/short-story", "/make/short-story/", "/make/short-story?draft=" + draft,
+    "/deliver", "/activity", "/library", "/canvas/library", "/library/artifact/a"]) assert.equal(isProjectTaskRoute(address), true, address);
+  for (const address of ["/make", "/make/", "/make/image", "/make/scene", "/make/unknown", "/make-other", "/make/short-story/extra"]) assert.equal(isProjectTaskRoute(address), false, address);
+  assert.equal(withProjectTaskDocumentInRoute("/deliver?keep=1#kept", "replacement"), "/deliver?keep=1&document=replacement#kept");
+  assert.equal(withProjectTaskDocumentInRoute("/library?document=old", ""), "/library");
+  assert.equal(withProjectTaskDocumentInRoute("/make-other?document=old#kept", "replacement"), "/make-other?document=old#kept");
+});

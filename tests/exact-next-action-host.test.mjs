@@ -24,7 +24,7 @@ function warm(facts=makeFacts(),onViewerUpdate=()=>{}){
   const document={activeElement:new HTMLElement()},nextActionFacts=()=>state.facts;
   const fakeStore={projection:{get:()=>state.facts},toast:()=>trace.push("toast:unavailable"),setRoute:route=>routes.push(route),patchUi:()=>{throw new Error("Unexpected UI operation");}};
   const imageViewer={output:null,isConnected:true,get updateComplete(){return Promise.resolve().then(()=>{trace.push("viewer-updated");onViewerUpdate(state);});},openImageViewer(){trace.push("viewer-open:"+this.output?.id);}};
-  const Probe=eval(stripTypeScriptTypes(`(class {
+  const Probe=eval(stripTypeScriptTypes(`((creativePreparationChoice,creativePreparationTargetAvailable,followCreativeNextTarget,nextActionFacts,fakeStore,imageViewer)=>(class {
     #formatChoiceOpen=false;#formatReturnFocus=null;#formatTarget=null;#formatRequired=null;#nextOutputTarget=null;#workbenchPane="write";
     store=fakeStore;i18n={t:(_key,fallback)=>fallback};
     requestUpdate(){trace.push("update-request");}
@@ -41,7 +41,7 @@ function warm(facts=makeFacts(),onViewerUpdate=()=>{}){
     openContextComposer(){throw new Error("Unexpected context action");}
     prepare(target){return this.#prepareFormat(target);}choose(medium){return this.#chooseFormat(medium);}cancel(){return this.#closeFormatChoice();}follow(action){return this.#followNextAction(action);}
     ${methods}
-  })`));
+  }))`))(creativePreparationChoice,creativePreparationTargetAvailable,followCreativeNextTarget,nextActionFacts,fakeStore,imageViewer);
   return{host:new Probe(),state,trace,routes,document,target:()=>creativeNextActions(state.facts).find(action=>action.id==="configure-output").target};
 }
 
@@ -98,7 +98,7 @@ function installPrivateSource(host){
   return host;
 }
 function configurationMember(text,from,to){const begin=text.indexOf(from),end=text.indexOf(to,begin+from.length);assert.ok(begin>=0&&end>begin,"Production configuration boundaries changed: "+from);return text.slice(begin,end).replaceAll("#","_");}
-const artifactConfigurationMethods=[configurationMember(artifactSource,"  #closeViewerPopovers(","  #clearCreationDraft("),configurationMember(artifactSource,"  protected override willUpdate(","  protected override updated("),configurationMember(artifactSource,"  protected override updated(","  #bindCompletedWorkflowStage("),configurationMember(artifactSource,"  #openCreate=","  async #revealWorkbenchPane("),configurationMember(artifactSource,"  async #revealWorkbenchPane(","  async openRender("),configurationMember(artifactSource,"  async openRender(","  async openArtifactById(")].join("\n");
+const artifactConfigurationMethods=[actualClassMembers(artifactSource,"DocumentArtifacts",["#requestDrafts","#requestReviewEpoch","#requestReviewLoading","#restoredRequest","#retireRequestReview"]).replaceAll("#","_"),configurationMember(artifactSource,"  #closeViewerPopovers(","  #clearCreationDraft("),configurationMember(artifactSource,"  protected override willUpdate(","  protected override updated("),configurationMember(artifactSource,"  protected override updated(","  #bindCompletedWorkflowStage("),configurationMember(artifactSource,"  #openCreate=","  async #revealWorkbenchPane("),configurationMember(artifactSource,"  async #revealWorkbenchPane(","  async openRender("),configurationMember(artifactSource,"  async openRender(","  async openArtifactById(")].join("\n");
 const imageConfigurationMethods=[configurationMember(generationSource,"  async openConfiguration(","  #budgetGuidance("),configurationMember(generationSource,"  protected override updated(","  override connectedCallback("),configurationMember(generationSource,"  #closeDetails(","  #closeFailures(")].join("\n");
 
 // Execute production lifecycle methods before each mocked update resolves. A stale
@@ -118,7 +118,7 @@ function configurationHost(kind,{changeAt=0,change=null}={}){
   }
   async function tick(label){const at=++awaits;trace.push("await:"+label);await Promise.resolve();if(at===changeAt)invalidate(change);host.updated();return true;}
   const members=kind==="artifact"?artifactConfigurationMethods:imageConfigurationMethods;
-  const Probe=eval(stripTypeScriptTypes(`(class extends Object {
+  const Probe=eval(stripTypeScriptTypes(`((retainCreativePreparation,VIDEO_ADAPTER_CONTRACT,document,window,nextActionFacts,fetch,store,ensureModalDialog,tick)=>(class extends Object {
     documentId="A";source="document";store=store;_configurationCurrent=null;_viewerCurrent=null;_createOpen=false;_activeId="";_viewerPopoverScope="";
     _kind="slides";_activeWorkflowStageId="";_detailsOpen=false;_queueOpen=false;_failuresOpen=false;_safetyDiagnosticOpen=false;_readinessTimer=0;_readinessSignature="";
     requestUpdate(){trace.push("request-update");}get updateComplete(){return tick("child");}_targetDocumentId(){return this.documentId;}
@@ -127,7 +127,7 @@ function configurationHost(kind,{changeAt=0,change=null}={}){
     querySelectorAll(selector){assert.equal(selector,"forma-ui-popover");return popovers;}
     closest(selector){assert.equal(selector,"forma-workspace");return{updateComplete:tick("workspace")};}
     dispatchEvent(event){trace.push("event:"+event.type);return true;}${members}
-  })`));
+  }))`))(retainCreativePreparation,VIDEO_ADAPTER_CONTRACT,document,window,nextActionFacts,fetch,store,ensureModalDialog,tick);
   host=new Probe();if(kind==="artifact")installPrivateSource(host);return{host,state,trace,dialog,popovers,invalidate,open:()=>kind==="artifact"?host.openRender("slides","A",{current:()=>state.required}):host.openConfiguration(()=>state.required),steps:()=>awaits};
 }
 for(const kind of ["artifact","image"]){
@@ -177,7 +177,7 @@ test("unavailable historical comparison renders the saved pair without a false z
   const html=(parts,...values)=>{seen.push(...values.filter(value=>value?.id));return parts.reduce((result,part,index)=>result+part+flatten(values[index]),"");};
   const projection={projectId:"p",documentId:"A",libraryOutputs:[savedImage,{...savedImage,id:"second"}]};
   const store={events:{get:()=>[]},projection:{get:()=>projection},ui:{comparisonOutputIds:"saved-image|second"}};
-  const Probe=eval(stripTypeScriptTypes(`(class {store=store;i18n={t:(_id,fallback)=>fallback,system:value=>value};#comparisonChange(){throw new Error("No historical changes are available");}render(){return this.#comparison();}${source.slice(begin,end)}})`));
+  const Probe=eval(stripTypeScriptTypes(`((outputComparisonHistory,outputQualityLabel,nothing,icon,html,store)=>(class {store=store;i18n={t:(_id,fallback)=>fallback,system:value=>value};#comparisonChange(){throw new Error("No historical changes are available");}render(){return this.#comparison();}${source.slice(begin,end)}}))`))(outputComparisonHistory,outputQualityLabel,nothing,icon,html,store);
   const rendered=new Probe().render();assert.match(rendered,/Historical comparison evidence is unavailable/);assert.doesNotMatch(rendered,/<strong>0 changes/);assert.deepEqual(seen.map(output=>output.id),["saved-image","second"]);
 });
 
@@ -198,7 +198,7 @@ function actualArtifactViewerHost({boundary=null,change=null,unloaded=false,memb
   const methods=["openArtifactById","#openArtifact","#saveArtifactEdit","#restoreRevision"].map(name=>{const method=actualClassMembers(artifactSource,"DocumentArtifacts",[name]);assert.ok(method);return method.replaceAll("#","_");});
   for(const name of ["#startArtifactEdit","#cancelArtifactEdit"]){const method=actualClassMembers(artifactSource,"DocumentArtifacts",[name]);assert.ok(method);methods.push(method.replaceAll("#","_"));}
   for(const [from,to] of [["  #currentDeliveryBinding(","  async #refreshDeliveryBinding("],["  async #refreshDeliveryBinding(","  async #showArtifactIntent("],["  async #artifactBinding(","  async #download("]])methods.push(configurationMember(artifactSource,from,to));
-  methods.push(configurationMember(artifactSource,"  protected override updated(","  #bindCompletedWorkflowStage(").replace("protected override ",""));Object.assign(host,eval(stripTypeScriptTypes("({"+methods.join(",\n")+"})")));
+  methods.push(configurationMember(artifactSource,"  protected override updated(","  #bindCompletedWorkflowStage(").replace("protected override ",""));Object.assign(host,eval(stripTypeScriptTypes("((HTMLElement,document,ensureModalDialog,fetch)=>({"+methods.join(",\n")+"}))"))(HTMLElement,document,ensureModalDialog,fetch));
   installPrivateSource(host);return{host,state,trace,dialog,original,projection,commitEdit,membersEntered,updateReads:()=>updateReads};
 }
 test("actual artifact viewer opens its unchanged saved revision after member lookup and final render",async()=>{

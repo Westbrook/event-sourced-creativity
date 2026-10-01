@@ -2307,3 +2307,68 @@ test("E5 Shared boundary: a current peer withdrawn before completion is not focu
   assert.equal(f.native.nativeFocus.length,count);assert.equal(f.native.listeners("focusin"),0);
   assert.equal(JSON.stringify(b.artifact),b.artifactJSON);assert.deepEqual(f.reads.map(row=>row.url),b.reads);
 });
+
+
+// Exact accepted focal URL spellings exercise the actual entry dispatcher,
+// current platform title/focus, then the existing Return and task links. The
+// original host/loader ports and every earlier test byte remain unchanged.
+for (const path of ["/knowledge/focal-points", "/knowledge/focal-points/",
+  "/laboratory/focal-points", "/laboratory/focal-points/",
+  "/system/focal-points", "/system/focal-points/"])
+  test("F Knowledge focal route spelling: " + path + " returns through Patterns to Landing", async t => {
+    const focal = connectedReferenceProfiles.focal;
+    const focalFile = "src/components/forma-focal-point-lab.ts";
+    const profile = { ...focal, path, registerCem: ["forma-ui-card"],
+      literalImports: [
+        ["../../components/forma-focal-point-lab", focalFile],
+        ["../../components/forma-design-system-lab", "src/components/forma-design-system-lab.ts"],
+        ["./landing-pages", "src/apps/knowledge/landing-pages.ts"],
+      ],
+      routes: [{ ...focal.routes[0], path }, connectedSpecialistProfiles.knowledge.routes[1],
+        connectedReferenceProfiles.landing.routes[0]],
+    };
+    const f = await hostFixture(t, "platform", "en", { nativeUrlParts: true, connectedLeaf: profile });
+    assert.equal(f.sessionReads.length, 1);
+    await f.replyConnectedSession(0);
+    await f.acceptModule(0);
+    // The retained fixture registers the declared actual leaf. Separately call
+    // this SAME entry instance's real dispatch function so preregistration
+    // cannot conceal a wrong lazy-import branch for a trailing slash.
+    const application = await ports.loadActual(profile.entry);
+    const loaded = await application.loadKnowledgeRoute(path);
+    assert.equal(loaded.FormaFocalPointLab, f.renderer.registry["forma-focal-point-lab"],
+      "Every accepted spelling loads the actual Focal module, never the component inventory");
+    const original = assertConnectedReference(f, profile);
+    assert.equal(f.title, `${f.i18n.t("knowledge.focal.heading")} — ${f.i18n.t("shell.knowledge")} — Forma`);
+    assert.equal(f.mainFocus().length, 1);
+    assert.equal(f.native.document.activeElement.attributes.id, "main-content");
+    assert.equal(f.tree().nodes.some(node => node.tag === "forma-component-catalog"), false);
+    assert.equal(f.reads.length, 6);
+    for (const endpoint of profile.endpoints) assert.equal(f.reads.filter(row => row.url === endpoint).length, 2);
+    for (let index = 0; index < 6; index++) await f.reply(index, response({ error: "fixture_local_asset_unavailable" }, 404));
+    assert.equal(f.tree().visible("article").filter(node => referenceClass(node, "focal-lab-asset")).length, 0);
+    const returns = f.tree().visible("a").filter(node => node.owner === original
+      && node.attributes.href === "/knowledge/patterns");
+    assert.equal(returns.length, 1);
+    assert.ok(returns[0].text.includes(f.i18n.t("knowledge.focal.return")));
+    await f.act(returns[0].port);
+    assert.equal(f.route, "/knowledge/patterns");
+    await f.acceptModule(1);
+    const patterns = assertConnectedReference(f, profile, "/knowledge/patterns");
+    assert.equal(original.isConnected, false);
+    assert.equal(f.mainFocus().length, 2);
+    assert.equal(f.native.document.activeElement.attributes.id, "main-content");
+    await f.navigate("/knowledge/landing-pages");
+    await f.acceptModule(2);
+    assertConnectedReference(f, profile, "/knowledge/landing-pages");
+    assert.equal(patterns.isConnected, false);
+    assert.equal(f.title, `${f.i18n.t("shell.navigation.landing-pages")} — ${f.i18n.t("shell.knowledge")} — Forma`);
+    assert.equal(f.mainFocus().length, 3);
+    assert.equal(f.native.document.activeElement.attributes.id, "main-content");
+    assert.deepEqual(f.completions, [path, "/knowledge/patterns", "/knowledge/landing-pages"]);
+    assert.equal(f.sessionReads.length, 1);
+    assert.equal(f.reads.length, 6);
+    assert.deepEqual(f.assignments, [], "Both departures stay in the current Knowledge shell");
+    assert.ok(f.serviceCalls.every(call => call.method === "GET"));
+    assert.equal(f.serviceCalls.length, 7, "Only the original session and six failed local-image reads occur");
+  });

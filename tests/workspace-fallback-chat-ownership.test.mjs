@@ -1062,7 +1062,24 @@ for (const variant of ["same-question", "modified-B"]) {
 test("C ordinary Chat command departure / pending send then accepted background job", { timeout: 45_000, concurrency: false }, async t => {
   const x = await mountedFallback(t, "en"), { f, h, native, worker } = x;
   const chatHref = withDocumentInRoute("/studio/chat", worker.documentId, h.store.projection.get().documentTitle);
-  const link = f.find("a", node => node.owner.tag === "forma-studio-mode-nav" && node.attributes.href === chatHref);
+  const navigators = f.components().filter(owner => owner.tag === "forma-studio-mode-nav" && owner.isConnected);
+  assert.equal(navigators.length, 1); const navigator = navigators[0];
+  const menus = f.components().filter(owner => owner.tag === "forma-ui-popover" && owner.parentElement === navigator
+    && owner.isConnected && classed(owner, "studio-view-menu"));
+  assert.equal(menus.length, 1); const menu = menus[0];
+  const trigger = f.find("button", node => node.owner === menu && classed(node, "ui-popover-trigger"));
+  const panel = menu.querySelector(".ui-popover-panel");
+  assert.ok(panel?.isConnected); assert.equal(panel.owner, menu);
+  assert.equal(trigger.attributes.popovertarget, panel.attributes.id);
+  assert.equal(trigger.port.matches(":disabled"), false); assert.equal(panel.matches(":popover-open"), false);
+  native.emit("pointerdown", trigger.port); native.focus(trigger.port);
+  // Existing native port executes the real click handler and popovertarget default.
+  // f.act alone deliberately does not implement that browser default action.
+  trigger.port.click(); await f.settle();
+  assert.equal(menu.querySelector(".ui-popover-panel")?.matches(":popover-open"), true);
+  const link = f.find("a", node => node.owner === menu && node.attributes["data-studio-view"] === "chat"
+    && node.attributes.href === chatHref);
+  assert.equal(menu.contains(link.port), true); assert.equal(link.port.closest("forma-ui-popover"), menu);
   native.emit("pointerdown", link.port); native.focus(link.port);
   await f.act(link, "click", { button: 0 }); await f.settle();
   const owners = f.components().filter(component => component.tag === "forma-chat-studio");

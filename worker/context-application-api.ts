@@ -103,7 +103,7 @@ export async function handleContextApplication(request:Request,env:WorkerEnv){
   let body:Record<string,unknown>;try{body=record(await request.json());}catch{return response({error:"invalid_request"},400);}
   if(!["preview","apply","retrieve","resume","dismiss"].includes(String(body.action)))return response({error:"authoring_action_required"},400);
   const prepared=await prepareContextAuthority(request,env,body,body.action==="preview"?"author":"read");if(prepared instanceof Response)return prepared;
-  const {principal,binding,sourceHead,projection,target,shared}=prepared;
+  const {principal,binding,sourceHead,projection,target}=prepared;
   let previewId=typeof body.previewId==="string"?body.previewId:"",approvalHash=typeof body.approvalHash==="string"?body.approvalHash:"";
   if(body.action==="resume"){
     const existing=await latestAuthoringPreview(env,principal,binding);

@@ -18,6 +18,14 @@ import { observeActualSceneResumeReads } from "./helpers/actual-scene-resume-rea
 const options = { concurrency: false, timeout: 45_000 };
 const classed = (node, name) => String(node?.attributes?.class ?? "").split(/\s+/u).includes(name);
 const inside = (node, ancestor) => { for (let at = node; at; at = at.parent) if (at === ancestor) return true; return false; };
+const assertFormatAlternatives = (tree, dialog) => {
+  // Fixed CreativeMedium contract: image plus the seven document artifact kinds;
+  // keep this oracle independent of the renderer and its imported kind list.
+  const values = tree.nodes.filter(node => node.tag === "forma-ui-choice-card" && inside(node, dialog))
+    .map(node => node.component?.value).sort();
+  assert.deepEqual(values, ["audio", "image", "model3d", "scene", "short_story", "slides", "storyboard", "video"],
+    "all existing format alternatives remain exactly once; no format is automatically submitted");
+};
 // Match f.find's exactly-one-visible contract within one explicit snapshot.
 // fullPageTree nodes are new objects on each call; parent identity is local.
 const findIn = (tree, tag, predicate) => {
@@ -190,14 +198,13 @@ for (const locale of ["en", "ja"]) {
   test("mounted Assistant next-step click opens exact free preparation without sending a message " + locale, options, async t => {
     const x = await mounted(t, locale), { f, panel } = x, p = x.h.store.projection.get();
     const action = x.actions().find(value => value.target.kind === "configure");
-    assert.ok(action && action.target.medium === null, "the unchanged fixture has no explicit medium; all seven choices stay deliberate");
+    assert.ok(action && action.target.medium === null, "the unchanged fixture has no explicit medium; all supported choices stay deliberate");
     const button = x.cardFor(action); x.native.emit("pointerdown", button.port); x.native.focus(button.port); await f.act(button);
     for (let step = 0; step < 8 && !f.tree().visible("dialog").some(node => classed(node, "next-format-dialog")); step++) await x.settle();
     const tree = f.tree(), dialog = findIn(tree, "dialog", node => classed(node, "next-format-dialog"));
     assert.equal(dialog.owner.tag, "forma-workspace"); assert.ok(dialog.port.open);
     assert.equal(x.h.store.projection.get().projectId, p.projectId); assert.equal(x.h.store.projection.get().documentId, p.documentId);
-    const formats = tree.nodes.filter(node => node.tag === "forma-ui-choice-card" && inside(node, dialog));
-    assert.equal(formats.length, 7); assert.equal(panel.open, true, "no fake accepted-tool close is used for navigation");
+    assertFormatAlternatives(tree, dialog); assert.equal(panel.open, true, "no fake accepted-tool close is used for navigation");
     assert.deepEqual(panel.messages, x.messages); assert.deepEqual(panel.tasks, x.tasks);
     const close = findIn(tree, "button", node => node.owner === dialog.owner && inside(node, dialog) && node.text === f.i18n.t("action.close"));
     await f.act(close); await x.settle();
@@ -236,7 +243,7 @@ test("mounted " + (canvas ? "Canvas" : "Creator") + " Assistant announces exact 
   assert.equal(dialog.owner.tag, "forma-workspace");
   assert.equal(x.h.store.route.get(), withDocumentInRoute("/", p.documentId, p.documentTitle));
   assert.equal(x.h.store.projection.get().projectId, p.projectId); assert.equal(x.h.store.projection.get().documentId, p.documentId);
-  assert.equal(arrival.nodes.filter(node => node.tag === "forma-ui-choice-card" && inside(node, dialog)).length, 7);
+  assertFormatAlternatives(arrival, dialog);
   assert.deepEqual({ events: x.h.store.events.get(), content: x.h.store.content.get(), head: x.h.store.head.get() }, x.before);
   assert.deepEqual(financial(x.worker), money);
   assert.deepEqual(x.h.requests.slice(first).filter(row => (row.init.method ?? "GET") !== "GET" && !resume.isReadOnlyResume(row)), [],
@@ -516,8 +523,7 @@ async function lifecycleSiblingPage(t, locale, surface) {
     const tree = f.tree(), dialog = findIn(tree, "dialog", node => classed(node, "next-format-dialog"));
     assert.equal(dialog.owner.tag, "forma-workspace"); assert.ok(dialog.port.isConnected && dialog.port.open);
     assert.ok(ports.ElementPort.hasStoreIdentity(dialog.owner, h.store));
-    assert.equal(tree.nodes.filter(node => node.tag === "forma-ui-choice-card" && inside(node, dialog)).length, 7,
-      "all existing format alternatives remain; no format is automatically submitted");
+    assertFormatAlternatives(tree, dialog);
     const close = findIn(tree, "button", node => node.owner === dialog.owner && inside(node, dialog)
       && node.text === f.i18n.t("action.close"));
     await activate(close); await quiet();
@@ -618,7 +624,7 @@ test("C lifecycle same-URL Workspace Configure preserves collapsed Assistant raw
   assert.equal(JSON.stringify(x.configure().target), target);
   const opened = f.tree(), dialog = findIn(opened, "dialog", node => node.owner === owner && classed(node, "next-format-dialog"));
   assert.ok(dialog.port.isConnected && dialog.port.open);
-  assert.equal(opened.nodes.filter(node => node.tag === "forma-ui-choice-card" && inside(node, dialog)).length, 7);
+  assertFormatAlternatives(opened, dialog);
   await x.activate(findIn(opened, "button", node => node.owner === owner && inside(node, dialog)
     && node.text === f.i18n.t("action.close"))); await x.quiet();
   assert.equal(h.store.route.get(), route); assert.ok(owner.isConnected && f.components().includes(owner));

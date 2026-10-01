@@ -12,9 +12,9 @@ const [
   { ensureOutputRequirementsSchema, outputAssertionStatements },
   { synchronizeProjectScope },
   { handleContextPackages },
-  { parseOutputRequirement },
-  { handleEventPrivacy },
-  { POLICY_VERSION },
+  ,
+  ,
+  ,
   { governedPackageSourceRightsCurrent },
 ] = await Promise.all([
   import("../worker/output-requirement-governance-assertions.ts"),

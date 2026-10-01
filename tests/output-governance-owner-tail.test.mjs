@@ -41,30 +41,55 @@ async function strictIdentityReplay(t, fixture, assertions, expectedCurrent) {
   const directory = mkdtempSync(join(tmpdir(), "forma-governance-identity-")); t.after(() => rmSync(directory, { recursive: true, force: true }));
   const path = join(directory, "fixture.sqlite"); await backup(fixture.sqlite, path);
   const script = String.raw`
-import json,sqlite3,sys
-request=json.load(sys.stdin); db=sqlite3.connect(request['database'])
+import json,re,sqlite3,sys,time
+started=time.monotonic()
+def milestone(stage,**fields):
+    print(json.dumps({"stage":stage,"elapsedMs":round((time.monotonic()-started)*1000),**fields}),file=sys.stderr,flush=True)
+milestone("started")
+# Reuse the D1 compiler's complete UTF-8 frame boundary, without an EOF wait.
+if len(sys.argv)!=2 or not re.fullmatch(r"[1-9][0-9]*",sys.argv[1]):
+    raise ValueError("Identity replay requires a positive decimal input byte length")
+expected=int(sys.argv[1])
+if expected>sys.maxsize:
+    raise ValueError("Identity replay input byte length exceeds the platform limit")
+milestone("input-read-start",expectedBytes=expected)
+payload=sys.stdin.buffer.read(expected)
+milestone("input-read-complete",expectedBytes=expected,receivedBytes=len(payload))
+if len(payload)!=expected:
+    raise EOFError("Identity replay input frame is truncated")
+request=json.loads(payload)
+milestone("input-parsed")
+db=sqlite3.connect(request['database'])
+milestone("database-opened")
 db.setlimit(sqlite3.SQLITE_LIMIT_FUNCTION_ARG,32)
 db.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER,100)
 db.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH,100000)
 db.setlimit(sqlite3.SQLITE_LIMIT_LENGTH,2000000)
+milestone("limits-set",captureCount=len(request['captures']),assertionCount=len(request['assertions']))
 maximumSql=0; maximumRow=0
-for statement in request['captures']:
+for index,statement in enumerate(request['captures']):
     maximumSql=max(maximumSql,len(statement['sql'].encode('utf8')))
     assert len(statement['bindings'])<=100
+    milestone("before-capture",index=index)
     value=db.execute(statement['sql'],statement['bindings']).fetchone()[0]
+    milestone("after-capture",index=index)
     assert isinstance(value,str)
     maximumRow=max(maximumRow,len(value.encode('utf8')))
 checks=[]
-for assertion in request['assertions']:
+for index,assertion in enumerate(request['assertions']):
     sql='SELECT CASE WHEN ('+assertion['sql']+') THEN 1 ELSE 0 END'
     maximumSql=max(maximumSql,len(sql.encode('utf8')))
     assert len(assertion.get('bindings',[]))<=100
+    milestone("before-assertion",index=index)
     checks.append(db.execute(sql,assertion.get('bindings',[])).fetchone()[0])
+    milestone("after-assertion",index=index)
 assert all(checks)==request['expectedCurrent'],checks
 print(json.dumps({'sqlite':sqlite3.sqlite_version,'maximumSqlBytes':maximumSql,'maximumProofRowBytes':maximumRow,'privateIdentityCurrent':all(checks),'statementCount':len(request['captures'])+len(request['assertions'])}))
+milestone("finished")
 `;
-  const result = spawnSync(process.env.PYTHON ?? "python3", ["-c", script], { input: JSON.stringify({ database: path, captures, assertions, expectedCurrent }), encoding: "utf8", maxBuffer: 1_000_000, timeout: 30_000 });
-  assert.equal(result.status, 0, result.stderr || String(result.error)); t.diagnostic(result.stdout.trim());
+  const input = JSON.stringify({ database: path, captures, assertions, expectedCurrent });
+  const result = spawnSync(process.env.PYTHON ?? "python3", ["-c", script, String(Buffer.byteLength(input, "utf8"))], { input, encoding: "utf8", maxBuffer: 1_000_000, timeout: 30_000 });
+  assert.equal(result.status, 0, [result.stderr, result.error && String(result.error)].filter(Boolean).join("\n")); t.diagnostic(result.stdout.trim());
 }
 
 test("same-owner Output authoring in another project preserves source currency without changing its cursor", async t => {

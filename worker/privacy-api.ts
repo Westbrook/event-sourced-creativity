@@ -3,6 +3,7 @@ import { reconcileOutputNativeStorage } from "./output-private-execution.ts";
 import { EXPIRED_DOCUMENT_JOB_REDACTION_SQL } from "./document-jobs-api.ts";
 import { releaseUndispatchedOutputReservations } from "./output-execution-control.ts";
 import { personalOutputErasureStatements, personalOutputErasureProgress } from "./output-requirement-retention.ts";
+import { liveMemoryErasureStatements } from "./memory-live-store.ts";
 import { migrateLegacyEventPayloads, unsafePublicIdentifierPredicate } from "./event-privacy-migration.ts";
 import { requireConsent, requireUser } from "./pilot-policy.ts";
 import { readProjectRequestContext } from "./project-access.ts";
@@ -56,6 +57,7 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
   const platformAssistant = await env.DB.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1")
     .first<{ available: number }>();
   const outputErasure=await personalOutputErasureStatements(env,actor.userId,now,EXPIRED_DOCUMENT_JOB_REDACTION_SQL);
+  const memoryErasure=await liveMemoryErasureStatements(env,{actorUserId:actor.userId,personalOnly:true},now);
   // Legacy paid slide attempts have no Output grant to revoke. Erase their
   // personal source fields in this same batch, keeping only unsettled financial
   // evidence; stop active execution so erased input cannot be republished.
@@ -87,7 +89,7 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
     env.DB.prepare("DELETE FROM external_content WHERE owner_id=?").bind(actor.userId),
     ...(platformAssistant ? [env.DB.prepare("UPDATE platform_assistant_private_content SET content='',redacted_at=? WHERE actor_user_id=? AND redacted_at IS NULL")
       .bind(now, actor.userId)] : []),
-    ...outputErasure,legacyPresentationErasure,
+    ...outputErasure,...memoryErasure,legacyPresentationErasure,
   ]);
   let outputReservationReconciliationPending=false;
   if(outputErasure.length)try{const remaining=await releaseUndispatchedOutputReservations(env,{ownerUserId:actor.userId,personalOnly:true,limit:1});outputReservationReconciliationPending=remaining.pending>0;}catch{outputReservationReconciliationPending=true;}

@@ -8,6 +8,46 @@ forma-assistant-panel {
   pointer-events: none;
 }
 
+/* When no floating gap exists, the current browse main gives this same native
+   button a real side gutter. Keep that space while its panel is open. */
+.application-creative[data-layout-intent="browse"] > forma-creative-assistant > forma-assistant-panel {
+  --forma-assistant-browse-lane-available: 1;
+  --forma-assistant-browse-lane-target: max(44px, var(--forma-control-min-size, 2.75rem));
+}
+
+.application-creative[data-layout-intent="browse"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-lane="true"]) > #main-content {
+  --forma-assistant-browse-lane-target: max(44px, var(--forma-control-min-size, 2.75rem));
+  box-sizing: border-box;
+  padding-inline-end: calc(var(--forma-assistant-browse-lane-base-inset, 0px) + var(--forma-assistant-browse-lane-target) + 2 * max(.625rem, var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-end, 0px)));
+}
+
+@media (pointer: coarse) {
+  forma-assistant-panel > .forma-assistant-launcher {
+    min-block-size: max(48px, var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
+  }
+
+  .application-creative[data-layout-intent="browse"] > forma-creative-assistant > forma-assistant-panel,
+  .application-creative[data-layout-intent="browse"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-lane="true"]) > #main-content {
+    --forma-assistant-browse-lane-target: max(48px, var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
+  }
+}
+
+forma-assistant-panel[data-browse-lane="true"]:has(> .forma-assistant-launcher) {
+  inset: auto;
+  left: var(--forma-assistant-browse-lane-left, 8px);
+  top: var(--forma-assistant-browse-lane-top, 8px);
+  inline-size: var(--forma-assistant-browse-lane-target);
+  block-size: var(--forma-assistant-browse-lane-target);
+  display: block;
+}
+
+.application-creative[data-layout-intent="browse"] > forma-creative-assistant > forma-assistant-panel[data-browse-lane="true"] > .forma-assistant-launcher {
+  inline-size: var(--forma-assistant-browse-lane-target);
+  min-inline-size: var(--forma-assistant-browse-lane-target);
+  block-size: var(--forma-assistant-browse-lane-target);
+  min-block-size: var(--forma-assistant-browse-lane-target);
+}
+
 .forma-assistant-launcher {
   min-inline-size: 7rem;
   min-block-size: 2.75rem;
@@ -24,11 +64,21 @@ forma-assistant-panel {
   pointer-events: auto;
 }
 
+.forma-assistant-launcher:focus-visible {
+  box-shadow: none;
+}
+
 forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher {
   inline-size: var(--forma-control-min-size, 2.75rem);
   min-inline-size: var(--forma-control-min-size, 2.75rem);
   justify-content: center;
   padding-inline: 0;
+}
+
+@media (pointer: coarse) {
+  forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher {
+    min-inline-size: max(48px, var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
+  }
 }
 
 forma-assistant-panel[data-tight-launcher="true"] .forma-assistant-launcher {
@@ -259,7 +309,7 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
 }
 
 .forma-assistant-input {
-  min-block-size: 2.75rem;
+  min-block-size: max(2.75rem, calc(2lh + 1.3rem + 2px));
   max-block-size: 8rem;
   resize: vertical;
   padding: .65rem .75rem;
@@ -486,4 +536,93 @@ forma-assistant-panel[data-studio-launcher="true"] > .forma-assistant-launcher {
   min-inline-size: var(--forma-assistant-studio-size);
   block-size: var(--forma-assistant-studio-size);
   min-block-size: var(--forma-assistant-studio-size);
+}
+/* A compact browse row can reserve real space for the existing Ask button.
+   Source keeps this reservation only while all five destinations still fit.
+   The separate short-landscape policy retains its one-column rail. */
+@media not all and (max-height: 37.5rem) and (orientation: landscape) {
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"] > forma-creative-assistant > forma-assistant-panel {
+    --forma-assistant-browse-slot: 1;
+  }
+
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--forma-control-min-size, 2.75rem);
+    column-gap: var(--forma-focus-clearance, .5rem);
+    align-items: center;
+    padding-inline-end: max(var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-end, 0px));
+    box-sizing: border-box;
+  }
+
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation {
+    grid-column: 1;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+
+  @media (pointer: coarse) {
+    .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
+      grid-template-columns: minmax(0, 1fr) max(var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
+    }
+  }
+}
+
+/* The existing side rail already owns space outside the reading lane. Keep
+   all five destinations above a measured utility cell, including while open. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"] > forma-creative-assistant > forma-assistant-panel,
+  .application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="true"] > forma-creative-assistant > forma-assistant-panel {
+    --forma-assistant-browse-slot: rail;
+  }
+
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"],
+  .application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="true"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) var(--forma-control-min-size, 2.75rem);
+    row-gap: var(--forma-focus-clearance, .5rem);
+    padding-block-end: max(var(--forma-focus-clearance, .5rem), env(safe-area-inset-bottom, 0px));
+    box-sizing: border-box;
+  }
+
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation,
+  .application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="true"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation {
+    grid-row: 1;
+    min-block-size: 0;
+    block-size: 100%;
+    max-block-size: 100%;
+    min-inline-size: 0;
+  }
+
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation > .ui-audience-navigation-list,
+  .application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="true"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation > .ui-audience-navigation-list {
+    box-sizing: border-box;
+    min-block-size: 0;
+    max-block-size: 100%;
+    padding-block: var(--forma-focus-clearance, .5rem);
+    padding-inline-start: max(var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-start, 0px));
+    padding-inline-end: max(var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-end, 0px));
+  }
+
+  @media (pointer: coarse) {
+    .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"],
+    .application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="true"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
+      grid-template-rows: minmax(0, 1fr) max(var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
+    }
+  }
+}
+
+forma-assistant-panel[data-browse-launcher="true"]:has(> .forma-assistant-launcher) {
+  inset: auto;
+  left: var(--forma-assistant-browse-left);
+  top: var(--forma-assistant-browse-top);
+  inline-size: var(--forma-assistant-browse-size);
+  block-size: var(--forma-assistant-browse-size);
+}
+
+forma-assistant-panel[data-browse-launcher="true"] > .forma-assistant-launcher {
+  inline-size: var(--forma-assistant-browse-size);
+  min-inline-size: var(--forma-assistant-browse-size);
+  block-size: var(--forma-assistant-browse-size);
+  min-block-size: var(--forma-assistant-browse-size);
 }

@@ -6,6 +6,8 @@ import { documentIdFromRoute } from "../src/model/routes.ts";
 import { AUTHORED,createProjectIntakeFixture,captureUnsentIntake,assertComplete,intendedIds,sceneDeferred,untilScene,readWorkspaceEvents,reviewProjectIntake } from "./helpers/project-intake-fixture.mjs";
 import {projectIntakeMessage} from "../src/components/design-system/locales/project-intake-messages.ts";
 const {projectIntake}=await import("../src/model/project-intake.ts");
+const {commitAtomicIntake}=await import("../worker/project-intake.ts");
+const {requireUser}=await import("../worker/pilot-policy.ts");
 
 const options={concurrency:false,timeout:45000};
 const exactRead=statement=>statement.sql.includes("expected.value AS requested_key");
@@ -342,4 +344,268 @@ for(const shape of ["blank","full"])test("intake current builder "+shape+" shape
   assert.deepEqual(row.reply.appended.map(event=>event.payload),row.body.events.map(event=>event.payload));
   assert.equal(canonical.projects.length,1);assert.equal(canonical.documents.length,1);assert.equal(canonical.eventClientReceipts,expected);
   assert.equal(x.visible().modal,false);
+});
+
+test("atomic intake custom receipt namespace and metadata survive lost ACK, repeat and Check",options,async t=>{
+  const x=await createProjectIntakeFixture(t),captured=await captureUnsentIntake(x),validated=projectIntake(captured);
+  assert.ok(validated);
+  const result=await requireUser(new Request("http://localhost/api/events"),x.worker.env,"creator");
+  assert.equal(Boolean(result.response),false);assert.equal(result.user.userId,x.worker.owner);assert.equal(result.user.streamId,x.worker.streamId);
+  const auth={user:result.user,principal:result.user,impersonation:null};
+  const prefix="atomic-source:🧭:v1:"+validated.projectId+":";
+  const intake={projectId:validated.projectId,documentId:validated.documentId,events:structuredClone(validated.events)};
+  intake.events.forEach((event,index)=>{event.payload.client_event_id=prefix+index;});
+  const config={receiptPrefix:prefix,clientId:"test:atomic-source",correlationPrefix:"test:atomic-correlation:",guard:{sql:"1=1",bindings:[]}};
+  let committed;const lost=Error("Synthetic loss after the actual custom atomic core committed");
+  await assert.rejects(async()=>{
+    const response=await commitAtomicIntake(x.worker.env,auth,intake,"commit",config),body=await response.json();
+    committed={response,body};assertComplete(rawRow(intake.events,committed));throw lost;
+  },error=>error===lost);
+  const first=await x.canonical(),changes=x.worker.sqlite.prepare("SELECT total_changes() AS count").get().count;
+  oneOriginal(first,intendedIds(intake.events));
+  for(const [index,event] of committed.body.appended.entries()){
+    const row=x.worker.sqlite.prepare("SELECT client_id,correlation_id FROM events WHERE stream_id=? AND event_id=?").get(x.worker.streamId,event.eventId);
+    assert.equal(row.client_id,config.clientId);assert.equal(row.correlation_id,config.correlationPrefix+intake.projectId);
+    const receipt=x.worker.sqlite.prepare("SELECT event_id FROM event_client_receipts WHERE stream_id=? AND client_event_id=?").get(x.worker.streamId,prefix+index);
+    assert.equal(receipt.event_id,event.eventId);
+  }
+  for(const action of ["commit","check"]){
+    const response=await commitAtomicIntake(x.worker.env,auth,intake,action,config),body=await response.json();
+    assertComplete(rawRow(intake.events,{response,body}));assert.deepEqual(body.appended,committed.body.appended);
+    assert.deepEqual((await x.canonical()).delta,first.delta);
+  }
+  assert.equal(x.worker.sqlite.prepare("SELECT total_changes() AS count").get().count,changes);
+  assert.equal(x.dispatches.length,1,"Only the original captured pre-Worker transport attempt exists; core calls are explicit");
+});
+
+test("atomic intake snapshots borrowed events and options before its first await",options,async t=>{
+  const x=await createProjectIntakeFixture(t),validated=projectIntake(await captureUnsentIntake(x));assert.ok(validated);
+  const result=await requireUser(new Request("http://localhost/api/events"),x.worker.env,"creator");
+  assert.equal(Boolean(result.response),false);assert.equal(result.user.userId,x.worker.owner);assert.equal(result.user.streamId,x.worker.streamId);
+  const auth={user:result.user,principal:result.user,impersonation:null},prefix="atomic-capture:v1:"+validated.projectId+":";
+  const intake={projectId:validated.projectId,documentId:validated.documentId,events:structuredClone(validated.events)};
+  intake.events.forEach((event,index)=>{event.payload.client_event_id=prefix+index;});
+  const config={receiptPrefix:prefix,clientId:"test:captured-client",correlationPrefix:"test:captured-correlation:",guard:{sql:"?=1",bindings:[1]}};
+  const original=structuredClone({intake,config});let mutated=false;
+  const originalDatabase=x.worker.env.DB;let redirectedDatabaseCalls=0;
+  const redirectedDatabase={
+    prepare(...args){redirectedDatabaseCalls++;return originalDatabase.prepare(...args);},
+    batch(...args){redirectedDatabaseCalls++;return originalDatabase.batch(...args);},
+    exec(...args){redirectedDatabaseCalls++;return originalDatabase.exec(...args);},
+  };
+  x.worker.controls.beforeRead=async()=>{
+    if(mutated)return;mutated=true;
+    intake.projectId=crypto.randomUUID();intake.documentId=crypto.randomUUID();
+    intake.events[0].payload.name="Borrower changed private name";intake.events[0].payload.client_event_id="borrower:replacement:0";
+    intake.events.pop();config.receiptPrefix="borrower:replacement:";config.clientId="borrower:client";
+    config.correlationPrefix="borrower:correlation:";config.guard.sql="0=1";config.guard.bindings[0]=0;
+    auth.user.userId="borrower-mutated-owner";auth.user.streamId="creative:borrower-mutated-stream";
+    x.worker.env.DB=redirectedDatabase;
+  };
+  let response;try{response=await commitAtomicIntake(x.worker.env,auth,intake,"commit",config);}finally{
+    x.worker.controls.beforeRead=null;auth.user.userId=x.worker.owner;auth.user.streamId=x.worker.streamId;x.worker.env.DB=originalDatabase;
+  }
+  const body=await response.json();assert.equal(mutated,true);
+  assert.equal(redirectedDatabaseCalls,0,"The replacement reference delegates to the same real DB but is never used");
+  assertComplete(rawRow(original.intake.events,{response,body}));
+  assert.deepEqual(body.appended.map(event=>event.payload),original.intake.events.map(event=>event.payload));
+  for(const event of body.appended){
+    const row=x.worker.sqlite.prepare("SELECT stream_id,client_id,correlation_id FROM events WHERE event_id=?").get(event.eventId);
+    const secret=x.worker.sqlite.prepare("SELECT owner_id FROM event_private_payloads WHERE private_event_id=?").get(event.eventId);
+    assert.equal(row.stream_id,x.worker.streamId);assert.equal(secret.owner_id,x.worker.owner);
+    assert.equal(row.client_id,original.config.clientId);assert.equal(row.correlation_id,original.config.correlationPrefix+original.intake.projectId);
+  }
+  const check=await commitAtomicIntake(x.worker.env,auth,original.intake,"check",original.config),reply=await check.json();
+  assert.equal(check.status,200);assert.deepEqual(reply.appended,body.appended);
+  oneOriginal(await x.canonical(),intendedIds(original.intake.events));
+});
+
+test("atomic intake additional guard is enforced at initial, transaction and final disclosure boundaries",options,async t=>{
+  for(const boundary of ["initial","transaction","final disclosure"])await t.test(boundary,async t=>{
+    const x=await createProjectIntakeFixture(t),validated=projectIntake(await captureUnsentIntake(x));assert.ok(validated);
+    const result=await requireUser(new Request("http://localhost/api/events"),x.worker.env,"creator");
+    assert.equal(Boolean(result.response),false);assert.equal(result.user.userId,x.worker.owner);assert.equal(result.user.streamId,x.worker.streamId);
+    const auth={user:result.user,principal:result.user,impersonation:null},prefix="atomic-guard:v1:"+validated.projectId+":";
+    const intake={projectId:validated.projectId,documentId:validated.documentId,events:structuredClone(validated.events)};
+    intake.events.forEach((event,index)=>{event.payload.client_event_id=prefix+index;});
+    const originalName=x.worker.sqlite.prepare("SELECT display_name FROM users WHERE user_id=?").get(x.worker.owner).display_name;
+    const config={receiptPrefix:prefix,clientId:"test:guard-client",correlationPrefix:"test:guard-correlation:",
+      guard:{sql:"EXISTS(SELECT 1 FROM users WHERE user_id=? AND display_name=?)",bindings:[x.worker.owner,originalName]}};
+    const rowCounts=()=>Object.fromEntries(["events","event_private_payloads","event_client_receipts"].map(table=>[table,x.worker.sqlite.prepare("SELECT COUNT(*) AS count FROM "+table).get().count]));
+    const before=rowCounts();let reads=0,withdrawals=0,retained=null;
+    const withdraw=()=>{withdrawals++;x.worker.sqlite.prepare("UPDATE users SET display_name=? WHERE user_id=?").run("Additional condition withdrawn",x.worker.owner);};
+    if(boundary==="initial")withdraw();
+    if(boundary==="transaction")x.worker.controls.beforeBatch=async statements=>{if(rootBatch(statements)&&!withdrawals)withdraw();};
+    if(boundary==="final disclosure")x.worker.controls.beforeRead=async statement=>{if(exactRead(statement)&&++reads===2)withdraw();};
+    let response;try{response=await commitAtomicIntake(x.worker.env,auth,intake,"commit",config);}finally{x.worker.controls.beforeRead=null;x.worker.controls.beforeBatch=null;}
+    const body=await response.json();assert.equal(withdrawals,1);assert.equal(response.status,403);assert.equal(Object.hasOwn(body,"appended"),false);
+    const permission=x.worker.sqlite.prepare("SELECT role,consent_version FROM users WHERE user_id=?").get(x.worker.owner);
+    assert.equal(permission.role,result.user.role);assert.ok(["creator","admin"].includes(permission.role));assert.equal(permission.consent_version,"pilot-2026-08-10","Only the additional guard was withdrawn");
+    if(boundary==="final disclosure"){
+      assert.equal(reads,2);retained=await x.canonical();oneOriginal(retained,intendedIds(intake.events));
+    }else assert.deepEqual(rowCounts(),before,"No event, private-payload orphan or receipt survives denied admission");
+    x.worker.sqlite.prepare("UPDATE users SET display_name=? WHERE user_id=?").run(originalName,x.worker.owner);
+    const recoveryChanges=x.worker.sqlite.prepare("SELECT total_changes() AS count").get().count;
+    const recovered=await commitAtomicIntake(x.worker.env,auth,intake,boundary==="final disclosure"?"check":"commit",config),reply=await recovered.json();
+    assertComplete(rawRow(intake.events,{response:recovered,body:reply}));oneOriginal(await x.canonical(),intendedIds(intake.events));
+    if(retained){
+      assert.deepEqual(ids(reply),retained.delta.map(event=>event.eventId));assert.deepEqual((await x.canonical()).delta,retained.delta);
+      assert.equal(x.worker.sqlite.prepare("SELECT total_changes() AS count").get().count,recoveryChanges,"Successful same-original Check is read-only");
+    }
+    const stable=rowCounts(),changes=x.worker.sqlite.prepare("SELECT total_changes() AS count").get().count;
+    x.worker.sqlite.prepare("UPDATE users SET display_name=? WHERE user_id=?").run("Disclosure condition withdrawn",x.worker.owner);
+    const denied=await commitAtomicIntake(x.worker.env,auth,intake,"check",config),deniedBody=await denied.json();
+    assert.equal(denied.status,403);assert.equal(Object.hasOwn(deniedBody,"appended"),false);assert.deepEqual(rowCounts(),stable);
+    assert.equal(x.worker.sqlite.prepare("SELECT total_changes() AS count").get().count,changes+1,"Only the explicit guard-row mutation wrote");
+  });
+});
+
+test("atomic intake OR in an additional guard never overrides denied ordinary authority",options,async t=>{
+  for(const boundary of ["initial","transaction","final disclosure"])await t.test(boundary,async t=>{
+    const x=await createProjectIntakeFixture(t),validated=projectIntake(await captureUnsentIntake(x));assert.ok(validated);
+    const result=await requireUser(new Request("http://localhost/api/events"),x.worker.env,"creator");
+    assert.equal(Boolean(result.response),false);assert.equal(result.user.userId,x.worker.owner);assert.equal(result.user.streamId,x.worker.streamId);
+    const auth={user:result.user,principal:result.user,impersonation:null},prefix="atomic-conjunction:v1:"+validated.projectId+":";
+    const intake={projectId:validated.projectId,documentId:validated.documentId,events:structuredClone(validated.events)};
+    intake.events.forEach((event,index)=>{event.payload.client_event_id=prefix+index;});
+    const config={receiptPrefix:prefix,clientId:"test:conjunction-client",correlationPrefix:"test:conjunction-correlation:",guard:{sql:"0=1 OR 1=1",bindings:[]}};
+    const rowCounts=()=>Object.fromEntries(["events","event_private_payloads","event_client_receipts"].map(table=>[table,x.worker.sqlite.prepare("SELECT COUNT(*) AS count FROM "+table).get().count]));
+    const before=rowCounts();let reads=0,withdrawals=0;
+    const withdraw=()=>{withdrawals++;x.worker.sqlite.prepare("UPDATE users SET consent_version=NULL WHERE user_id=?").run(x.worker.owner);};
+    if(boundary==="initial")withdraw();
+    if(boundary==="transaction")x.worker.controls.beforeBatch=async statements=>{if(rootBatch(statements)&&!withdrawals)withdraw();};
+    if(boundary==="final disclosure")x.worker.controls.beforeRead=async statement=>{if(exactRead(statement)&&++reads===2)withdraw();};
+    let response;try{response=await commitAtomicIntake(x.worker.env,auth,intake,"commit",config);}finally{x.worker.controls.beforeRead=null;x.worker.controls.beforeBatch=null;}
+    const body=await response.json();assert.equal(withdrawals,1);assert.equal(response.status,403);assert.equal(Object.hasOwn(body,"appended"),false);
+    if(boundary==="final disclosure"){assert.equal(reads,2);oneOriginal(await x.canonical(),intendedIds(intake.events));}
+    else assert.deepEqual(rowCounts(),before,"An OR-bearing additional guard cannot admit or leave private orphans");
+  });
+});
+
+test("atomic intake custom originals cannot be disclosed across namespaces, filled or replaced",options,async t=>{
+  for(const fault of ["other namespace","partial receipt","changed manifest","concurrent root collision","foreign extra key in default namespace","foreign extra key in custom namespace"])await t.test(fault,async t=>{
+    const x=await createProjectIntakeFixture(t),validated=projectIntake(await captureUnsentIntake(x));assert.ok(validated);
+    const result=await requireUser(new Request("http://localhost/api/events"),x.worker.env,"creator");
+    assert.equal(Boolean(result.response),false);assert.equal(result.user.userId,x.worker.owner);assert.equal(result.user.streamId,x.worker.streamId);
+    const auth={user:result.user,principal:result.user,impersonation:null},defaults=fault==="foreign extra key in default namespace";
+    const prefix=defaults?validated.events[0].payload.client_event_id.slice(0,-1):"atomic-fence:v1:"+validated.projectId+":";
+    if(defaults)assert.deepEqual(validated.events.map(event=>event.payload.client_event_id),validated.events.map((_event,index)=>prefix+index));
+    const intake={projectId:validated.projectId,documentId:validated.documentId,events:structuredClone(validated.events)};
+    intake.events.forEach((event,index)=>{event.payload.client_event_id=prefix+index;});
+    const config=defaults?undefined:{receiptPrefix:prefix,clientId:"test:fence-client",correlationPrefix:"test:fence-correlation:",guard:{sql:"1=1",bindings:[]}};
+    const rowCounts=()=>Object.fromEntries(["events","event_private_payloads","event_client_receipts"].map(table=>[table,x.worker.sqlite.prepare("SELECT COUNT(*) AS count FROM "+table).get().count]));
+    if(fault.startsWith("foreign extra key")){
+      const before=rowCounts(),existing=x.worker.sqlite.prepare("SELECT event_id,sequence,recorded_at FROM events WHERE stream_id=? ORDER BY sequence LIMIT 1").get(x.worker.streamId);
+      assert.ok(existing);let injected=0;
+      x.worker.controls.afterRead=async(statement,value)=>{
+        if(exactRead(statement)&&!injected){
+          assert.equal(value.results[0].receipt_total,0);injected++;
+          // Deliberate storage fault after the real absent snapshot, not an API exploit or ordinary receipt writer.
+          x.worker.sqlite.prepare("INSERT INTO event_client_receipts(stream_id,client_event_id,event_id,sequence,created_at) VALUES(?,?,?,?,?)")
+            .run(x.worker.streamId,prefix+"999",existing.event_id,existing.sequence,existing.recorded_at);
+        }
+      };
+      let response;try{response=await commitAtomicIntake(x.worker.env,auth,intake,"commit",config);}finally{x.worker.controls.afterRead=null;}
+      const body=await response.json();assert.equal(injected,1);assert.equal(response.status,409);assert.equal(body.status,"unknown");assert.equal(Object.hasOwn(body,"appended"),false);
+      assert.deepEqual(rowCounts(),{...before,event_client_receipts:before.event_client_receipts+1},"Only the explicitly injected foreign receipt survives; all own inserts roll back");
+      const foreign=x.worker.sqlite.prepare("SELECT event_id,sequence FROM event_client_receipts WHERE stream_id=? AND client_event_id=?").get(x.worker.streamId,prefix+"999");
+      assert.equal(foreign.event_id,existing.event_id);assert.equal(foreign.sequence,existing.sequence);
+      for(const event of intake.events)assert.equal(x.worker.sqlite.prepare("SELECT COUNT(*) AS count FROM event_client_receipts WHERE stream_id=? AND client_event_id=?").get(x.worker.streamId,event.payload.client_event_id).count,0);
+      const changes=x.worker.sqlite.prepare("SELECT total_changes() AS count").get().count;
+      const check=await commitAtomicIntake(x.worker.env,auth,intake,"check",config),reply=await check.json();
+      assert.equal(check.status,409);assert.equal(Object.hasOwn(reply,"appended"),false);
+      assert.equal(x.worker.sqlite.prepare("SELECT total_changes() AS count").get().count,changes);
+      return;
+    }
+    if(fault==="concurrent root collision"){
+      const entered=sceneDeferred(),release=sceneDeferred();let held=false;
+      x.worker.controls.afterRead=async(statement,value)=>{
+        if(exactRead(statement)&&!held){held=true;entered.resolve(value);await release.promise;}
+      };
+      const pending=commitAtomicIntake(x.worker.env,auth,intake,"commit",config).then(response=>({ok:true,response}),error=>({ok:false,error}));let winner,first,outcome,failed=false,failure;
+      const competing=structuredClone(intake);competing.events[0].payload.name="Different custom concurrent original";
+      try{
+        const reached=await Promise.race([entered.promise.then(value=>({stage:"entered",value})),pending.then(outcome=>({stage:"finished",outcome}))]);
+        assert.equal(reached.stage,"entered","The real initial receipt read is held before either core completes");
+        assert.equal(reached.value.results[0].receipt_total,0);
+        const response=await commitAtomicIntake(x.worker.env,auth,competing,"commit",config),body=await response.json();
+        winner={response,body};assertComplete(rawRow(competing.events,winner));
+      }catch(error){failed=true;failure=error;}
+      finally{release.resolve();outcome=await pending;x.worker.controls.afterRead=null;}
+      if(!outcome.ok)throw outcome.error;
+      first=outcome.response;
+      if(failed)throw failure;
+      const firstBody=await first.json();assert.equal(first.status,409);assert.equal(Object.hasOwn(firstBody,"appended"),false);
+      oneOriginal(await x.canonical(),intendedIds(intake.events));
+      const stored=(await readWorkspaceEvents(x.worker.env,x.worker.streamId)).find(event=>event.eventId===winner.body.appended[0].eventId);
+      assert.equal(stored.payload.name,competing.events[0].payload.name);
+      const changes=x.worker.sqlite.prepare("SELECT total_changes() AS count").get().count;
+      const check=await commitAtomicIntake(x.worker.env,auth,competing,"check",config),reply=await check.json();
+      assert.equal(check.status,200);assert.deepEqual(reply.appended,winner.body.appended);
+      assert.equal(x.worker.sqlite.prepare("SELECT total_changes() AS count").get().count,changes);
+      return;
+    }
+    const committed=await commitAtomicIntake(x.worker.env,auth,intake,"commit",config),original=await committed.json();
+    assertComplete(rawRow(intake.events,{response:committed,body:original}));
+    const candidate=structuredClone(intake),candidateConfig=structuredClone(config);
+    if(fault==="other namespace"){
+      candidateConfig.receiptPrefix="atomic-other:v1:"+intake.projectId+":";
+      candidate.events.forEach((event,index)=>{event.payload.client_event_id=candidateConfig.receiptPrefix+index;});
+    }else if(fault==="partial receipt"){
+      // Explicit receipt-storage fault; not an assertion that D1 partially commits.
+      x.worker.sqlite.prepare("DELETE FROM event_client_receipts WHERE stream_id=? AND client_event_id=?").run(x.worker.streamId,prefix+2);
+    }else candidate.events[0].payload.name="Changed custom manifest after original commit";
+    const stable=rowCounts(),changes=x.worker.sqlite.prepare("SELECT total_changes() AS count").get().count;
+    for(const action of fault==="other namespace"?["check"]:["check","commit"]){
+      const response=await commitAtomicIntake(x.worker.env,auth,candidate,action,candidateConfig),body=await response.json();
+      assert.equal(response.status,409);assert.equal(body.status,"unknown");assert.equal(Object.hasOwn(body,"appended"),false);
+      assert.deepEqual(rowCounts(),stable);
+    }
+    assert.equal(x.worker.sqlite.prepare("SELECT total_changes() AS count").get().count,changes);
+    const all=await readWorkspaceEvents(x.worker.env,x.worker.streamId);
+    assert.equal(all.find(event=>event.eventId===original.appended[0].eventId).payload.name,intake.events[0].payload.name);
+    assert.equal((await x.canonical()).eventClientReceipts,fault==="partial receipt"?3:4);
+    if(fault!=="partial receipt"){
+      const response=await commitAtomicIntake(x.worker.env,auth,intake,"check",config),body=await response.json();
+      assert.equal(response.status,200);assert.deepEqual(body.appended,original.appended);
+    }
+    if(fault==="other namespace"){
+      const standard=await x.raw(validated.events,"check");
+      assert.equal(standard.response.status,409);assert.equal(Object.hasOwn(standard.body,"appended"),false);
+      assert.deepEqual(rowCounts(),stable,"Default route cannot disclose or mutate a custom original");
+    }
+  });
+});
+
+test("atomic intake malformed internal envelopes and options invoke no read, run or batch operation",options,async t=>{
+  const x=await createProjectIntakeFixture(t),validated=projectIntake(await captureUnsentIntake(x));assert.ok(validated);
+  const result=await requireUser(new Request("http://localhost/api/events"),x.worker.env,"creator");
+  assert.equal(Boolean(result.response),false);assert.equal(result.user.userId,x.worker.owner);assert.equal(result.user.streamId,x.worker.streamId);
+  const auth={user:result.user,principal:result.user,impersonation:null},prefix="atomic-shape:v1:"+validated.projectId+":";
+  const intake={projectId:validated.projectId,documentId:validated.documentId,events:structuredClone(validated.events)};
+  intake.events.forEach((event,index)=>{event.payload.client_event_id=prefix+index;});
+  const config={receiptPrefix:prefix,clientId:"test:shape-client",correlationPrefix:"test:shape-correlation:",guard:{sql:"1=1",bindings:[]}};
+  let getters=0,databaseCalls=0;
+  const accessor={...config,guard:{bindings:[]}};
+  Object.defineProperty(accessor.guard,"sql",{enumerable:true,get(){getters++;return "1=1";}});
+  const mismatched=structuredClone(intake);mismatched.events[0].payload.client_event_id=prefix+"99";
+  const cases=[
+    ["extra envelope field",{...intake,approval:true},config],
+    ["extra options field",intake,{...config,approved:true}],
+    ["extra guard field",intake,{...config,guard:{...config.guard,approved:true}}],
+    ["missing guard",intake,{receiptPrefix:prefix,clientId:config.clientId,correlationPrefix:config.correlationPrefix}],
+    ["accessor is not invoked",intake,accessor],
+    ["receipt key mismatch",mismatched,config],
+  ];
+  const before=Object.fromEntries(["events","event_private_payloads","event_client_receipts"].map(table=>[table,x.worker.sqlite.prepare("SELECT COUNT(*) AS count FROM "+table).get().count]));
+  x.worker.controls.beforeRead=async()=>{databaseCalls++;};x.worker.controls.beforeRun=async()=>{databaseCalls++;};x.worker.controls.beforeBatch=async()=>{databaseCalls++;};
+  try{
+    for(const [name,value,configuration] of cases){
+      const response=await commitAtomicIntake(x.worker.env,auth,value,"commit",configuration),body=await response.json();
+      assert.equal(response.status,400,name);assert.equal(Object.hasOwn(body,"appended"),false,name);
+      assert.equal(databaseCalls,0,name);assert.equal(getters,0,name);
+    }
+  }finally{x.worker.controls.beforeRead=null;x.worker.controls.beforeRun=null;x.worker.controls.beforeBatch=null;}
+  const after=Object.fromEntries(["events","event_private_payloads","event_client_receipts"].map(table=>[table,x.worker.sqlite.prepare("SELECT COUNT(*) AS count FROM "+table).get().count]));
+  assert.deepEqual(after,before);assert.equal(getters,0);
 });

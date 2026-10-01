@@ -275,6 +275,46 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
   }
   #focus(key: string, preventScroll = true) { void this.updateComplete.then(() => this.querySelector<HTMLElement>(`#${this.#fieldId(key)}`)?.focus({ preventScroll })); }
   #focusSummary() { void this.updateComplete.then(() => this.querySelector<HTMLElement>(`#${this.#id}-heading`)?.focus({ preventScroll: true })); }
+  #revealFooter(event: FocusEvent) {
+    const footer = event.currentTarget, action = event.target, session = this.#session;
+    if (!session || !(footer instanceof HTMLElement) || !(action instanceof HTMLButtonElement)
+      || action.parentElement?.parentElement !== footer || action.form !== footer.parentElement) return;
+    // Native focus scrolls the action first. Reveal its existing notice afterwards,
+    // only while the same action, form and draft still own focus; never move focus.
+    requestAnimationFrame(() => {
+      if (!this.isConnected || this.#session !== session || !footer.isConnected
+        || footer.closest("forma-output-requirement-card") !== this
+        || action.ownerDocument.activeElement !== action || !action.matches(":focus-visible") || action.form !== footer.parentElement
+        || action.parentElement?.parentElement !== footer) return;
+      const panel = footer.closest<HTMLElement>("#document-context-panel");
+      if (!panel || !/^(auto|scroll)$/.test(getComputedStyle(panel).overflowY)) return;
+      const view = action.ownerDocument.defaultView;
+      if (!view) return;
+      const visual = view.visualViewport, footerBox = footer.getBoundingClientRect();
+      const actionStyle = getComputedStyle(action), footerStyle = getComputedStyle(footer);
+      const clearance = Math.max(parseFloat(footerStyle.scrollMarginBlockStart),
+        parseFloat(actionStyle.outlineWidth) + Math.max(0, parseFloat(actionStyle.outlineOffset)));
+      let top = Math.max(0, visual?.offsetTop ?? 0);
+      let bottom = Math.min(action.ownerDocument.documentElement.clientHeight,
+        (visual?.offsetTop ?? 0) + (visual?.height ?? view.innerHeight));
+      for (let ancestor: HTMLElement | null = footer.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        const style = getComputedStyle(ancestor);
+        if (!/^(auto|scroll|hidden|clip)$/.test(style.overflowY)) continue;
+        const box = ancestor.getBoundingClientRect();
+        top = Math.max(top, box.top + ancestor.clientTop);
+        bottom = Math.min(bottom, box.top + ancestor.clientTop + ancestor.clientHeight);
+      }
+      if (!Number.isFinite(clearance) || clearance < 0 || bottom <= top) return;
+      const lower = Math.max(footerBox.bottom + clearance - bottom, -panel.scrollTop);
+      const upper = Math.min(footerBox.top - clearance - top,
+        panel.scrollHeight - panel.clientHeight - panel.scrollTop);
+      // An oversized footer has no safe common interval. Keep native scrolling
+      // available rather than hiding copy or moving the focused action out of view.
+      if (lower > upper) return;
+      const delta = Math.min(Math.max(0, lower), upper);
+      if (delta) panel.scrollBy({ top: delta, behavior: "instant" });
+    });
+  }
   #blankSpec(id: string, label: string, originalText: string): OutputRequirementSpec {
     return { schema_version: 1, id, label, original_text: originalText, deliverables: [], value_origins: {} };
   }
@@ -899,7 +939,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
       <ol class="output-requirement-groups" aria-labelledby=${this.#fieldId("groups")}>${repeat(session.spec.deliverables, (value) => value.id, (value) => this.#deliverable(value))}</ol>
       <button aria-label=${this.#controlName(this.#t("addDeliverable"), "")} type="button" ?disabled=${this.#fieldsDisabled()} @click=${this.#addDeliverable}>${this.#t("addDeliverable")}</button>
       ${this.editorState.status === "invalid" && this.editorState.issues?.length ? html`<ul class="output-requirement-error">${this.editorState.issues.map((issue) => html`<li>${issue.message}</li>`)}</ul>` : nothing}
-      <footer class="output-requirement-form-footer"><p>${this.#t("noGeneration")}</p><div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t(this.#waiting || this.editorState.status === "saving" ? "saving" : "save"), "")} id=${this.#fieldId("save")} type="submit" form=${`${this.#id}-form`} ?disabled=${!this.#canSave()} aria-keyshortcuts="Control+Enter Meta+Enter">${this.#t(this.#waiting || this.editorState.status === "saving" ? "saving" : "save")}</button><button aria-label=${this.#controlName(this.#t("cancel"), "")} type="button" ?disabled=${this.#waiting || Boolean(this.originalSaveId)} @click=${this.#cancel}>${this.#t("cancel")}</button></div></footer>
+      <footer class="output-requirement-form-footer" @focusin=${this.#revealFooter}><p>${this.#t("noGeneration")}</p><div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t(this.#waiting || this.editorState.status === "saving" ? "saving" : "save"), "")} id=${this.#fieldId("save")} type="submit" form=${`${this.#id}-form`} ?disabled=${!this.#canSave()} aria-keyshortcuts="Control+Enter Meta+Enter">${this.#t(this.#waiting || this.editorState.status === "saving" ? "saving" : "save")}</button><button aria-label=${this.#controlName(this.#t("cancel"), "")} type="button" ?disabled=${this.#waiting || Boolean(this.originalSaveId)} @click=${this.#cancel}>${this.#t("cancel")}</button></div></footer>
       ${this.#cancelIntent ? html`<div class="output-requirement-warning"><h4>${this.#t("discardTitle")}</h4><div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t("keepEditing"), "")} id=${this.#fieldId("keepEditing")} type="button" @click=${() => { this.#cancelIntent = null; this.requestUpdate(); this.#focus("originalText", false); }}>${this.#t("keepEditing")}</button><button aria-label=${this.#controlName(this.#t("discard"), "")} type="button" ?disabled=${Boolean(this.originalSaveId)} @click=${this.#discard}>${this.#t("discard")}</button></div></div>` : nothing}
     </form>`;
   }

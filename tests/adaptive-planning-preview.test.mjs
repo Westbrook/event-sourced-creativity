@@ -17,7 +17,7 @@ function quote(privateInput={}){return{operation:"adaptive-structure",projectId:
 function render(locale,preview=quote()){
   const messages=catalog(locale),nothing=Symbol("nothing"),string=value=>Array.isArray(value)?value.map(string).join(""):value===nothing?"":String(value??""),html=(parts,...values)=>parts.reduce((result,part,index)=>result+part+(index<values.length?string(values[index]):""),"");
   const i18n={number:value=>new Intl.NumberFormat(locale).format(value),t:(key,_fallback,values={})=>{assert.ok(Object.hasOwn(messages,key),`${locale}: ${key} must not fall back to English`);return messages[key].replace(/\{(\w+)\}/gu,(_match,name)=>{assert.ok(Object.hasOwn(values,name),`${key}: ${name}`);return String(values[name]);});}};
-  const consequentialPreview=eval(stripTypeScriptTypes("("+previewNode.getText(previewSyntax).replace(/^export\s+/,"")+")")),markup=consequentialPreview(preview,i18n);
+  const consequentialPreview=eval(stripTypeScriptTypes("((html)=>("+previewNode.getText(previewSyntax).replace(/^export\s+/,"")+"))"))(html),markup=consequentialPreview(preview,i18n);
   return{markup,summary:markup.split("<details>")[0],messages,i18n};
 }
 const sourceLabels={en:["Source documents","Library decisions","Canvas decisions"],fr:["Documents sources","Décisions de la bibliothèque","Décisions des tableaux"],ar:["المستندات المصدرية","قرارات المكتبة","قرارات اللوحات"],ja:["参照元の文書","ライブラリの決定事項","キャンバスの決定事項"]};

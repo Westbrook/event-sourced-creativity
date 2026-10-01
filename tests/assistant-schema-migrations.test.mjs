@@ -23,7 +23,7 @@ const LEGACY_ASSISTANT_DDL=[
 ];
 
 const identifier=value=>'"'+String(value).replaceAll('"','""')+'"';
-const normalizeSql=sql=>sql.replace(/["\x60\[\]]/gu,"").replace(/\s+/gu," ").trim();
+const normalizeSql=sql=>sql.replace(/["\x60[\]]/gu,"").replace(/\s+/gu," ").trim();
 function actualMigrations(){
  const journal=JSON.parse(readFileSync(new URL("meta/_journal.json",migrationDirectory),"utf8"));
  assert.equal(journal.dialect,"sqlite");assert.ok(Array.isArray(journal.entries));
@@ -587,8 +587,24 @@ test("main170 source metadata: snapshot 22 retains the accepted 87-table history
   for (let index = 0; index < 22; index++) assert.notEqual(composite.id, main170MetadataSnapshot(index).id);
   assert.equal(Object.keys(previous.tables).length, 71); assert.equal(Object.keys(composite.tables).length, 87);
   for (const [name, table] of Object.entries(previous.tables)) assert.deepEqual(composite.tables[name], table, name);
+  const chain = actualMigrations().map(entry => main170MetadataSnapshot(entry.idx));
+  assert.equal(new Set(chain.map(snapshot => snapshot.id)).size, chain.length, "Every journaled snapshot has a distinct identity");
+  for (let index = 23; index < chain.length; index++) {
+    assert.equal(chain[index].prevId, chain[index - 1].id, "Snapshot " + index + " retains its actual journal predecessor");
+    assert.match(chain[index].id, /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u);
+  }
   const { id: _generatedId, ...generatedShape } = generated, { id: _savedId, ...savedShape } = current;
-  assert.deepEqual(savedShape, generatedShape, "Saved snapshot comes from the installed generator and actual schema, not a hand-written subset");
+  // The CLI writer adds an empty schema-rename map; the SQLite API omits it.
+  // Normalize only that empty field, preserving every schema and other metadata field.
+  const normalizeEmptySchemaMap = shape => {
+    const metadata = { ...shape._meta };
+    if (Object.hasOwn(metadata, "schemas")) {
+      assert.deepEqual(metadata.schemas, {}, "Do not discard nonempty or invalid schema-rename metadata");
+      delete metadata.schemas;
+    }
+    return { ...shape, _meta: metadata };
+  };
+  assert.deepEqual(normalizeEmptySchemaMap(savedShape), normalizeEmptySchemaMap(generatedShape), "Saved snapshot comes from the installed generator and actual schema, not a hand-written subset");
   assert.deepEqual(await generateSQLiteMigration(current, generated), [], "The latest snapshot causes no duplicate SQL for the unchanged schema");
 });
 

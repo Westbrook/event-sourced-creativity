@@ -129,7 +129,7 @@ export class FormaPlatformShell extends FormaPresentationalElement {
     const access={role:session?.user.role,capabilities:session?.capabilities,canvasAccess:session?.canvas?.access};
     const task=application.navigation.find((item)=>navigationItemAccessible(item,access)&&navigationItemActive(id,item.id,location.pathname));
     const workspace=this.i18n.t(`shell.${id}`,application.label);
-    const focal=location.pathname.endsWith("/focal-points");
+    const focal=location.pathname.replace(/\/+$/, "").endsWith("/focal-points");
     const heading=focal?this.i18n.t("knowledge.focal.heading","Focal-point comparison"):task?this.i18n.t(`shell.navigation.${task.id}`,task.label):"";
     document.title=heading?`${heading} — ${workspace} — Forma`:`${workspace} — Forma`;
   }

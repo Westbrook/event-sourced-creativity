@@ -272,16 +272,16 @@ test("one explicit Clear narrows an actual 1000-target plan to zero locally, the
 });
 
 for (const [name, change] of [
-  ["Document", (f, current) => { f.controller.documentId = "doc-b"; }],
-  ["authorization scope", (f, current) => { f.store.captureAuthorizationScope = () => ({ key: "other-actor-scope" }); }],
+  ["Document", (f) => { f.controller.documentId = "doc-b"; }],
+  ["authorization scope", (f) => { f.store.captureAuthorizationScope = () => ({ key: "other-actor-scope" }); }],
   ["request permission", (f, current) => { current.permissions.canRequest = false; }],
   ["current source", (f, current) => { current.sourceRevision = "new-source"; current.confirmedPlan.sourceDigest = "new-source"; }],
   ["current plan", (f, current) => { current.confirmedPlan.revisionId = "new-plan"; }],
   ["target contract", (f, current) => { current.confirmedPlan.targetContractDigests[current.confirmedPlan.plan.targets[0].id] = "new-contract"; }],
   ["source evidence", (f, current) => { current.sourceVerification.status = "unavailable"; current.sourceVerification.reasonCodes = ["context_source_evidence_unavailable"]; }],
-  ["refresh state", (f, current) => { const resource = f.store.outputRequirements.resource; f.store.outputRequirements.resource = (id) => ({ ...resource(id), state: "refreshing" }); }],
-  ["disconnected view", (f, current) => { f.controller.isConnected = false; }],
-  ["inspection view", (f, current) => { f.controller.inspectionOnly = true; }],
+  ["refresh state", (f) => { const resource = f.store.outputRequirements.resource; f.store.outputRequirements.resource = (id) => ({ ...resource(id), state: "refreshing" }); }],
+  ["disconnected view", (f) => { f.controller.isConnected = false; }],
+  ["inspection view", (f) => { f.controller.inspectionOnly = true; }],
 ]) test(`a retained Clear callback cannot change selection after ${name} changes, even before an observer`, async () => {
   const f = await fixture(), current = f.snapshots.get("doc-a"), clear = clearControl(f);
   change(f, current); eventHandlers(clear, "click")[0]();

@@ -1968,6 +1968,9 @@ test("explicit personal erasure transactionally scrubs only the exact actor's pr
 
 test("actual scheduled retention physically erases expired privileged conversation text and records truthful maintenance counts", async () => {
   const state = await fixture();
+  const { readFile } = await import("node:fs/promises");
+  for (const name of ["0029_image_recovery_scan.sql", "0031_image_recovery_terminal_scan.sql"])
+    state.sqlite.exec(await readFile(new URL("../drizzle/" + name, import.meta.url), "utf8"));
   const headers = await platformHeaders(state, "operations");
   const route = platformEndpoint("/operations/providers");
   const expiredTurn = crypto.randomUUID();
@@ -2957,6 +2960,239 @@ test("Canvas assistant grounds its answer in real selected identities and reject
   assert.equal(result.turn.proposal.route, "/document/doc-atmosphere");
 });
 
+// Exercise the real shared readers, index synchronization and modern private
+// event envelope. Direct custody changes intentionally leave the owner head
+// unchanged: the surviving Canvas item must not grant access to its source.
+async function appendCanvasLinkedSourceEvents(state,entries,{legacy=false}={}){
+  const stream="creative:assistant-owner";
+  if(legacy){
+    const head=state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head;
+    appendFixtureEvents(state.sqlite,stream,entries);
+    return state.sqlite.prepare("SELECT event_id AS eventId,type FROM events WHERE stream_id=? AND sequence>? ORDER BY sequence").all(stream,head);
+  }
+  const {makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import("../worker/runtime.ts");
+  let sequence=Number(state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head);
+  const events=[];
+  for(const[type,payload]of entries){
+    const event=makeEvent(stream,++sequence,"user:assistant-owner","canvas-linked-source-fixture",crypto.randomUUID(),type,payload),values=eventWriteBindings(event);
+    await state.env.DB.prepare("INSERT INTO event_write_stage("+EVENT_WRITE_COLUMNS+") VALUES("+values.map(()=>"?").join(",")+")").bind(...values).run();
+    events.push(event);
+  }
+  return events;
+}
+async function canvasLinkedSourceFixture(state,{kind="document",legacy=false,alias=false,composites=false}={}){
+  const {IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE:evidence}=await import("../worker/image-adapter-evaluation-evidence.ts");
+  const now=new Date().toISOString(),approval=state.sqlite.prepare("INSERT INTO canvas_governance_requirements(requirement_id,status,evidence_ref,details_json,updated_at) VALUES(?,?,?,?,?)");
+  approval.run("trust_safety","approved","fixture/trust-safety","{}",now);
+  approval.run("counsel","approved","fixture/counsel","{}",now);
+  approval.run("second_image_adapter","approved",evidence.evaluationRef,JSON.stringify({adapter_id:evidence.adapterId,contract_version:evidence.adapterVersion,corpus_version:evidence.corpusVersion,evaluation_ref:evidence.evaluationRef,evaluation_passed:true}),now);
+  const reopened=await state.request(`/api/workspaces/${state.organizationId}/projects/${state.projectAccessId}/context`,{method:"POST",headers:state.owner});
+  assert.equal(reopened.status,200);state.owner={...state.owner,cookie:reopened.headers.get("set-cookie")?.split(";")[0]??""};
+  const ids={board:"linked-source-board",otherBoard:"linked-source-other-board",hidden:"linked-source-hidden-item",kept:"linked-source-kept-item",source:"linked-source-"+kind,context:"linked-dependent-context",card:"linked-dependent-context-card",arrangement:"linked-dependent-arrangement",keptContext:"linked-kept-context",keptArrangement:"linked-kept-arrangement"};
+  const common={project_id:"project-atmosphere"},onBoard={...common,canvas_id:ids.board};
+  const frame={x:0,y:0,w:240,h:160,z:"a0"};
+  const entries=[
+    ["CanvasCreated",{...onBoard,name:"Linked source board",slug:"linked-source-board"}],
+    ["CanvasCreated",{...common,canvas_id:ids.otherBoard,name:"Other linked source board"}],
+    ["CanvasItemPlaced",{...onBoard,item_id:ids.kept,source_kind:"document",source_id:"doc-atmosphere",title:"VISIBLE_LINKED_SIBLING",frame:{...frame,z:"a1"}}],
+    ["BlockCreated",{...common,document_id:"doc-atmosphere",block_id:ids.hidden,type:"direction",properties:{text:"Independently accessible native block sharing an item ID"},position:2}],
+  ];
+  if(kind==="document")entries.push(["DocumentCreated",{...common,document_id:ids.source,title:"Linked source document"}]);
+  else if(["block","reference","sketch"].includes(kind))entries.push(["BlockCreated",{...common,document_id:"doc-atmosphere",block_id:ids.source,type:kind==="sketch"?"sketch":"direction",properties:{text:"Native linked source",label:"Native source"},position:1}]);
+  else if(kind==="output")entries.push(["GenerationCompleted",{...common,document_id:"doc-atmosphere",generation_id:"linked-source-generation",object_ids:[ids.source],quality:"high",title:"Linked source output"}]);
+  else if(kind==="artifact")entries.push(["DocumentRenderCompleted",{...common,document_id:"doc-atmosphere",artifact_id:ids.source,artifact_kind:"short_story",title:"Linked source artifact",summary:"Artifact source",items:[{id:"linked-source-artifact-part",title:"Source part",content:"Source artifact body"}]}]);
+  else entries.push(["ContextSetFormalized",{...onBoard,context_set_id:ids.source,item_ids:[ids.kept],name:"Linked source context"}]);
+  const source=alias?{block_id:ids.source}:{source_kind:kind,source_id:ids.source};
+  entries.push([alias?"CanvasReferenceCreated":"CanvasItemPlaced",{...onBoard,...source,...(alias?{reference_item_id:ids.hidden}:{item_id:ids.hidden}),title:"PRIVATE_LINKED_COPIED_TITLE",body:"PRIVATE_LINKED_COPIED_BODY",frame,frames:["irrelevant placement extension"]}]);
+  const placed=await appendCanvasLinkedSourceEvents(state,entries,{legacy});
+  const anchor=placed.at(-1).eventId;
+  const lateEntries=[
+    ["CanvasTextApplied",{...onBoard,operation:{object:{kind:"canvas_item",item_id:ids.hidden},field:"value",ops:[{ins:{id:["web:linked",1],left:null,right:null,chars:"PRIVATE_LINKED_LATE_TEXT"}}]}}],
+    ["CanvasRegisterSet",{...onBoard,operation:{object:{kind:"canvas_item",item_id:ids.hidden},prop:"x",value:12,hlc:{wall:100,logical:0,node:"linked"}},annotation:"PRIVATE_LINKED_REGISTER_METADATA"}],
+    ["CanvasTextApplied",{...onBoard,operation:{object:{kind:"block",block_id:ids.hidden},field:"value",ops:[{ins:{id:["web:linked-alias",1],left:null,right:null,chars:"PRIVATE_LINKED_BLOCK_ALIAS_TEXT"}}]}}],
+    ["StrokeAdded",{...onBoard,operation:{sketch:{item_id:ids.hidden},stroke:{id:["web:linked",2],points:[0,0,1,1],style:{color:"#123456",width:2}}},annotation:"PRIVATE_LINKED_SKETCH_METADATA"}],
+    ["CanvasRegisterSet",{...onBoard,item_id:ids.kept,operation:{object:{kind:"canvas_item",item_id:ids.kept},prop:"x",value:24,hlc:{wall:101,logical:0,node:"linked"}},annotation:"VISIBLE_LINKED_SIBLING_METADATA"}],
+  ];
+  const late=await appendCanvasLinkedSourceEvents(state,lateEntries);
+  let compositeEvents=[];
+  if(composites){
+    const arrangement=(id,item,name)=>["CanvasArrangementCreated",{...onBoard,arrangement_id:id,kind:"grid",name,item_ids:[item],frames:[{item_id:item,x:0,y:0,w:240,h:160}],previous_frames:[{item_id:item,x:10,y:10,w:240,h:160}]}];
+    compositeEvents=await appendCanvasLinkedSourceEvents(state,[
+      ["ContextSetFormalized",{...onBoard,context_set_id:ids.context,item_ids:[ids.hidden],name:"PRIVATE_LINKED_DEPENDENT_CONTEXT"}],
+      ["CanvasItemPlaced",{...onBoard,item_id:ids.card,source_kind:"context",source_id:ids.context,title:"PRIVATE_LINKED_DEPENDENT_CARD",frame:{...frame,z:"a2"}}],
+      arrangement(ids.arrangement,ids.hidden,"PRIVATE_LINKED_DEPENDENT_ARRANGEMENT"),
+      ["ContextSetFormalized",{...onBoard,context_set_id:ids.keptContext,item_ids:[ids.kept],name:"VISIBLE_LINKED_SIBLING_CONTEXT"}],
+      arrangement(ids.keptArrangement,ids.kept,"VISIBLE_LINKED_SIBLING_ARRANGEMENT"),
+    ]);
+    for(const event of compositeEvents.filter(event=>["ContextSetFormalized","CanvasArrangementCreated"].includes(event.type))){
+      const raw=state.sqlite.prepare("SELECT payload FROM events WHERE event_id=?").get(event.eventId);
+      assert.equal(JSON.parse(raw.payload).item_ids,undefined,"membership must come from the real modern private envelope");
+      assert.ok(state.sqlite.prepare("SELECT 1 AS present FROM event_private_payloads WHERE private_event_id=?").get(event.eventId));
+    }
+  }
+  const selected=[ids.hidden,ids.kept,...(composites?[ids.card]:[])];
+  const url=endpoint("/canvas/"+ids.board+"/linked-source-board")+selected.map(id=>"&selected="+id).join("");
+  const initialResponse=await state.request(url,{headers:state.owner}),initial=await initialResponse.json();
+  assert.equal(initialResponse.status,200,JSON.stringify(initial)+" SQL:"+state.controls.lastDatabaseError);
+  assert.deepEqual(new Set(initial.context.selectedItems.map(item=>item.id)),new Set(selected));
+  assert.equal(initial.context.selectedItems.find(item=>item.id===ids.hidden).title,"PRIVATE_LINKED_COPIED_TITLE");
+  const resourceKind=kind==="context"?"canvas_context":["reference","sketch"].includes(kind)?"block":kind;
+  const resource=state.sqlite.prepare("SELECT * FROM project_resource_scopes WHERE project_access_id=? AND resource_kind=? AND resource_id=?").get(state.projectAccessId,resourceKind,ids.source);
+  assert.ok(resource,"fixture must have a real indexed "+resourceKind+" source");
+  assert.ok(state.sqlite.prepare("SELECT 1 AS present FROM project_resource_scopes WHERE project_access_id=? AND resource_kind='block' AND resource_id=?").get(state.projectAccessId,ids.hidden),"the nested block alias collision must have independent live block custody");
+  const anchorScope=state.sqlite.prepare("SELECT * FROM project_event_scopes WHERE event_id=?").get(anchor);
+  assert.ok(anchorScope);
+  return{ids,url,resourceKind,resource,anchor,anchorScope,late,compositeEvents,head:state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id='creative:assistant-owner'").get().head};
+}
+function assertCanvasLinkedSourceFree(state){
+  assert.equal(state.calls.length,0);
+  for(const table of["assistant_specialist_tasks","budget_reservations","cost_budget_reservations"])
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM "+table).get().n,0,table);
+}
+async function assertCanvasLinkedSourceWithdrawn(state,source,{post=true,composites=false}={}){
+  assert.equal(state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id='creative:assistant-owner'").get().head,source.head,"custody withdrawal must not append an owner event");
+  assert.ok(state.sqlite.prepare("SELECT 1 AS present FROM project_resource_scopes WHERE project_access_id=? AND resource_kind='canvas_item' AND resource_id=?").get(state.projectAccessId,source.ids.hidden),"item custody intentionally survives");
+  const pageResponse=await state.request(`/api/events?after=${source.anchorScope.project_sequence}&limit=5000&content=0`,{headers:state.owner}),page=await pageResponse.json();
+  assert.equal(pageResponse.status,200,JSON.stringify(page)+" SQL:"+state.controls.lastDatabaseError);
+  assert.equal(page.events.some(event=>event.eventId===source.anchor),false,"incremental page must not include the placement witness");
+  assert.equal("content" in page,false);
+  for(const event of source.late.slice(0,4))assert.equal(page.events.find(item=>item.eventId===event.eventId)?.type,"ProjectResourceRestricted",event.type);
+  assert.equal(page.events.find(event=>event.eventId===source.late[4].eventId)?.type,"CanvasRegisterSet");
+  assert.match(JSON.stringify(page),/VISIBLE_LINKED_SIBLING_METADATA/u);
+  assert.doesNotMatch(JSON.stringify(page),/PRIVATE_LINKED_/u);
+  if(composites){
+    for(const event of source.compositeEvents.slice(0,3))assert.equal(page.events.find(item=>item.eventId===event.eventId)?.type,"ProjectResourceRestricted",event.type);
+    for(const event of source.compositeEvents.slice(3))assert.equal(page.events.find(item=>item.eventId===event.eventId)?.type,event.type);
+  }
+  const response=await state.request(source.url,{headers:state.owner}),body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+  assert.deepEqual(body.context.selectedItems.map(item=>item.id),[source.ids.kept]);
+  assert.doesNotMatch(JSON.stringify(body),/PRIVATE_LINKED_/u);
+  if(post){
+    const answered=await state.request(source.url,json({turnId:crypto.randomUUID(),message:"What is selected?"},state.owner)),answer=await answered.json();
+    assert.equal(answered.status,201,JSON.stringify(answer)+" SQL:"+state.controls.lastDatabaseError);
+    assert.deepEqual(answer.context.selectedItems.map(item=>item.id),[source.ids.kept]);
+    assert.equal(answer.turn.reply.key,"assistant.response.canvasSelection");
+    assert.equal(answer.turn.reply.values.title,"VISIBLE_LINKED_SIBLING");
+    assert.doesNotMatch(JSON.stringify(answer),/PRIVATE_LINKED_/u);
+  }
+  assertCanvasLinkedSourceFree(state);
+}
+for(const fault of["delete","owner_user_id","project_id","project_access_id","organization_id","actor_private","internal"])
+test("Canvas linked-source custody: same-head source "+fault+" withdraws shared GET, free POST and incremental private item events",async()=>{
+  const state=await specialistMockFixture({shared:true}),failures=[];
+  try{
+    const source=await canvasLinkedSourceFixture(state);
+    if(fault==="delete")state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE project_access_id=? AND resource_kind=? AND resource_id=?").run(state.projectAccessId,source.resourceKind,source.ids.source);
+    else if(["actor_private","internal"].includes(fault))state.sqlite.prepare("UPDATE project_resource_scopes SET visibility=? WHERE project_access_id=? AND resource_kind=? AND resource_id=?").run(fault,state.projectAccessId,source.resourceKind,source.ids.source);
+    else state.sqlite.prepare("UPDATE project_resource_scopes SET "+fault+"=? WHERE project_access_id=? AND resource_kind=? AND resource_id=?").run("other-linked-"+fault,state.projectAccessId,source.resourceKind,source.ids.source);
+    await assertCanvasLinkedSourceWithdrawn(state,source);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures});}
+});
+for(const fault of["missing-anchor","wrong-item-anchor","anchor-owner","anchor-project","anchor-access","anchor-organization","anchor-stream","anchor-sequence","private-missing","private-owner","private-redacted"])
+test("Canvas linked-source custody: "+fault+" fails closed without a phantom placement",async()=>{
+  const state=await specialistMockFixture({shared:true}),failures=[];
+  try{
+    const source=await canvasLinkedSourceFixture(state);
+    if(fault==="missing-anchor")state.sqlite.prepare("UPDATE project_resource_scopes SET source_event_id=NULL WHERE project_access_id=? AND resource_kind='canvas_item' AND resource_id=?").run(state.projectAccessId,source.ids.hidden);
+    else if(fault==="wrong-item-anchor"){
+      const kept=state.sqlite.prepare("SELECT source_event_id FROM project_resource_scopes WHERE project_access_id=? AND resource_kind='canvas_item' AND resource_id=?").get(state.projectAccessId,source.ids.kept);
+      state.sqlite.prepare("UPDATE project_resource_scopes SET source_event_id=? WHERE project_access_id=? AND resource_kind='canvas_item' AND resource_id=?").run(kept.source_event_id,state.projectAccessId,source.ids.hidden);
+    }else if(fault.startsWith("anchor-")){
+      const field={"anchor-owner":"owner_user_id","anchor-project":"project_id","anchor-access":"project_access_id","anchor-organization":"organization_id","anchor-stream":"source_stream_id","anchor-sequence":"source_sequence"}[fault];
+      state.sqlite.prepare("UPDATE project_event_scopes SET "+field+"=? WHERE event_id=?").run(fault==="anchor-sequence"?-1:"other-linked-"+fault,source.anchor);
+    }else if(fault==="private-missing")state.sqlite.prepare("DELETE FROM event_private_payloads WHERE private_event_id=?").run(source.anchor);
+    else if(fault==="private-owner")state.sqlite.prepare("UPDATE event_private_payloads SET owner_id='assistant-viewer' WHERE private_event_id=?").run(source.anchor);
+    else state.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),source.anchor);
+    await assertCanvasLinkedSourceWithdrawn(state,source);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures});}
+});
+for(const kind of["document","block","reference","sketch","output","artifact","context"])
+test("Canvas linked-source custody: native "+kind+" mapping preserves valid items and withdraws only the missing source",async()=>{
+  const state=await specialistMockFixture({shared:true}),failures=[];
+  try{
+    const source=await canvasLinkedSourceFixture(state,{kind});
+    const beforeResponse=await state.request(`/api/events?after=${source.anchorScope.project_sequence-1}&limit=5000&content=0`,{headers:state.owner}),before=await beforeResponse.json();
+    assert.equal(beforeResponse.status,200,JSON.stringify(before));
+    assert.equal(before.events.find(event=>event.eventId===source.anchor)?.type,"CanvasItemPlaced");
+    assert.match(JSON.stringify(before),/PRIVATE_LINKED_COPIED_TITLE/u,"valid copied presentation is not silently suppressed");
+    state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE project_access_id=? AND resource_kind=? AND resource_id=?").run(state.projectAccessId,source.resourceKind,source.ids.source);
+    await assertCanvasLinkedSourceWithdrawn(state,source);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures});}
+});
+test("Canvas linked-source custody: legacy reference_item_id and block_id aliases retain the existing block mapping",async()=>{
+  const state=await specialistMockFixture({shared:true}),failures=[];
+  try{
+    const source=await canvasLinkedSourceFixture(state,{kind:"reference",legacy:true,alias:true});
+    state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE project_access_id=? AND resource_kind='block' AND resource_id=?").run(state.projectAccessId,source.ids.source);
+    await assertCanvasLinkedSourceWithdrawn(state,source);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures});}
+});
+test("Canvas linked-source custody: modern private context and arrangement dependencies withdraw transitively and preserve siblings",async()=>{
+  const state=await specialistMockFixture({shared:true}),failures=[];
+  try{
+    const source=await canvasLinkedSourceFixture(state,{composites:true});
+    for(const[kind,id]of[["canvas_context",source.ids.context],["canvas_item",source.ids.card],["canvas_arrangement",source.ids.arrangement]])
+      assert.ok(state.sqlite.prepare("SELECT 1 AS present FROM project_resource_scopes WHERE project_access_id=? AND resource_kind=? AND resource_id=?").get(state.projectAccessId,kind,id));
+    state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE project_access_id=? AND resource_kind=? AND resource_id=?").run(state.projectAccessId,source.resourceKind,source.ids.source);
+    await assertCanvasLinkedSourceWithdrawn(state,source,{composites:true});
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures});}
+});
+test("Canvas linked-source custody: retained context source from another board cannot authorize a context card",async()=>{
+  const state=await specialistMockFixture({shared:true}),failures=[];
+  try{
+    const source=await canvasLinkedSourceFixture(state,{kind:"context"});
+    state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.canvas_id',?) WHERE private_event_id=?").run(source.ids.otherBoard,source.resource.source_event_id);
+    await assertCanvasLinkedSourceWithdrawn(state,source);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures});}
+});
+test("Canvas linked-source custody: malformed required arrangement frame is withheld without breaking valid sibling reads",async()=>{
+  const state=await specialistMockFixture({shared:true}),failures=[];
+  try{
+    const source=await canvasLinkedSourceFixture(state,{composites:true}),arrangement=source.compositeEvents[2];
+    state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.frames',json(?)) WHERE private_event_id=?").run(JSON.stringify(["not-a-frame-object"]),arrangement.eventId);
+    const response=await state.request(`/api/events?after=${source.anchorScope.project_sequence}&limit=5000&content=0`,{headers:state.owner}),body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    assert.equal(body.events.find(event=>event.eventId===arrangement.eventId)?.type,"ProjectResourceRestricted");
+    assert.equal(body.events.find(event=>event.eventId===source.compositeEvents[4].eventId)?.type,"CanvasArrangementCreated");
+    assert.doesNotMatch(JSON.stringify(body),/PRIVATE_LINKED_DEPENDENT_ARRANGEMENT|not-a-frame-object/u);
+    assert.match(JSON.stringify(body),/VISIBLE_LINKED_SIBLING_ARRANGEMENT/u);
+    const selectedResponse=await state.request(source.url,{headers:state.owner}),selected=await selectedResponse.json();
+    assert.equal(selectedResponse.status,200,JSON.stringify(selected));
+    assert.deepEqual(new Set(selected.context.selectedItems.map(item=>item.id)),new Set([source.ids.hidden,source.ids.kept,source.ids.card]));
+    assertCanvasLinkedSourceFree(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures});}
+});
+test("Canvas linked-source custody: live block alias text is not mistaken for a missing Canvas item",async()=>{
+  const state=await specialistMockFixture({shared:true}),failures=[];
+  try{
+    const source=await canvasLinkedSourceFixture(state,{kind:"block"});
+    const[event]=await appendCanvasLinkedSourceEvents(state,[["CanvasTextApplied",{project_id:"project-atmosphere",canvas_id:source.ids.board,operation:{object:{kind:"block",block_id:source.ids.source},field:"value",ops:[{ins:{id:["web:actual-block",1],left:null,right:null,chars:"VISIBLE_LINKED_BLOCK_ALIAS"}}]}}]]);
+    const response=await state.request(`/api/events?after=${source.anchorScope.project_sequence}&limit=5000&content=0`,{headers:state.owner}),body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.events.find(item=>item.eventId===event.eventId)?.type,"CanvasTextApplied");
+    assert.match(JSON.stringify(body),/VISIBLE_LINKED_BLOCK_ALIAS/u);
+    assertCanvasLinkedSourceFree(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures});}
+});
+for(const[type,resourceKind,idKey]of[["CanvasItemRemoved","canvas_item","hidden"],["CanvasArrangementRemoved","canvas_arrangement","arrangement"],["CanvasRemoved","canvas","board"]])
+test("Canvas linked-source custody: "+type+" remains an ID-only incremental tombstone after resource removal",async()=>{
+  const state=await specialistMockFixture({shared:true}),failures=[];
+  try{
+    const source=await canvasLinkedSourceFixture(state,{composites:true}),cursor=state.sqlite.prepare("SELECT MAX(project_sequence) AS head FROM project_event_scopes WHERE project_access_id=?").get(state.projectAccessId).head;
+    const payload={project_id:"project-atmosphere",canvas_id:source.ids.board,...(idKey==="hidden"?{item_id:source.ids.hidden}:idKey==="arrangement"?{arrangement_id:source.ids.arrangement}:{}),title:"PRIVATE_LINKED_REMOVAL_TITLE",body:"PRIVATE_LINKED_REMOVAL_BODY"};
+    const[event]=await appendCanvasLinkedSourceEvents(state,[[type,payload]]);
+    const response=await state.request(`/api/events?after=${cursor}&limit=5000&content=0`,{headers:state.owner}),body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    const removal=body.events.find(item=>item.eventId===event.eventId);
+    assert.equal(removal?.type,type);
+    assert.deepEqual(removal.payload,{project_id:"project-atmosphere",canvas_id:source.ids.board,...(idKey==="hidden"?{item_id:source.ids.hidden}:idKey==="arrangement"?{arrangement_id:source.ids.arrangement}:{}),removed:true});
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_resource_scopes WHERE project_access_id=? AND resource_kind=? AND resource_id=?").get(state.projectAccessId,resourceKind,source.ids[idKey]).n,0);
+    assert.doesNotMatch(JSON.stringify(body),/PRIVATE_LINKED_REMOVAL/u);
+    assertCanvasLinkedSourceFree(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures});}
+});
+
 test("distinct rapid messages remain independent and exact retries stay idempotent", async () => {
   const { request, sqlite } = await fixture();
   const turnIds = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
@@ -3702,7 +3938,7 @@ test("adaptive governed dispatch: a same-owner source in another project refresh
     const receipt=consequentialReceipt(state,quote.executionId);
     assert.equal(calls,1,"A target-only job anchor must not prevent this unchanged licensed source from running");
     assert.equal(reservationChecks,1);assert.equal(sourceBehindAtReservation,false,"The source derived index must catch up before the guarded reservation");
-    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id WHERE scope.project_access_id=? AND event.type=\'ProjectDocumentJobQueued\' AND json_extract(event.payload,\'$.job_id\')=?").get(input.sourceProjectAccessId,quote.executionId).n,0,"Refreshing the source must not scope another project\'s job anchor into it");
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id WHERE scope.project_access_id=? AND event.type='ProjectDocumentJobQueued' AND json_extract(event.payload,'$.job_id')=?").get(input.sourceProjectAccessId,quote.executionId).n,0,"Refreshing the source must not scope another project's job anchor into it");
     assert.equal(adaptiveJob(state,quote.executionId).status,"completed");assert.equal(receipt.execution.status,"completed");assert.equal(receipt.steps[0].status,"settled");
     assert.deepEqual(consequentialBalances(state,input.owner),{tokens:{used:1300,reserved:0},cost:{used:5600,reserved:0}});
     assert.equal(adaptiveAuthoredCount(state,input.sourceStream),authoredBefore,"Refreshing a derived index must not author or remove source decisions");
@@ -6106,6 +6342,657 @@ async function finishOrdinaryFeed(state,{failures,trace,restore,sourceCapture,cl
   if(failures.length===1)throw failures[0];
   if(failures.length>1)throw new AggregateError(failures,"Ordinary feed test or cleanup failed");
 }
+async function appendContextReadEvents(state,entries,{firstSequence}={}){
+  const {makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import("../worker/runtime.ts");
+  const owner=state.owner?.["oai-authenticated-user-id"]??"dev-local-creative",stream="creative:"+owner;
+  let sequence=firstSequence===undefined?Number(state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head):firstSequence-1;
+  const events=[];
+  for(const[type,payload]of entries){
+    const event=makeEvent(stream,++sequence,"user:"+owner,"context-read-certification-fixture",crypto.randomUUID(),type,payload),values=eventWriteBindings(event);
+    await state.env.DB.prepare("INSERT INTO event_write_stage("+EVENT_WRITE_COLUMNS+") VALUES("+values.map(()=>"?").join(",")+")").bind(...values).run();
+    events.push(event);
+  }
+  return events;
+}
+async function contextReadFixture(state){
+  const route="/document/doc-atmosphere",blockId="context-read-private-block",common={project_id:"project-atmosphere",document_id:"doc-atmosphere"};
+  const[titleEvent,blockEvent]=await appendContextReadEvents(state,[
+    ["DocumentRenamed",{...common,new_title:"PRIVATE_CONTEXT_READ_DOCUMENT_TITLE"}],
+    ["BlockCreated",{...common,block_id:blockId,type:"direction",properties:{text:"PRIVATE_CONTEXT_READ_BLOCK_TEXT",label:"Context read decision"},position:0}],
+  ]);
+  for(const event of[titleEvent,blockEvent])assert.ok(state.sqlite.prepare("SELECT 1 AS present FROM event_private_payloads WHERE private_event_id=?").get(event.eventId),"fixture uses the real modern private envelope");
+  const turn=await ordinaryFeedTurn(state,"context-read-independent-turn",{route},"INDEPENDENT_RETAINED_CONVERSATION");
+  const initial=await assertOrdinaryFeedVisible(state,route,[turn]);
+  assert.equal(initial.contextUnavailable,undefined);
+  assert.equal(initial.context.documentTitle,"PRIVATE_CONTEXT_READ_DOCUMENT_TITLE");
+  assert.equal(initial.context.decisionAtoms.find(item=>item.id===blockId)?.text,"PRIVATE_CONTEXT_READ_BLOCK_TEXT");
+  const owner=state.owner?.["oai-authenticated-user-id"]??"dev-local-creative",stream="creative:"+owner;
+  return{route,blockId,titleEvent,blockEvent,turn,initial,owner,stream,head:state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head};
+}
+function assertContextReadNoWitness(body){
+  if(body.context)assert.deepEqual(Object.keys(body).sort(),["context","turns","tasks",...(body.contextUnavailable===true?["contextUnavailable"]:[])].sort(),"read witnesses must not be spread into the wire response");
+  assert.doesNotMatch(JSON.stringify(body),/"(?:private_json|event_private_payloads|capturedRows|readWitness|sourceWitness|contextReadWitness|contextSourceWitness|source_user_ref|source_answer_ref|source_turn_record|source_message_record|source_response_record|feed_context_retained|feed_turn_retained)"\s*:/u);
+}
+function assertContextReadShell(body,turn){
+  assert.equal(body.contextUnavailable,true,JSON.stringify(body));
+  assert.equal(body.context.documentTitle,null);
+  for(const field of["selectedItems","recentActions","decisionAtoms","relationships","unfinishedIntents","availableOutputs"])
+    assert.deepEqual(body.context[field],[],field);
+  assert.deepEqual(body.context.evidence,{head:0,eventIds:[]});
+  assert.deepEqual(body.context.totals,{decisions:0,outputs:0,outputsByKind:{}},"no stale source-derived counts or rights totals remain");
+  assert.equal(body.context.platformSignals,undefined);assert.equal(body.context.scope.documentId,null);assert.equal(body.context.truncated,true);
+  assert.equal(body.turns.find(item=>item.id===turn.id)?.user,turn.user);
+  assert.equal(body.turns.find(item=>item.id===turn.id)?.reply.text,turn.reply.text);
+  assert.equal(body.context.recentTurns.some(item=>item.id===turn.id+":user"&&item.text===turn.user),true);
+  assert.equal(body.context.recentTurns.some(item=>item.id===turn.id+":assistant"&&item.text===turn.reply.text),true);
+  assert.doesNotMatch(JSON.stringify(body.context),/PRIVATE_CONTEXT_READ_|REPLACEMENT_CONTEXT_READ_|PRIVATE_LINKED_/u);
+  assertContextReadNoWitness(body);
+}
+for(const shared of[false,true])for(const target of["title","block"])for(const mutation of["replace","delete","redact","owner"])
+test("context read certification: "+(shared?"shared":"personal")+" same-head "+target+" private "+mutation+" withholds stale context but keeps independent chat",async()=>{
+  const state=await specialistMockFixture({shared}),failures=[];let restore,trace;
+  try{
+    const source=await contextReadFixture(state),eventId=source[target==="title"?"titleEvent":"blockEvent"].eventId;
+    let fired=false,before;
+    restore=interceptConsequentialDb(state,"batch",/AS feed_authorized/u,()=>{
+      fired=true;
+      if(mutation==="replace")state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,?,?) WHERE private_event_id=?").run(target==="title"?"$.new_title":"$.properties.text","REPLACEMENT_CONTEXT_READ_PRIVATE_TEXT",eventId);
+      else if(mutation==="delete")state.sqlite.prepare("DELETE FROM event_private_payloads WHERE private_event_id=?").run(eventId);
+      else if(mutation==="redact")state.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),eventId);
+      else state.sqlite.prepare("UPDATE event_private_payloads SET owner_id='other-context-read-owner' WHERE private_event_id=?").run(eventId);
+      assert.equal(state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(source.stream).head,source.head);
+      before=specialistFeedSnapshot(state);
+    });
+    trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(source.route),{headers:state.owner??{}}),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    assertContextReadShell(body,source.turn);assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore,trace});}
+});
+for(const shared of[false,true])for(const type of["BlockRemoved","DocumentRemoved"])
+test("context read certification: "+(shared?"shared":"personal")+" late "+type+" cannot survive an unchanged retained-row-only check",async()=>{
+  const state=await specialistMockFixture({shared}),failures=[];let restore,trace;
+  try{
+    const source=await contextReadFixture(state);let fired=false,before;
+    restore=interceptConsequentialDb(state,"batch",/AS feed_authorized/u,async()=>{
+      fired=true;
+      await appendContextReadEvents(state,[[type,{project_id:"project-atmosphere",document_id:"doc-atmosphere",...(type==="BlockRemoved"?{block_id:source.blockId}:{})}]]);
+      assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM event_private_payloads WHERE private_event_id IN(?,?)").get(source.titleEvent.eventId,source.blockEvent.eventId).n,2,"original source rows remain retained");
+      before=specialistFeedSnapshot(state);
+    });
+    trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(source.route),{headers:state.owner??{}}),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    assertContextReadShell(body,source.turn);assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore,trace});}
+});
+for(const field of["owner_user_id","project_id","project_access_id","organization_id","source_stream_id","source_sequence","actor_user_id"])
+test("context read certification: shared event custody "+field+" changes after context hydration",async()=>{
+  const state=await specialistMockFixture({shared:true}),failures=[];let restore,trace;
+  try{
+    const source=await contextReadFixture(state);let fired=false,before;
+    assert.ok(state.sqlite.prepare("SELECT 1 AS present FROM project_event_scopes WHERE event_id=?").get(source.blockEvent.eventId));
+    restore=interceptConsequentialDb(state,"batch",/AS feed_authorized/u,()=>{
+      fired=true;
+      state.sqlite.prepare("UPDATE project_event_scopes SET "+field+"=? WHERE event_id=?").run(field==="source_sequence"?-1:field==="actor_user_id"?"assistant-viewer":"other-context-read-"+field,source.blockEvent.eventId);
+      assert.equal(state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(source.stream).head,source.head);
+      before=specialistFeedSnapshot(state);
+    });
+    trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(source.route),{headers:state.owner}),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    assertContextReadShell(body,source.turn);assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore,trace});}
+});
+for(const mutation of["delete-source","source-owner","source-project","source-visibility","item-anchor","anchor-custody"])
+test("context read certification: shared Canvas "+mutation+" at final read withdraws the complete context only",async()=>{
+  const state=await specialistMockFixture({shared:true}),failures=[];let restore,trace;
+  try{
+    const source=await canvasLinkedSourceFixture(state),route="/canvas/"+source.ids.board+"/linked-source-board";
+    const turn=await ordinaryFeedTurn(state,"context-read-canvas-independent",{route,selected:[source.ids.hidden,source.ids.kept]},"INDEPENDENT_CANVAS_CONVERSATION");
+    const initialResponse=await state.request(source.url,{headers:state.owner}),initial=await initialResponse.json();
+    assert.equal(initialResponse.status,200,JSON.stringify(initial));assert.equal(initial.contextUnavailable,undefined);
+    assert.equal(initial.context.selectedItems.find(item=>item.id===source.ids.hidden)?.title,"PRIVATE_LINKED_COPIED_TITLE");
+    const head=state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id='creative:assistant-owner'").get().head;
+    let fired=false,before;
+    restore=interceptConsequentialDb(state,"batch",/AS feed_authorized/u,()=>{
+      fired=true;
+      if(mutation==="delete-source")state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE project_access_id=? AND resource_kind=? AND resource_id=?").run(state.projectAccessId,source.resourceKind,source.ids.source);
+      else if(mutation==="item-anchor")state.sqlite.prepare("UPDATE project_resource_scopes SET source_event_id=NULL WHERE project_access_id=? AND resource_kind='canvas_item' AND resource_id=?").run(state.projectAccessId,source.ids.hidden);
+      else if(mutation==="anchor-custody")state.sqlite.prepare("UPDATE project_event_scopes SET project_id='other-context-read-project' WHERE event_id=?").run(source.anchor);
+      else{
+        const field={"source-owner":"owner_user_id","source-project":"project_id","source-visibility":"visibility"}[mutation];
+        state.sqlite.prepare("UPDATE project_resource_scopes SET "+field+"=? WHERE project_access_id=? AND resource_kind=? AND resource_id=?").run(mutation==="source-visibility"?"actor_private":"other-context-read-"+field,state.projectAccessId,source.resourceKind,source.ids.source);
+      }
+      assert.ok(state.sqlite.prepare("SELECT 1 AS present FROM project_resource_scopes WHERE project_access_id=? AND resource_kind='canvas_item' AND resource_id=?").get(state.projectAccessId,source.ids.hidden));
+      assert.equal(state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id='creative:assistant-owner'").get().head,head);
+      before=specialistFeedSnapshot(state);
+    });
+    trace=specialistFeedTrace(state);
+    const response=await state.request(source.url,{headers:state.owner}),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    assertContextReadShell(body,turn);assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore,trace});}
+});
+for(const shared of[false,true])
+test("context read certification: unchanged "+(shared?"shared":"personal")+" document preserves the response shape and independent conversation",async()=>{
+  const state=await specialistMockFixture({shared}),failures=[];let trace;
+  try{
+    const source=await contextReadFixture(state),before=specialistFeedSnapshot(state);trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(source.route),{headers:state.owner??{}}),body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    assert.equal(Object.hasOwn(body,"contextUnavailable"),false);assert.deepEqual(body,source.initial);
+    assertContextReadNoWitness(body);assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,trace});}
+});
+for(const shared of[false,true])
+test("context read certification: "+(shared?"shared":"personal")+" final authority denial takes precedence over unavailable context",async()=>{
+  const state=await specialistMockFixture({shared}),failures=[];let restore,trace;
+  try{
+    const source=await contextReadFixture(state);let fired=false,before;
+    restore=interceptConsequentialDb(state,"batch",/AS feed_authorized/u,()=>{
+      fired=true;
+      state.sqlite.prepare("DELETE FROM event_private_payloads WHERE private_event_id=?").run(source.blockEvent.eventId);
+      state.sqlite.prepare("UPDATE users SET updated_at='2099-01-01T00:00:00.000Z' WHERE user_id=?").run(source.owner);
+      before=specialistFeedSnapshot(state);
+    });
+    trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(source.route),{headers:state.owner??{}}),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,403,JSON.stringify(body));
+    assert.equal(body.error,"assistant_read_scope_denied");assert.equal(body.context,undefined);assert.equal(body.turns,undefined);
+    assert.doesNotMatch(JSON.stringify(body),/PRIVATE_CONTEXT_READ_|PRIVATE_FREE_REPLY_|INDEPENDENT_RETAINED_CONVERSATION/u);
+    assertContextReadNoWitness(body);assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore,trace});}
+});
+
+for(const mutation of["package-redacted","upstream-revoked"])
+test("context read certification: governed "+mutation+" after capture withdraws context without changing the target stream",async()=>{
+  const state=await specialistMockFixture({shared:true}),failures=[];let restore,trace;
+  try{
+    const source=await contextReadFixture(state),governed=await seedAdaptiveSeparateProjectGoverned(state);
+    const initial=await assertOrdinaryFeedVisible(state,source.route,[source.turn]);
+    assert.equal(initial.contextUnavailable,undefined);assert.equal((await governed.rights()).current,true);
+    assert.equal(initial.context.decisionAtoms.some(item=>item.id===governed.blockId&&item.text===governed.text),true);
+    const head=state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(source.stream).head;
+    let fired=false,before;
+    restore=interceptConsequentialDb(state,"batch",/AS feed_authorized/u,async()=>{
+      fired=true;assert.equal((await governed.rights()).current,true);
+      if(mutation==="package-redacted")state.sqlite.prepare("UPDATE organization_context_package_contents SET redacted_at=? WHERE version_id=?").run(new Date().toISOString(),governed.versionId);
+      else{
+        appendFixtureEvents(state.sqlite,governed.sourceStream,[["BlockPropertyEdited",{project_id:governed.sourceProjectId,document_id:governed.sourceDocumentId,block_id:governed.sourceBlockId,property_path:"rights_revoked",new_value:true}]]);
+        const {synchronizeProjectScope}=await import("../worker/project-access.ts");
+        await synchronizeProjectScope(state.env,{organizationId:state.organizationId,projectAccessId:governed.sourceProjectAccessId,projectId:governed.sourceProjectId,ownerUserId:governed.sourceOwner});
+      }
+      assert.equal(state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(source.stream).head,head);
+      assert.equal((await governed.rights()).current,false);before=specialistFeedSnapshot(state);
+    });
+    trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(source.route),{headers:state.owner}),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    assertContextReadShell(body,source.turn);assert.doesNotMatch(JSON.stringify(body),/dispatchDependencies|sourceRightsDispatchProof/u);
+    assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore,trace});}
+});
+for(const lane of["personal-final","shared-final","shared-during-governed-read"])
+test("context read certification: native rights deadline crosses at "+lane+" without a source write or sleep",async()=>{
+  const state=await specialistMockFixture({shared:lane!=="personal-final"}),failures=[],nativeNow=Date.now;let restore,trace,clock;
+  try{
+    const source=await contextReadFixture(state),deadline=new Date(Date.now()+60_000).toISOString(),later=new Date(Date.now()+300_000).toISOString(),blockId="context-read-native-deadline";
+    if(lane==="shared-during-governed-read")await seedAdaptiveSeparateProjectGoverned(state);
+    await appendContextReadEvents(state,[["BlockCreated",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:blockId,type:"direction",position:"z-context-deadline",properties:{text:"PRIVATE_CONTEXT_READ_LICENSED_TEXT",intent:"prohibit",rights_class:"owned_or_licensed",source_expires_at:later,license_expires_at:deadline,rights_expires_at:later}}]]);
+    const initial=await assertOrdinaryFeedVisible(state,source.route,[source.turn]);
+    assert.equal(initial.contextUnavailable,undefined);assert.equal(initial.context.decisionAtoms.find(item=>item.id===blockId)?.providerEligible,true);
+    const head=state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(source.stream).head;
+    clock=consequentialDbClock(state);let fired=false,before;
+    restore=interceptConsequentialDb(state,lane==="shared-during-governed-read"?"first":"batch",lane==="shared-during-governed-read"?/SELECT version\.content_sha256,content\.content_json/u:/AS feed_authorized/u,()=>{
+      fired=true;clock.set(deadline);Date.now=()=>Date.parse(deadline);before=specialistFeedSnapshot(state);
+    });
+    trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(source.route),{headers:state.owner??{}}),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    assert.equal(state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(source.stream).head,head);
+    assertContextReadShell(body,source.turn);assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{Date.now=nativeNow;await finishOrdinaryFeed(state,{failures,restore,trace,clock});}
+});
+for(const inference of["document","project"])
+test("context read certification: same-head implicit "+inference+" membership rechecks the original lookup",async()=>{
+  const state=await specialistMockFixture(),failures=[];let restore,trace;
+  try{
+    const stream="creative:dev-local-creative",projectId="project-atmosphere",otherProject="context-read-other-project",otherDocument="context-read-other-document",documentId=inference==="project"?"context-read-implicit-document":"doc-atmosphere",blockId="context-read-implicit-block";
+    await appendContextReadEvents(state,[
+      ["ProjectCreated",{project_id:otherProject,name:"Other owned context project"}],
+      ["DocumentCreated",{project_id:otherProject,document_id:otherDocument,title:"Other owned context document"}],
+      ["ProjectOpened",{project_id:projectId}],
+      ["DocumentOpened",{project_id:projectId,document_id:"doc-atmosphere"}],
+    ]);
+    const gap=Number(state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head)+1;
+    // Isolated storage-race fixture: insert into a deliberately unused sequence
+    // through the real modern event envelope, leaving append-only triggers on.
+    // This does not claim the normal monotonic UI writer can rewrite history.
+    const dependent=inference==="project"
+      ?(await appendContextReadEvents(state,[["DocumentCreated",{document_id:documentId,title:"PRIVATE_CONTEXT_READ_IMPLICIT_TITLE"}]],{firstSequence:gap+1}))[0]
+      :(await appendContextReadEvents(state,[["BlockCreated",{project_id:projectId,block_id:blockId,type:"direction",position:"z-implicit",properties:{text:"PRIVATE_CONTEXT_READ_IMPLICIT_BLOCK"}}]],{firstSequence:gap+1}))[0];
+    if(inference==="project")await appendContextReadEvents(state,[["BlockCreated",{project_id:projectId,document_id:documentId,block_id:blockId,type:"direction",position:"z-implicit",properties:{text:"PRIVATE_CONTEXT_READ_IMPLICIT_BLOCK"}}]]);
+    await appendContextReadEvents(state,Array.from({length:40},()=>["DocumentViewVisited",{project_id:projectId,document_id:documentId,view:"document"}]));
+    const route="/document/"+documentId,turn=await ordinaryFeedTurn(state,"context-read-implicit-turn",{route},"INDEPENDENT_IMPLICIT_CONVERSATION");
+    const initial=await assertOrdinaryFeedVisible(state,route,[turn]);assert.equal(initial.contextUnavailable,undefined);
+    assert.equal(initial.context.scope.projectId,projectId);assert.equal(initial.context.scope.documentId,documentId);
+    assert.equal(initial.context.decisionAtoms.find(item=>item.id===blockId)?.text,"PRIVATE_CONTEXT_READ_IMPLICIT_BLOCK");
+    const head=state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head,original=state.sqlite.prepare("SELECT * FROM events WHERE event_id=?").get(dependent.eventId);
+    assert.ok(gap<head-32,"the inserted lookup must remain outside the recent tail");
+    let fired=false,before;
+    restore=interceptConsequentialDb(state,"batch",/AS feed_authorized/u,async()=>{
+      fired=true;
+      await appendContextReadEvents(state,[[inference==="project"?"ProjectOpened":"DocumentOpened",{project_id:otherProject,...(inference==="document"?{document_id:otherDocument}:{})}]],{firstSequence:gap});
+      assert.equal(state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head,head);
+      assert.deepEqual(state.sqlite.prepare("SELECT * FROM events WHERE event_id=?").get(dependent.eventId),original,"the original depended-on immutable event remains unchanged");
+      before=specialistFeedSnapshot(state);
+    });
+    trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(route),{headers:{}}),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    assertContextReadShell(body,turn);assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore,trace});}
+});
+for(const shared of[false,true])
+test("context read certification: "+(shared?"shared":"personal")+" capture byte overflow fails closed while retaining certified history",async()=>{
+  const state=await specialistMockFixture({shared}),failures=[];let trace;
+  try{
+    const source=await contextReadFixture(state),text="PRIVATE_CONTEXT_READ_OVERFLOW_"+"x".repeat(1_100_000);
+    const[event]=await appendContextReadEvents(state,[["BlockCreated",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"context-read-overflow",type:"direction",position:"z-overflow",properties:{text}}]]);
+    assert.ok(state.sqlite.prepare("SELECT length(private_json) AS bytes FROM event_private_payloads WHERE private_event_id=?").get(event.eventId).bytes>1_100_000);
+    // The semantic and recent selectors both read this actual retained row;
+    // their combined raw capture exceeds the certificate's 2 MiB budget.
+    const before=specialistFeedSnapshot(state);trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(source.route),{headers:state.owner??{}}),body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    assertContextReadShell(body,source.turn);assert.ok(Buffer.byteLength(JSON.stringify(body),"utf8")<16_384);
+    assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,trace});}
+});
+
+test("context read certification: helper snapshots are immutable across caller and returned-clone mutations",async()=>{
+  const state=await specialistMockFixture(),failures=[];
+  try{
+    const {AssistantContextReadWitness,rememberAssistantContextRead,assistantContextReadWitness}=await import("../worker/assistant-context-source.ts");
+    const source=await contextReadFixture(state),context=source.initial.context,expected=structuredClone(context),witness=new AssistantContextReadWitness(state.env);
+    const statement=state.env.DB.prepare("SELECT 1 AS context_helper_marker"),rows=[{success:true,results:[{context_helper_marker:1}]}];
+    witness.observe([statement],rows);rememberAssistantContextRead(context,witness);
+    assert.equal(assistantContextReadWitness(context),witness);assert.equal(assistantContextReadWitness(structuredClone(context)),undefined);
+    context.documentTitle="MUTATED_UNCERTIFIED_CALLER_TITLE";context.decisionAtoms[0].text="MUTATED_UNCERTIFIED_CALLER_TEXT";
+    assert.deepEqual(witness.context(),expected);assert.equal(witness.matches(rows),true);
+    const clone=witness.context();clone.documentTitle="MUTATED_UNCERTIFIED_CLONE_TITLE";clone.recentTurns.length=0;
+    assert.deepEqual(witness.context(),expected);assert.equal(witness.matches(rows),true);
+    assertCanvasLinkedSourceFree(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures});}
+});
+test("context read certification: helper empty capture and post-seal mutations cannot certify a context",async()=>{
+  const state=await specialistMockFixture(),failures=[];
+  try{
+    const {AssistantContextReadWitness,rememberAssistantContextRead}=await import("../worker/assistant-context-source.ts");
+    const source=await contextReadFixture(state),statement=state.env.DB.prepare("SELECT 1 AS context_helper_marker"),rows=[{success:true,results:[{context_helper_marker:1}]}];
+    const empty=new AssistantContextReadWitness(state.env);empty.observe([],[]);rememberAssistantContextRead(structuredClone(source.initial.context),empty);
+    assert.deepEqual(empty.statements(),[]);assert.equal(empty.matches([]),false);
+    for(const change of["observe","before","require"]){
+      const witness=new AssistantContextReadWitness(state.env);witness.observe([statement],rows);rememberAssistantContextRead(structuredClone(source.initial.context),witness);
+      assert.equal(witness.matches(rows),true,change);
+      if(change==="observe")witness.observe([statement],rows);
+      else if(change==="before")witness.before(null);
+      else witness.require({sql:"1",bindings:[]});
+      assert.deepEqual(witness.statements(),[],change);assert.equal(witness.matches(rows),false,change);
+    }
+    assertCanvasLinkedSourceFree(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures});}
+});
+test("context read certification: helper accepts row and property reordering but rejects duplicates and changed fields",async()=>{
+  const state=await specialistMockFixture(),failures=[];
+  try{
+    const {AssistantContextReadWitness,rememberAssistantContextRead}=await import("../worker/assistant-context-source.ts");
+    const source=await contextReadFixture(state),statement=state.env.DB.prepare("SELECT 1 AS context_helper_marker"),witness=new AssistantContextReadWitness(state.env);
+    const result=rows=>[{success:true,results:rows}],first={id:"a",value:1,metadata:{right:2,left:1}},second={id:"b",value:2,metadata:{right:4,left:3}};
+    witness.observe([statement],result([first,second]));rememberAssistantContextRead(source.initial.context,witness);
+    assert.equal(witness.matches(result([{metadata:{left:3,right:4},value:2,id:"b"},{metadata:{left:1,right:2},value:1,id:"a"}])),true);
+    assert.equal(witness.matches(result([first,first])),false,"duplicate rows cannot substitute for a missing source");
+    assert.equal(witness.matches(result([first,{...second,value:3}])),false);
+    assert.equal(witness.matches(result([first])),false);assert.equal(witness.matches(result([first,second,{...second,id:"c"}])),false);
+    assert.equal(witness.matches([{success:false,results:[first,second]}]),false);
+    assertCanvasLinkedSourceFree(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures});}
+});
+test("context read certification: helper raw capture and final-result overflow both fail closed",async()=>{
+  const state=await specialistMockFixture(),failures=[];
+  try{
+    const {AssistantContextReadWitness,rememberAssistantContextRead}=await import("../worker/assistant-context-source.ts");
+    const source=await contextReadFixture(state),statement=state.env.DB.prepare("SELECT 1 AS context_helper_marker"),oversized="x".repeat(2*1024*1024+1);
+    const capture=new AssistantContextReadWitness(state.env);capture.observe([statement],[{success:true,results:[{value:oversized}]}]);rememberAssistantContextRead(structuredClone(source.initial.context),capture);
+    assert.deepEqual(capture.statements(),[]);assert.equal(capture.matches([]),false);
+    const final=new AssistantContextReadWitness(state.env),small=[{success:true,results:[{value:"small"}]}];
+    final.observe([statement],small);rememberAssistantContextRead(structuredClone(source.initial.context),final);
+    assert.equal(final.matches(small),true);assert.equal(final.matches([{success:true,results:[{value:oversized}]}]),false);
+    assertCanvasLinkedSourceFree(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures});}
+});
+
+// POST coverage uses the ordinary Worker with provider enrollment absent. The
+// hooks run outside the actual SQLite transaction, immediately at the requested
+// DB.batch boundary; no fixture manufactures a successful source certificate.
+async function postContextFixture({shared=false,actions=false,short=false}={}){
+  const state=short?await fixture({actions}):shared?await sharedProjectFixture({actions}):await fixture({actions});
+  const originalFetch=globalThis.fetch;state.calls=[];
+  globalThis.fetch=async()=>{state.calls.push("forbidden-outbound");throw new Error("post_context_outbound_forbidden");};
+  state.cleanup=async()=>{globalThis.fetch=originalFetch;};
+  try{
+    if(short){
+      state.owner={"oai-authenticated-user-id":"assistant-owner","oai-authenticated-user-email":"assistant-owner@example.test"};
+      assert.equal((await state.request("/api/session",{headers:state.owner})).status,200);
+      state.sqlite.prepare("UPDATE users SET consent_version=? WHERE user_id='assistant-owner'").run("pilot-2026-08-10");
+      await appendContextReadEvents(state,[
+        ["ProjectCreated",{project_id:"project-atmosphere",name:"Short POST project"}],
+        ["DocumentCreated",{project_id:"project-atmosphere",document_id:"doc-atmosphere",title:"Short POST document"}],
+      ]);
+      if(shared){
+        const organization=await state.request("/api/workspaces",json({name:"Short POST organization"},state.owner));
+        assert.equal(organization.status,201,JSON.stringify(await organization.clone().json()));state.organizationId=(await organization.json()).organizationId;
+        const project=await state.request("/api/workspaces/"+state.organizationId+"/projects",json({projectId:"project-atmosphere"},state.owner));
+        assert.equal(project.status,201,JSON.stringify(await project.clone().json()));state.projectAccessId=(await project.json()).projectAccessId;
+        const opened=await state.request("/api/workspaces/"+state.organizationId+"/projects/"+state.projectAccessId+"/context",{method:"POST",headers:state.owner});
+        assert.equal(opened.status,200,JSON.stringify(await opened.clone().json()));
+        state.owner={...state.owner,cookie:opened.headers.get("set-cookie")?.split(";")[0]??""};
+      }
+    }
+    state.postSource=await contextReadFixture(state);
+    state.postPaid=specialistFeedSnapshot(state);
+    return state;
+  }catch(error){await state.cleanup();state.sqlite.close();throw error;}
+}
+function assertPostContextNoPaid(state){
+  assert.equal(state.calls.length,0,"ordinary sends cannot perform outbound provider work");
+  const current=specialistFeedSnapshot(state);
+  for(const key of["financial","executions","steps","tasks","commits"])assert.deepEqual(current[key],state.postPaid[key],key);
+}
+function assertPostContextNoWitness(body){
+  assert.doesNotMatch(JSON.stringify(body),/"(?:private_json|source_private_record|source_resource_record|source_scope_record|source_custody_record|readWitness|sourceWitness|capturedContext|capturedRows|dispatchDependencies|sourceRightsDispatchProof|source_user_ref|source_answer_ref|source_turn_record|response_turn_retained|context_source_current|postFootprint|response_competing_send|competingSendGuard|allowConcurrentDuplicateIf)"\s*:/u);
+}
+function postContextSendFootprint(state,turnId){
+  const actor=state.postSource.owner,correlation=actor+":"+turnId;
+  const events=state.sqlite.prepare("SELECT * FROM events WHERE correlation_id=? ORDER BY sequence").all(correlation);
+  const ids=events.map(row=>row.event_id),proposals=state.sqlite.prepare("SELECT * FROM assistant_action_proposals WHERE actor_user_id=? AND turn_id=? ORDER BY proposal_id").all(actor,turnId);
+  const turns=state.sqlite.prepare("SELECT * FROM assistant_turns WHERE actor_user_id=? AND turn_id=?").all(actor,turnId);
+  const refs=[...new Set([...turns.flatMap(row=>[row.user_content_ref,row.assistant_content_ref]),...proposals.map(row=>row.action_content_ref)])];
+  const rows=(table,column,values)=>values.length?state.sqlite.prepare("SELECT * FROM "+table+" WHERE "+column+" IN("+values.map(()=>"?").join(",")+") ORDER BY "+column).all(...values):[];
+  return{events,turns,proposals,private:rows("private_content","content_id",refs),sidecars:rows("event_private_payloads","private_event_id",ids),receipts:rows("event_client_receipts","event_id",ids),
+    resources:rows("project_resource_scopes","resource_id",refs),retention:rows("private_content_retention_scopes","content_id",refs)};
+}
+function assertPostContextNoSend(state,turnId,beforePrivate){
+  const footprint=postContextSendFootprint(state,turnId);
+  for(const[key,rows]of Object.entries(footprint))assert.deepEqual(rows,[],key+" must roll back with a stale precommit source");
+  assert.deepEqual(state.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all(),beforePrivate,"no orphaned user, answer, or action copy");
+}
+function assertPostContextUnavailable(response,body){
+  assert.equal(response.status,409,JSON.stringify(body));
+  assert.equal(body.error,"assistant_turn_unavailable");assert.equal(body.noAutomaticRetry,true);
+  assert.equal(body.turn,undefined);assert.equal(body.context,undefined);
+  assert.doesNotMatch(JSON.stringify(body),/PRIVATE_CONTEXT_READ_|PRIVATE_LINKED_|POST_CERTIFIED_PROPOSAL|REPLACED_POST_SOURCE/u);
+  assertPostContextNoWitness(body);
+}
+function postContextRequest(state,turnId,message="Explain PRIVATE_CONTEXT_READ_BLOCK_TEXT",url=endpoint()){
+  return state.request(url,json({turnId,message,locale:"en"},state.owner??{}));
+}
+
+for(const shared of[false,true])
+test("POST context certification: unchanged short "+(shared?"shared proposal":"personal send")+" accepts only its exact own suffix",async()=>{
+  const state=await postContextFixture({shared,actions:shared,short:true}),failures=[];let restore;
+  try{
+    const source=state.postSource,turnId="post-context-short-"+(shared?"shared":"personal"),message=shared?"Add audience: POST_CERTIFIED_PROPOSAL":"Explain PRIVATE_CONTEXT_READ_BLOCK_TEXT";
+    assert.ok(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE stream_id=?").get(source.stream).n<32,"exercise a genuinely short owner history");
+    let synchronized=false;
+    if(shared)restore=interceptConsequentialDb(state,"batch",/INSERT INTO assistant_turns\b/u,async()=>{
+      const{synchronizeProjectScope}=await import("../worker/project-access.ts");
+      await synchronizeProjectScope(state.env,{organizationId:state.organizationId,projectAccessId:state.projectAccessId,projectId:"project-atmosphere",ownerUserId:source.owner});
+      synchronized=true;
+    },"after");
+    const response=await postContextRequest(state,turnId,message),body=await response.json();
+    assert.equal(response.status,201,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);assert.equal(body.contextUnavailable,undefined);assert.equal(body.messageNotSaved,undefined);
+    assert.equal(body.turn.id,turnId);assert.equal(body.turn.user,message);assert.equal(body.context.documentTitle,"PRIVATE_CONTEXT_READ_DOCUMENT_TITLE");
+    const saved=postContextSendFootprint(state,turnId);
+    assert.equal(saved.turns.length,1);assert.equal(saved.events.length,shared?3:2);assert.equal(saved.receipts.length,saved.events.length);
+    assert.equal(saved.private.length,shared?3:2);assert.equal(saved.proposals.length,shared?1:0);
+    if(shared){assert.equal(synchronized,true);assert.equal(body.turn.proposal.kind,"context.create");assert.match(body.turn.proposal.summary,/POST_CERTIFIED_PROPOSAL/u);}
+    else assert.equal(body.turn.reply.values.text,"PRIVATE_CONTEXT_READ_BLOCK_TEXT");
+    assertPostContextNoWitness(body);assertPostContextNoPaid(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+
+for(const target of["private","title","custody"])
+test("POST context certification: "+target+" staleness immediately before commit leaves no send side effects",async()=>{
+  const state=await postContextFixture({shared:target!=="private",actions:true}),failures=[];let restore;
+  try{
+    const source=state.postSource,turnId="post-context-precommit-"+target,beforePrivate=state.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all();let fired=false;
+    restore=interceptConsequentialDb(state,"batch",/INSERT INTO assistant_turns\b/u,()=>{
+      fired=true;
+      if(target==="private")state.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),source.blockEvent.eventId);
+      else if(target==="title")state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.new_title','REPLACED_POST_SOURCE') WHERE private_event_id=?").run(source.titleEvent.eventId);
+      else state.sqlite.prepare("UPDATE project_event_scopes SET source_stream_id='creative:other-post-source' WHERE event_id=?").run(source.blockEvent.eventId);
+      assert.equal(state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(source.stream).head,source.head,"same-head mutation");
+    });
+    const response=await postContextRequest(state,turnId,"Add audience: POST_CERTIFIED_PROPOSAL"),body=await response.json();
+    assert.equal(fired,true);assertPostContextUnavailable(response,body);assert.equal(body.messageNotSaved,true);assertPostContextNoSend(state,turnId,beforePrivate);assertPostContextNoPaid(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+
+for(const target of["private","canvas"])
+test("POST context certification: "+target+" withdrawal at final response cannot disclose the copied source",async()=>{
+  const state=await postContextFixture({shared:target==="canvas"}),failures=[];let restore;
+  try{
+    const source=state.postSource,canvas=target==="canvas"?await canvasLinkedSourceFixture(state):null,turnId="post-context-final-"+target;let fired=false;
+    restore=interceptConsequentialDb(state,"batch",/AS response_authorized/u,()=>{
+      fired=true;
+      if(canvas)state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE project_access_id=? AND resource_kind=? AND resource_id=?").run(state.projectAccessId,canvas.resourceKind,canvas.ids.source);
+      else state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text','REPLACED_POST_SOURCE') WHERE private_event_id=?").run(source.blockEvent.eventId);
+    });
+    const response=await postContextRequest(state,turnId,canvas?"What is selected?":"Explain PRIVATE_CONTEXT_READ_BLOCK_TEXT",canvas?.url??endpoint()),body=await response.json();
+    assert.equal(fired,true);assertPostContextUnavailable(response,body);assert.equal(body.messageNotSaved,undefined);
+    assert.equal(postContextSendFootprint(state,turnId).turns.length,1,"failure after commit must not cause another send");
+    assertPostContextNoPaid(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+
+for(const phase of["before","after"])
+test("POST context certification: unrelated owner append "+phase+" commit is not retried or exempted",async()=>{
+  const state=await postContextFixture({shared:true}),failures=[];let restore;
+  try{
+    const turnId="post-context-owner-append-"+phase,beforePrivate=state.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all();let fired=0;
+    restore=interceptConsequentialDb(state,"batch",/INSERT INTO assistant_turns\b/u,async()=>{
+      fired++;
+      await appendContextReadEvents(state,[["DocumentViewVisited",{project_id:"unrelated-owner-project",document_id:"unrelated-owner-document",view:"document"}]]);
+    },phase);
+    const response=await postContextRequest(state,turnId),body=await response.json();
+    assert.equal(fired,1);assertPostContextUnavailable(response,body);assert.equal(body.messageNotSaved,phase==="before"?true:undefined);
+    if(phase==="before")assertPostContextNoSend(state,turnId,beforePrivate);
+    else assert.equal(postContextSendFootprint(state,turnId).turns.length,1);
+    assertPostContextNoPaid(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+
+test("POST context certification: another event with the same actor and correlation is never an own-write exemption",async()=>{
+  const state=await postContextFixture(),failures=[];let restore;
+  try{
+    const source=state.postSource,turnId="post-context-correlation-collision";let fired=false,collisionId;
+    restore=interceptConsequentialDb(state,"batch",/INSERT INTO assistant_turns\b/u,async()=>{
+      fired=true;const{makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import("../worker/runtime.ts");
+      const head=state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(source.stream).head;
+      const event=makeEvent(source.stream,head+1,"user:"+source.owner,"web:assistant",source.owner+":"+turnId,"ChatMessageSent",
+        {project_id:"project-atmosphere",document_id:"doc-atmosphere",actor_user_id:source.owner,turn_id:"unrelated-collision-turn",content_ref:"unrelated-collision-content"});
+      collisionId=event.eventId;const values=eventWriteBindings(event);
+      await state.env.DB.prepare("INSERT INTO event_write_stage("+EVENT_WRITE_COLUMNS+") VALUES("+values.map(()=>"?").join(",")+")").bind(...values).run();
+    },"after");
+    const response=await postContextRequest(state,turnId),body=await response.json();
+    assert.equal(fired,true);assert.ok(state.sqlite.prepare("SELECT 1 AS present FROM events WHERE event_id=?").get(collisionId));
+    assertPostContextUnavailable(response,body);assert.equal(body.messageNotSaved,undefined);assert.equal(postContextSendFootprint(state,turnId).turns.length,1);assertPostContextNoPaid(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+
+test("POST context certification: an unprojected own proposal cannot acquire fabricated project custody",async()=>{
+  const state=await postContextFixture({shared:true,actions:true}),failures=[];let restore;
+  try{
+    const source=state.postSource,turnId="post-context-proposal-custody";let fired=false;
+    restore=interceptConsequentialDb(state,"batch",/INSERT INTO assistant_turns\b/u,async()=>{
+      fired=true;const{synchronizeProjectScope}=await import("../worker/project-access.ts");
+      await synchronizeProjectScope(state.env,{organizationId:state.organizationId,projectAccessId:state.projectAccessId,projectId:"project-atmosphere",ownerUserId:source.owner});
+      const proposal=state.sqlite.prepare("SELECT * FROM events WHERE correlation_id=? AND type='MutationProposed'").get(source.owner+":"+turnId);assert.ok(proposal);
+      assert.equal(state.sqlite.prepare("SELECT 1 AS present FROM project_event_scopes WHERE event_id=?").get(proposal.event_id),undefined,"the native synchronizer deliberately excludes proposals");
+      const projectHead=state.sqlite.prepare("SELECT MAX(project_sequence) AS head FROM project_event_scopes WHERE project_access_id=?").get(state.projectAccessId).head;
+      state.sqlite.prepare("INSERT INTO project_event_scopes(event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
+        .run(proposal.event_id,state.projectAccessId,state.organizationId,"project-atmosphere",source.owner,source.stream,proposal.sequence,projectHead+1,source.owner,new Date().toISOString());
+    },"after");
+    const response=await postContextRequest(state,turnId,"Add audience: POST_CERTIFIED_PROPOSAL"),body=await response.json();
+    assert.equal(fired,true);assertPostContextUnavailable(response,body);assert.equal(body.messageNotSaved,undefined);assert.equal(postContextSendFootprint(state,turnId).turns.length,1);assertPostContextNoPaid(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+
+for(const target of["payload","custody"])
+test("POST context certification: own committed content "+target+" must remain exact through final response",async()=>{
+  const state=await postContextFixture({shared:true,actions:true}),failures=[];let restore;
+  try{
+    const source=state.postSource,turnId="post-context-own-content-"+target;let fired=false;
+    restore=interceptConsequentialDb(state,"batch",/INSERT INTO assistant_turns\b/u,()=>{
+      fired=true;const saved=state.sqlite.prepare("SELECT assistant_content_ref FROM assistant_turns WHERE actor_user_id=? AND turn_id=?").get(source.owner,turnId);assert.ok(saved);
+      if(target==="payload")state.sqlite.prepare("UPDATE private_content SET content='REPLACED_POST_OWN_CONTENT' WHERE content_id=?").run(saved.assistant_content_ref);
+      else state.sqlite.prepare("UPDATE private_content_retention_scopes SET project_id='different-post-own-custody' WHERE content_id=?").run(saved.assistant_content_ref);
+    },"after");
+    const response=await postContextRequest(state,turnId,"Add audience: POST_CERTIFIED_PROPOSAL"),body=await response.json();
+    assert.equal(fired,true);assertPostContextUnavailable(response,body);assert.equal(body.messageNotSaved,undefined);assert.doesNotMatch(JSON.stringify(body),/REPLACED_POST_OWN_CONTENT/u);
+    assert.equal(postContextSendFootprint(state,turnId).turns.length,1);assertPostContextNoPaid(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+
+test("POST context certification: duplicate keeps the original retained answer but withholds mismatched current page facts",async()=>{
+  const state=await postContextFixture(),failures=[];let restore;
+  try{
+    const source=state.postSource,before=postContextSendFootprint(state,source.turn.id);let fired=false;
+    restore=interceptConsequentialDb(state,"batch",/AS response_authorized/u,()=>{
+      fired=true;state.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),source.titleEvent.eventId);
+    });
+    const response=await postContextRequest(state,source.turn.id,source.turn.user),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.contextUnavailable,true);assert.equal(body.messageNotSaved,undefined);
+    assert.equal(body.turn.id,source.turn.id);assert.equal(body.turn.reply.text,source.turn.reply.text);
+    assert.equal(body.context.documentTitle,null);assert.deepEqual(body.context.decisionAtoms,[]);assert.equal(body.context.truncated,true);
+    assert.doesNotMatch(JSON.stringify(body.context),/PRIVATE_CONTEXT_READ_/u);assertPostContextNoWitness(body);
+    assert.deepEqual(postContextSendFootprint(state,source.turn.id),before);assertPostContextNoPaid(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+
+for(const shared of[false,true])
+test("POST context certification: concurrent identical "+(shared?"shared":"personal")+" send returns the independently retained winner without loser writes",async()=>{
+  const state=await postContextFixture({shared}),failures=[];let restore;
+  try{
+    const turnId="post-context-concurrent-"+(shared?"shared":"personal"),message="Explain PRIVATE_CONTEXT_READ_BLOCK_TEXT";
+    let fired=0,winner,winnerFootprint,winnerPrivate,loserEventIds;
+    restore=interceptConsequentialDb(state,"batch",/INSERT INTO assistant_turns\b/u,async statements=>{
+      fired++;
+      assert.equal(postContextSendFootprint(state,turnId).turns.length,0,"outer request passed its initial duplicate check before either send committed");
+      loserEventIds=statements.filter(item=>/INSERT INTO event_write_stage\b/u.test(item.sql)).map(item=>item.values[0]);
+      assert.equal(loserEventIds.length,2);
+      restore();
+      const response=await postContextRequest(state,turnId,message);winner=await response.json();
+      assert.equal(response.status,201,JSON.stringify(winner));assert.equal(winner.messageNotSaved,undefined);
+      winnerFootprint=postContextSendFootprint(state,turnId);
+      winnerPrivate=state.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all();
+      assert.equal(winnerFootprint.turns.length,1);assert.equal(winnerFootprint.events.length,2);assert.equal(winnerFootprint.receipts.length,2);
+    });
+    const response=await postContextRequest(state,turnId,message),body=await response.json();
+    assert.equal(fired,1);assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.contextUnavailable,true);assert.equal(body.messageNotSaved,undefined);
+    assert.equal(body.turn.id,winner.turn.id);assert.equal(body.turn.user,winner.turn.user);assert.deepEqual(body.turn.reply,winner.turn.reply);
+    assert.equal(body.context.documentTitle,null);assert.deepEqual(body.context.decisionAtoms,[]);assert.equal(body.context.truncated,true);
+    assert.doesNotMatch(JSON.stringify(body.context),/PRIVATE_CONTEXT_READ_/u);
+    assert.deepEqual(postContextSendFootprint(state,turnId),winnerFootprint,"the loser cannot alter the independently retained winner");
+    assert.deepEqual(state.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all(),winnerPrivate,"the losing batch leaves no orphaned private copies");
+    for(const eventId of loserEventIds)assert.equal(state.sqlite.prepare("SELECT 1 AS present FROM events WHERE event_id=?").get(eventId),undefined);
+    assertPostContextNoWitness(body);assertPostContextNoPaid(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+
+test("POST context certification: repointed own committed content cannot downgrade lost-response recovery to a concurrent duplicate",async()=>{
+  const state=await postContextFixture(),failures=[];let restore;
+  try{
+    const source=state.postSource,turnId="post-context-repointed-own-recovery";let fired=0,ownEventIds;
+    restore=interceptConsequentialDb(state,"batch",/INSERT INTO assistant_turns\b/u,()=>{
+      fired++;const saved=postContextSendFootprint(state,turnId);assert.equal(saved.turns.length,1);ownEventIds=saved.events.map(event=>event.event_id);
+      const replacementRefs=saved.private.map((row,index)=>{
+        const contentId="post-context-repointed-content-"+index;
+        state.sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,?)")
+          .run(contentId,row.owner_id,row.kind,row.content,row.created_at,row.expires_at,row.redacted_at);
+        return{kind:row.kind,id:contentId};
+      });
+      state.sqlite.prepare("UPDATE assistant_turns SET user_content_ref=?,assistant_content_ref=? WHERE actor_user_id=? AND turn_id=?")
+        .run(replacementRefs.find(row=>row.kind==="chat-user").id,replacementRefs.find(row=>row.kind==="chat-assistant").id,source.owner,turnId);
+      state.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),source.blockEvent.eventId);
+      throw new Error("post_context_repointed_commit_response_lost");
+    },"after");
+    const response=await postContextRequest(state,turnId),body=await response.json();
+    assert.equal(fired,1);assertPostContextUnavailable(response,body);assert.equal(body.messageNotSaved,undefined);
+    const saved=postContextSendFootprint(state,turnId);assert.equal(saved.turns.length,1);assert.equal(saved.events.length,2);
+    assert.match(saved.turns[0].assistant_content_ref,/^post-context-repointed-content-/u);
+    for(const eventId of ownEventIds)assert.ok(state.sqlite.prepare("SELECT 1 AS present FROM events WHERE event_id=?").get(eventId),"immutable own events remain the recovery identity");
+    assertPostContextNoPaid(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+
+for(const stale of[false,true])
+test("POST context certification: lost commit response preserves exact footprint and "+(stale?"refuses stale recovery":"recovers current original answer"),async()=>{
+  const state=await postContextFixture({actions:true}),failures=[];let restore;
+  try{
+    const source=state.postSource,turnId="post-context-lost-"+(stale?"stale":"current");let fired=0,saved;
+    restore=interceptConsequentialDb(state,"batch",/INSERT INTO assistant_turns\b/u,()=>{
+      fired++;saved=postContextSendFootprint(state,turnId);assert.equal(saved.turns.length,1,"simulate transport loss only after SQLite COMMIT");
+      if(stale)state.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),source.blockEvent.eventId);
+      throw new Error("post_context_committed_response_lost");
+    },"after");
+    const response=await postContextRequest(state,turnId,"Add audience: POST_CERTIFIED_PROPOSAL"),body=await response.json();
+    assert.equal(fired,1);assert.deepEqual(postContextSendFootprint(state,turnId),saved,"recovery neither regenerates nor replaces the committed send");assert.equal(body.messageNotSaved,undefined);
+    if(stale)assertPostContextUnavailable(response,body);
+    else{assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.turn.id,turnId);assert.equal(body.contextUnavailable,undefined);assertPostContextNoWitness(body);}
+    assertPostContextNoPaid(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+
+test("POST context certification: native deadline crossing before commit is a rollback without sleeping",async()=>{
+  const state=await postContextFixture(),failures=[],nativeNow=Date.now;let restore,clock;
+  try{
+    const turnId="post-context-native-expiry",deadline=new Date(Date.now()+60_000).toISOString();
+    await appendContextReadEvents(state,[["BlockCreated",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"post-context-expiring",type:"direction",position:"z-post-expiry",properties:{text:"PRIVATE_CONTEXT_READ_EXPIRING",license_expires_at:deadline}}]]);
+    const beforePrivate=state.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all();clock=consequentialDbClock(state);let fired=false;
+    restore=interceptConsequentialDb(state,"batch",/INSERT INTO assistant_turns\b/u,()=>{fired=true;clock.set(deadline);Date.now=()=>Date.parse(deadline);});
+    const response=await postContextRequest(state,turnId),body=await response.json();
+    assert.equal(fired,true);assertPostContextUnavailable(response,body);assert.equal(body.messageNotSaved,true);assertPostContextNoSend(state,turnId,beforePrivate);assertPostContextNoPaid(state);
+  }catch(error){failures.push(error);}finally{Date.now=nativeNow;await finishOrdinaryFeed(state,{failures,restore,clock});}
+});
+
+test("POST context certification: governed upstream deadline crossing at final response withholds the derived answer",async()=>{
+  const state=await postContextFixture({shared:true}),failures=[],nativeNow=Date.now;let restore,clock;
+  try{
+    const governed=await seedAdaptiveSeparateProjectGoverned(state),validity=await governed.rights(),turnId="post-context-governed-expiry";
+    assert.equal(validity.current,true);assert.ok(validity.validUntil);clock=consequentialDbClock(state);let fired=false;
+    restore=interceptConsequentialDb(state,"batch",/AS response_authorized/u,()=>{fired=true;clock.set(validity.validUntil);Date.now=()=>Date.parse(validity.validUntil);});
+    const response=await postContextRequest(state,turnId),body=await response.json();
+    assert.equal(fired,true);assertPostContextUnavailable(response,body);assert.equal(body.messageNotSaved,undefined);assert.equal(postContextSendFootprint(state,turnId).turns.length,1);assertPostContextNoPaid(state);
+  }catch(error){failures.push(error);}finally{Date.now=nativeNow;await finishOrdinaryFeed(state,{failures,restore,clock});}
+});
+
+test("POST context certification: revoked authority takes 403 precedence over stale source at final response",async()=>{
+  const state=await postContextFixture(),failures=[];let restore;
+  try{
+    const source=state.postSource,turnId="post-context-authority-first";let fired=false;
+    restore=interceptConsequentialDb(state,"batch",/AS response_authorized/u,()=>{
+      fired=true;state.sqlite.prepare("UPDATE users SET consent_version='revoked-post-context' WHERE user_id=?").run(source.owner);
+      state.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),source.blockEvent.eventId);
+    });
+    const response=await postContextRequest(state,turnId),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,403,JSON.stringify(body));assert.equal(body.error,"assistant_read_scope_denied");
+    assert.equal(body.context,undefined);assert.equal(body.turn,undefined);assert.equal(body.messageNotSaved,undefined);assertPostContextNoWitness(body);assertPostContextNoPaid(state);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+
 for(const lane of ordinaryFeedLanes)for(const target of["authored","answer"])for(const withdrawal of["deadline","redacted","replaced","deleted"])
 test("ordinary feed retention: late "+withdrawal+" "+target+" in "+lane.name,async()=>{
   const state=await specialistMockFixture({shared:lane.shared}),failures=[];let restore,trace,clock;
@@ -6263,6 +7150,223 @@ test("ordinary feed retention: pending proposal "+withdrawal+" after hydration i
     else{assertOrdinaryFeedHidden(body,hidden,kept);assert.equal(JSON.stringify(body).includes(summary),false);assert.doesNotMatch(JSON.stringify(body),/NEW_UNREAD_PROPOSAL/u);}
     assertSpecialistFeedReadOnly(state,before,trace,0);
   }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,trace,restore,clock});}
+});
+
+const ordinaryPostExactRead=/WHERE turn\.actor_user_id=\? AND turn\.scope_key=\? AND turn\.turn_id=\?/u;
+function ordinaryPostWithdraw(state,ref,withdrawal,clock,deadline){
+  if(withdrawal==="deadline")clock.set(deadline);
+  else if(withdrawal==="redacted")state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),ref);
+  else if(withdrawal==="replaced")state.sqlite.prepare("UPDATE private_content SET content='UNREAD_POST_REPLACEMENT' WHERE content_id=?").run(ref);
+  else state.sqlite.prepare("DELETE FROM private_content WHERE content_id=?").run(ref);
+}
+function assertOrdinaryPostUnavailable(response,body){
+  assert.equal(response.status,409,JSON.stringify(body));
+  assert.deepEqual(body,{error:"assistant_turn_unavailable",noAutomaticRetry:true});
+}
+for(const lane of ordinaryFeedLanes)for(const target of["authored","answer"])for(const withdrawal of["deadline","redacted","replaced","deleted"])
+test("ordinary POST retention: exact retry late "+withdrawal+" "+target+" in "+lane.name,async()=>{
+  const state=await specialistMockFixture({shared:lane.shared}),failures=[];let restore,clock;
+  try{
+    const turn=await ordinaryFeedTurn(state,"post-exact-withdrawn",{route:lane.route}),ref=turn.pointers[target];
+    const deadline=new Date(Date.now()+60_000).toISOString();
+    if(withdrawal==="deadline"){state.sqlite.prepare("UPDATE private_content SET expires_at=? WHERE content_id=?").run(deadline,ref);clock=consequentialDbClock(state);}
+    let fired=false,before;
+    restore=interceptConsequentialDb(state,"first",ordinaryPostExactRead,()=>{
+      fired=true;ordinaryPostWithdraw(state,ref,withdrawal,clock,deadline);before=specialistFeedSnapshot(state);
+    },"after");
+    const response=await state.request(endpoint(lane.route),json({turnId:turn.id,message:turn.user},state.owner??{})),body=await response.json();
+    assert.equal(fired,true);assertOrdinaryPostUnavailable(response,body);
+    assert.deepEqual(specialistFeedSnapshot(state),before);assert.equal(state.calls.length,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore,clock});}
+});
+for(const shared of[false,true])for(const change of["redacted","deleted","replaced","expired","metadata","authority"])
+test("ordinary POST retention: fresh commit followed by "+change+" in "+(shared?"shared":"personal"),async()=>{
+  const state=await specialistMockFixture({shared}),failures=[];let restore;
+  try{
+    const id="post-fresh-withdrawn",message="PRIVATE_NEW_POST_QUESTION";let fired=false;
+    restore=interceptConsequentialDb(state,"batch",/INSERT INTO assistant_turns\b/u,()=>{
+      fired=true;const pointers=ordinaryFeedPointers(state,{id});
+      if(change==="expired")state.sqlite.prepare("UPDATE private_content SET expires_at='2000-01-01T00:00:00.000Z' WHERE content_id=?").run(pointers.answer);
+      else if(change==="metadata")state.sqlite.prepare("UPDATE assistant_turns SET request_json='{}' WHERE turn_id=?").run(id);
+      else if(change==="authority")state.sqlite.prepare("UPDATE users SET consent_version='' WHERE user_id=?").run(pointers.row.actor_user_id);
+      else ordinaryPostWithdraw(state,pointers.answer,change);
+    },"after");
+    const response=await state.request(endpoint(),json({turnId:id,message,locale:"en"},state.owner??{})),body=await response.json();
+    assert.equal(fired,true);
+    if(change==="authority"){assert.equal(response.status,403,JSON.stringify(body));assert.deepEqual(body,{error:"assistant_read_scope_denied"});}
+    else assertOrdinaryPostUnavailable(response,body);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_turns WHERE turn_id=?").get(id).n,1);
+    assert.equal(state.calls.length,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+for(const shared of[false,true])test("ordinary POST retention: lost commit response rechecks recovered exact source in "+(shared?"shared":"personal"),async()=>{
+  const state=await specialistMockFixture({shared}),failures=[];let restoreCommit,restoreExact;
+  try{
+    const id="post-lost-response";let committed=false,withdrawn=false,before;
+    restoreCommit=interceptConsequentialDb(state,"batch",/INSERT INTO assistant_turns\b/u,()=>{
+      committed=true;
+      restoreExact=interceptConsequentialDb(state,"first",ordinaryPostExactRead,()=>{
+        withdrawn=true;ordinaryPostWithdraw(state,ordinaryFeedPointers(state,{id}).answer,"redacted");before=specialistFeedSnapshot(state);
+      },"after");
+      throw new Error("fixture lost committed response");
+    },"after");
+    const response=await state.request(endpoint(),json({turnId:id,message:"PRIVATE_LOST_POST_QUESTION"},state.owner??{})),body=await response.json();
+    assert.equal(committed,true);assert.equal(withdrawn,true);assertOrdinaryPostUnavailable(response,body);
+    assert.deepEqual(specialistFeedSnapshot(state),before);assert.equal(state.calls.length,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore:()=>{restoreExact?.();restoreCommit?.();}});}
+});
+for(const shared of[false,true])for(const fresh of[false,true])test("ordinary POST retention: filters unrelated expired context on "+(fresh?"fresh":"duplicate")+" response in "+(shared?"shared":"personal"),async()=>{
+  const state=await specialistMockFixture({shared}),failures=[];let restore;
+  try{
+    const hidden=await ordinaryFeedTurn(state,"post-context-hidden"),kept=await ordinaryFeedTurn(state,"post-context-kept");
+    const id=fresh?"post-context-new":kept.id,message=fresh?"New independent question":kept.user;let fired=false;
+    restore=interceptConsequentialDb(state,"batch",/AS response_turn_retained/u,()=>{fired=true;ordinaryPostWithdraw(state,hidden.pointers.answer,"redacted");});
+    const response=await state.request(endpoint(),json({turnId:id,message},state.owner??{})),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,fresh?201:200,JSON.stringify(body));assert.equal(body.turn.id,id);
+    assert.deepEqual(body.retiredTurnIds,[hidden.id]);
+    assert.equal(body.context.recentTurns.some(turn=>turn.id.startsWith(hidden.id+":")),false);
+    assert.equal(body.context.recentTurns.some(turn=>turn.id===kept.id+":assistant"&&turn.text===kept.reply.text),true);
+    assert.equal(JSON.stringify(body).includes(hidden.user),false);assert.equal(JSON.stringify(body).includes(hidden.reply.text),false);
+    assert.doesNotMatch(JSON.stringify(body),/source_user_ref|source_answer_ref|source_turn_record|assistantFeedSources|response_turn_retained/u);
+    assert.equal(state.calls.length,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+for(const locale of["en","fr","ar","ja"])test("ordinary POST retention: fresh localized reply keeps structured presentation "+locale,async()=>{
+  const state=await specialistMockFixture(),failures=[];
+  try{
+    const id="post-localized-"+locale,response=await state.request(endpoint(),json({turnId:id,message:"What should I do next?",locale})),body=await response.json();
+    assert.equal(response.status,201,JSON.stringify(body));assert.equal(typeof body.turn.reply.key,"string");assert.equal(body.turn.reply.text,undefined);
+    const row=state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(ordinaryFeedPointers(state,{id}).answer);assert.ok(row.content.length>0);
+    const replay=await state.request(endpoint(),json({turnId:id,message:"What should I do next?",locale})),saved=await replay.json();
+    assert.equal(replay.status,200,JSON.stringify(saved));assert.equal(saved.turn.reply.text,row.content);
+    assert.equal(state.calls.length,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures});}
+});
+for(const shared of[false,true])for(const change of["redacted","resolved"])test("ordinary POST retention: exact proposal "+change+" at final snapshot in "+(shared?"shared":"personal"),async()=>{
+  const state=await specialistMockFixture({shared}),failures=[];let restore;
+  try{
+    const turn=await ordinaryFeedTurn(state,"post-proposal-retired",{},"Add palette: cobalt blue"),proposal=state.sqlite.prepare("SELECT * FROM assistant_action_proposals WHERE turn_id=? AND status='pending'").get(turn.id);assert.ok(proposal);let fired=false;
+    restore=interceptConsequentialDb(state,"batch",/AS response_turn_retained/u,()=>{
+      fired=true;
+      if(change==="redacted")ordinaryPostWithdraw(state,proposal.action_content_ref,"redacted");
+      else state.sqlite.prepare("UPDATE assistant_action_proposals SET status='dismissed' WHERE proposal_id=?").run(proposal.proposal_id);
+    });
+    const response=await state.request(endpoint(),json({turnId:turn.id,message:turn.user},state.owner??{})),body=await response.json();
+    assert.equal(fired,true);assertOrdinaryPostUnavailable(response,body);assert.equal(state.calls.length,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+for(const lane of ordinaryFeedLanes)test("ordinary POST retention: unchanged exact replay is read-only in "+lane.name,async()=>{
+  const state=await specialistMockFixture({shared:lane.shared}),failures=[];let trace;
+  try{
+    const turn=await ordinaryFeedTurn(state,"post-exact-kept",{route:lane.route}),before=specialistFeedSnapshot(state);trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(lane.route),json({turnId:turn.id,message:turn.user},state.owner??{})),body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.turn.reply.text,turn.reply.text);assert.equal(body.turn.user,turn.user);
+    assert.deepEqual(body.retiredTurnIds,[]);
+    assertSpecialistFeedReadOnly(state,before,trace,0);assert.equal(state.calls.length,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,trace});}
+});
+
+for(const lane of ordinaryFeedLanes)test("ordinary POST retention: fresher exact reply is not retired by its stale history witness in "+lane.name,async()=>{
+  const state=await specialistMockFixture({shared:lane.shared}),failures=[];let restore,trace;
+  try{
+    const turn=await ordinaryFeedTurn(state,"post-exact-fresher",{route:lane.route}),freshReply="PRIVATE_FRESHER_EXACT_REPLY";let fired=false,before;
+    restore=interceptConsequentialDb(state,"first",ordinaryPostExactRead,()=>{
+      fired=true;state.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?").run(freshReply,turn.pointers.answer);
+      before=specialistFeedSnapshot(state);
+    });
+    trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(lane.route),json({turnId:turn.id,message:turn.user},state.owner??{})),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.turn.reply.text,freshReply);
+    assert.deepEqual(body.retiredTurnIds,[],"the certified required turn supersedes its failed earlier witness");
+    assert.equal(body.context.recentTurns.some(item=>item.id===turn.id+":user"||item.id===turn.id+":assistant"),false);
+    assert.equal(JSON.stringify(body).includes(turn.reply.text),false);
+    assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,trace,restore});}
+});
+for(const shared of[false,true])test("ordinary POST retention: bounded history omission does not retire retained turns in "+(shared?"shared":"personal"),async()=>{
+  const state=await specialistMockFixture({shared}),failures=[];let trace;
+  try{
+    const turns=[];for(let index=0;index<7;index++)turns.push(await ordinaryFeedTurn(state,"post-history-window-"+index));
+    const required=turns.at(-1),before=specialistFeedSnapshot(state);trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(),json({turnId:required.id,message:required.user},state.owner??{})),body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));assert.deepEqual(body.retiredTurnIds,[]);
+    assert.equal(body.context.recentTurns.some(item=>item.id.startsWith(turns[0].id+":")),false);
+    assert.equal(body.context.recentTurns.some(item=>item.id.startsWith(turns[1].id+":")),false);
+    assert.equal(trace.statements.filter(statement=>statement.sql.includes("AS response_turn_retained")).length,7,"six bounded history witnesses plus the required exact turn");
+    assert.equal(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(turns[0].pointers.answer).content,turns[0].reply.text);
+    assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,trace});}
+});
+
+for(const shared of[false,true])for(const change of["unchanged","consent","canonical"])
+test("ordinary POST retention: paid exact replay after "+change+" in "+(shared?"shared":"personal"),async()=>{
+  const state=await specialistMockFixture({shared}),failures=[];let restore;
+  try{
+    const{turn,review}=await specialistFeedCompleted(state),pointers=specialistFeedPointers(state,turn,review);
+    const savedReply=state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(pointers.answer).content;
+    let fired=false,before;
+    restore=interceptConsequentialDb(state,"first",ordinaryPostExactRead,()=>{
+      fired=true;
+      if(change!=="unchanged")ordinaryPostWithdraw(state,pointers[change],"redacted");
+      before=specialistFeedSnapshot(state);
+    },"after");
+    const response=await state.request(endpoint(),json({turnId:turn.id,message:turn.user},state.owner??{})),body=await response.json();
+    assert.equal(fired,true);
+    if(change==="unchanged"){assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.turn.reply.text,savedReply);}
+    else assertOrdinaryPostUnavailable(response,body);
+    assert.deepEqual(specialistFeedSnapshot(state),before);assert.equal(state.calls.length,1,"replay performs no additional paid dispatch");
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+for(const change of["unchanged","redacted","adopted"])
+test("ordinary POST retention: legacy exact replay retains original custody after "+change,async()=>{
+  const state=await specialistMockFixture({shared:true,legacyConversation:true}),failures=[];let restore;
+  try{
+    const headers=Object.fromEntries(Object.entries(state.owner).filter(([key])=>key!=="cookie"));
+    const kept=await ordinaryFeedTurn(state,"post-legacy-current",{headers});
+    const legacy=state.sqlite.prepare("SELECT json_extract(message.payload,'$.turn_id') AS id,authored.content AS user,answer.content AS reply,answer.content_id AS ref FROM events message JOIN private_content authored ON authored.content_id=json_extract(message.payload,'$.content_ref') JOIN events response ON response.stream_id=message.stream_id AND response.correlation_id=message.correlation_id AND response.type='AssistantReasoned' JOIN private_content answer ON answer.content_id=json_extract(response.payload,'$.content_ref') WHERE message.type='ChatMessageSent' AND answer.content='LEGACY PERSONAL CREATIVE ANSWER'").get();assert.ok(legacy);
+    let fired=false,before;
+    restore=interceptConsequentialDb(state,"batch",/AS response_turn_retained/u,()=>{
+      fired=true;
+      if(change==="redacted")ordinaryPostWithdraw(state,legacy.ref,"redacted");
+      if(change==="adopted")state.sqlite.prepare("UPDATE private_content_retention_scopes SET content_id=? WHERE content_id=?").run(legacy.ref,kept.pointers.answer);
+      before=specialistFeedSnapshot(state);
+    });
+    const response=await state.request(endpoint(),json({turnId:legacy.id,message:legacy.user},headers)),body=await response.json();
+    assert.equal(fired,true);
+    if(change==="unchanged"){assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.turn.reply.text,legacy.reply);}
+    else assertOrdinaryPostUnavailable(response,body);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_turns WHERE turn_id=?").get(legacy.id).n,0,"replay does not adopt legacy events into a new table turn");
+    assert.deepEqual(specialistFeedSnapshot(state),before);assert.equal(state.calls.length,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
+});
+
+for(const shared of[false,true])for(const kind of["context.remove","context.relation.add","context.relation.remove"])for(const change of["unchanged","action-payload","source-versions"])
+test("ordinary POST retention: fresh "+kind+" presentation after "+change+" in "+(shared?"shared":"personal"),async()=>{
+  const state=await specialistMockFixture({shared}),failures=[];let restore;
+  try{
+    const headers=state.owner??{},initial=await(await state.request(endpoint(),{headers})).json();
+    const choices=initial.context.decisionAtoms.filter(item=>!item.locked&&!item.immutable&&!item.protected);assert.ok(choices.length>=2);
+    const[from,to]=choices;
+    if(kind==="context.relation.remove"){
+      const added=await state.request("/api/events",json({action:"append",event:{type:"BlockRelationAdded",payload:{project_id:"project-atmosphere",document_id:"doc-atmosphere",relation_id:"post-summary-relation",from_block_id:from.id,to_block_id:to.id,kind:"context_contains",properties:{}}}},headers));
+      assert.equal(added.status,200,JSON.stringify(await added.clone().json()));
+    }
+    const id="post-summary-source",message=kind==="context.remove"?`Remove ${from.id}`:kind==="context.relation.add"?`Connect ${from.id} to ${to.id}`:`Disconnect ${from.id} from ${to.id}`;
+    let fired=false;
+    if(change!=="unchanged")restore=interceptConsequentialDb(state,"batch",/INSERT INTO assistant_turns\b/u,()=>{
+      fired=true;const proposal=state.sqlite.prepare("SELECT * FROM assistant_action_proposals WHERE turn_id=?").get(id);assert.ok(proposal);
+      if(change==="action-payload")state.sqlite.prepare("UPDATE private_content SET content=json_set(content,'$.unreadReplacement',1) WHERE content_id=?").run(proposal.action_content_ref);
+      else state.sqlite.prepare("UPDATE assistant_action_proposals SET source_versions_json=? WHERE proposal_id=?").run(JSON.stringify([{blockId:"replaced-source-basis",version:999}]),proposal.proposal_id);
+    },"after");
+    const response=await state.request(endpoint(),json({turnId:id,message},headers)),body=await response.json();
+    if(change==="unchanged"){
+      assert.equal(response.status,201,JSON.stringify(body));assert.equal(body.turn.proposal.kind,kind);
+      assert.equal(body.turn.proposal.summary,kind==="context.remove"?from.text.slice(0,320):`${from.text.slice(0,120)} → ${to.text.slice(0,120)}`);
+      const stored=state.sqlite.prepare("SELECT content.content,turn.proposal_json FROM assistant_turns turn JOIN assistant_action_proposals proposal ON proposal.turn_id=turn.turn_id JOIN private_content content ON content.content_id=proposal.action_content_ref WHERE turn.turn_id=?").get(id);
+      assert.equal(Object.hasOwn(JSON.parse(stored.content),"summary"),false);assert.equal(stored.proposal_json.includes('"summary"'),false,"presentation does not create a new persistent summary");
+    }else{assert.equal(fired,true);assertOrdinaryPostUnavailable(response,body);}
+    assert.equal(state.calls.length,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,restore});}
 });
 
 const specialistTestRoute="/document/doc-atmosphere";
@@ -7449,8 +8553,8 @@ SELECT 1 FROM pilot_cohorts reviewer_cohort
 test("assistant d1 depth: policy anti-joins preserve original cohort, enrollment, reviewer and NULL decisions",async(t)=>{
   const state=await fixture(),db=new DatabaseSync(":memory:");
   // Exact production table constraints; unrelated destructive-lifecycle triggers are not under test.
-  for(const name of["pilot_cohorts","pilot_participants"])db.exec(state.sqlite.prepare("SELECT sql FROM sqlite_master WHERE type=\'table\' AND name=?").get(name).sql);
-  for(const row of state.sqlite.prepare("SELECT sql FROM sqlite_master WHERE type=\'index\' AND tbl_name IN(\'pilot_cohorts\',\'pilot_participants\') AND sql IS NOT NULL").all())db.exec(row.sql);
+  for(const name of["pilot_cohorts","pilot_participants"])db.exec(state.sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(name).sql);
+  for(const row of state.sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name IN('pilot_cohorts','pilot_participants') AND sql IS NOT NULL").all())db.exec(row.sql);
   const sql=db.prepare("SELECT "+d1LegacyParticipantSql("expected.organization_id","expected.user_id")+" AS old_participant,"
     +effectivePilotParticipantSql("expected.organization_id","expected.user_id")+" AS current_participant,"
     +d1LegacyReviewerSql("expected.organization_id","expected.user_id")+" AS old_reviewer,"
@@ -7607,6 +8711,12 @@ for(const shared of[false,true])test("assistant d1 depth: actual Document and Ca
     await state.drainBackground();depth.assertVerified();
     assert.ok(depth.records.length>=100,"Exercise the full real request-query inventory");
     t.diagnostic(depth.records.length+" byte-exact SQL/schema shapes compiled with SQLITE_LIMIT_EXPR_DEPTH=100 before fixture preparation");
+  }catch(error){
+    if(!shared){
+      try{t.diagnostic(JSON.stringify({stage:"personal-execute-failure",depthFailures:depth.failures}));}
+      catch{/* Preserve the original failure if diagnostic reporting fails. */}
+    }
+    throw error;
   }finally{depth.restore();await state.cleanup();}
 });
 
@@ -7626,6 +8736,12 @@ for(const shared of[false,true])test("assistant d1 depth: signed cleanup and can
     }
     assert.equal(state.calls.length,0);depth.assertVerified();
     t.diagnostic(depth.records.length+" signed cleanup/cancel SQL shapes verified before execution");
+  }catch(error){
+    if(!shared){
+      try{t.diagnostic(JSON.stringify({stage:"personal-execute-failure",depthFailures:depth.failures}));}
+      catch{/* Preserve the original failure if diagnostic reporting fails. */}
+    }
+    throw error;
   }finally{depth.restore();await state.cleanup();}
 });
 
@@ -8106,7 +9222,10 @@ test("assistant authority R2: Stop retains unknown submitted holds and cannot tu
 test("assistant authority R2: completed paid original wins a racing Stop without changing its receipt",async()=>{
  const ready=Promise.withResolvers(),release=Promise.withResolvers(),state=await assistantR2DepthFixture({respond:async payload=>{ready.resolve();await release.promise;return specialistRawResponse(payload);}});let restore;
  try{
-  const{task}=await specialistApprovedTurn(state,"Review the exact retained source.");await ready.promise;let completed;
+  const{task}=await specialistApprovedTurn(state,"Review the exact retained source.");
+  const readyDeadline=Promise.withResolvers(),readyTimer=setTimeout(()=>readyDeadline.reject(new Error("assistant_r2_mock_provider_ready_timeout")),10_000);
+  try{await Promise.race([ready.promise,readyDeadline.promise]);}finally{clearTimeout(readyTimer);}
+  let completed;
   restore=interceptConsequentialDb(state,"first",/^SELECT 1 AS current WHERE[\s\S]*specialistConsentVersion/u,async()=>{release.resolve();await state.drainBackground();completed=consequentialReceipt(state,task.id);},"after");
   const response=await state.request(taskEndpoint(task.id,"cancel"),{method:"POST"}),body=await response.json();
   assert.ok(completed);assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.result.reply,"PRIVATE_VERIFIED_SPECIALIST_REPLY");assert.equal(body.task.status,"completed");assert.equal(body.unusedExecution,undefined);assert.deepEqual(consequentialReceipt(state,task.id),completed);assert.equal(state.calls.length,1);
@@ -9229,6 +10348,332 @@ test("main170 phase8 current Output private retention in another hash-bound Docu
     phase8AssertNoPayment(state, paid);
   } finally { await state.cleanup(); }
 });
+
+function nativeMemoryPublication(state, turn) {
+  const pointers = ordinaryFeedPointers(state, turn), events = state.sqlite.prepare("SELECT * FROM events WHERE correlation_id=? ORDER BY sequence")
+    .all(state.nativePrepared.principal.userId + ":" + turn.id);
+  const scopes = state.sqlite.prepare("SELECT custody.* FROM project_event_scopes custody JOIN events event ON event.event_id=custody.event_id WHERE event.correlation_id=? ORDER BY event.sequence")
+    .all(state.nativePrepared.principal.userId + ":" + turn.id);
+  return { pointers, events, scopes, migration: state.sqlite.prepare("SELECT * FROM project_migration_states WHERE project_access_id=?").get(state.projectAccessId ?? "no-personal-scope") };
+}
+async function nativeMemoryRecallPublished(state, turn, published) {
+  nativeMemoryRemember(state, [published.pointers.response]);
+  const through = published.events.at(-1).sequence;
+  state.sqlite.prepare("UPDATE memory_live_enrollments SET cursor_sequence=? WHERE enrollment_id=?").run(through, state.nativeEnrollment.enrollment_id);
+  // Do NOT prepare authority, request GET, or call synchronizeProjectScope here.
+  // The retained pre-POST authenticated binding must read the just-published pair.
+  const capture = await nativeMemoryRead(state); await nativeMemoryAssertCurrent(state, capture);
+  assert.equal(capture.value.conversationPairs.some(pair => pair.turnId === turn.id && pair.eventId === published.pointers.response), true);
+  return capture;
+}
+for (const proposal of [false, true]) test("native memory context integration: immediate shared POST publishes exactly two scopes" + (proposal ? " alongside one unindexed proposal" : " and duplicate adds nothing"), async () => {
+  const state = await nativeMemoryFixture({ shared: true }), failures = [];
+  try {
+    if (proposal) state.env.FORMA_ASSISTANT_ACTION_USER_IDS = state.nativePrepared.principal.userId;
+    const turnId = "native-immediate-shared-" + proposal, message = proposal ? "Add audience: NATIVE_IMMEDIATE_PROPOSAL" : "Explain the current document.";
+    const turn = await specialistFreeTurn(state, turnId, message), published = nativeMemoryPublication(state, turn);
+    assert.equal(published.events.length, proposal ? 3 : 2);
+    assert.deepEqual(published.scopes.map(row => row.event_id), [published.pointers.message, published.pointers.response]);
+    assert.equal(published.scopes[1].project_sequence, published.scopes[0].project_sequence + 1);
+    assert.equal(published.migration.last_owner_sequence, published.events.at(-1).sequence);
+    for (const [index, scope] of published.scopes.entries()) {
+      assert.equal(scope.source_stream_id, state.nativePrepared.binding.streamId);
+      assert.equal(scope.source_sequence, published.events[index].sequence);
+      assert.equal(scope.actor_user_id, state.nativePrepared.principal.userId);
+      assert.equal(scope.owner_user_id, state.nativePrepared.binding.scope.ownerUserId);
+    }
+    if (proposal) assert.equal(turn.proposal.kind, "context.create");
+    await nativeMemoryRecallPublished(state, turn, published);
+    const repeated = await state.request(endpoint(), json({ turnId, message, locale: "en" }, state.owner));
+    assert.equal(repeated.status, 200, JSON.stringify(await repeated.clone().json()));
+    assert.deepEqual(nativeMemoryPublication(state, turn), published, "duplicate cannot republish scopes or move the migration cursor");
+    nativeMemoryUnpaid(state);
+  } catch (error) { failures.push(error); } finally { await finishOrdinaryFeed(state, { failures }); }
+});
+
+test("native memory context integration: immediate nonowner shared POST preserves actor versus owner custody", async () => {
+  const state = await nativeMemoryFixture({ shared: true, short: false, configure(state) { state.owner = state.viewer; } }), failures = [];
+  try {
+    const turn = await specialistFreeTurn(state, "native-nonowner-shared", "Explain this shared document."), published = nativeMemoryPublication(state, turn);
+    assert.equal(published.events.length, 2); assert.equal(published.scopes.length, 2);
+    assert.equal(state.nativePrepared.principal.userId, "assistant-viewer");
+    for (const scope of published.scopes) {
+      assert.equal(scope.owner_user_id, "assistant-owner"); assert.equal(scope.actor_user_id, "assistant-viewer");
+      assert.equal(scope.source_stream_id, "creative:assistant-owner");
+    }
+    assert.equal(published.migration.last_owner_sequence, published.events.at(-1).sequence);
+    await nativeMemoryRecallPublished(state, turn, published); nativeMemoryUnpaid(state);
+  } catch (error) { failures.push(error); } finally { await finishOrdinaryFeed(state, { failures }); }
+});
+
+for (const failure of ["scope insertion", "migration update"]) test("native memory context integration: skipped " + failure + " rolls back the entire shared POST", async () => {
+  const state = await nativeMemoryFixture({ shared: true }), failures = [];
+  try {
+    const turnId = "native-publication-failure-" + failure.replaceAll(" ", "-"), correlation = state.nativePrepared.principal.userId + ":" + turnId;
+    const beforePrivate = state.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all();
+    const beforeScopes = state.sqlite.prepare("SELECT * FROM project_event_scopes ORDER BY event_id").all();
+    const beforeMigration = state.sqlite.prepare("SELECT * FROM project_migration_states ORDER BY project_access_id").all();
+    if (failure === "scope insertion") {
+      state.sqlite.exec("CREATE TRIGGER native_skip_publication BEFORE INSERT ON project_event_scopes WHEN EXISTS(SELECT 1 FROM events WHERE event_id=NEW.event_id AND correlation_id='" + correlation + "') BEGIN SELECT RAISE(IGNORE); END");
+    } else {
+      state.sqlite.exec("CREATE TRIGGER native_skip_migration BEFORE UPDATE OF last_owner_sequence ON project_migration_states WHEN EXISTS(SELECT 1 FROM events WHERE correlation_id='" + correlation + "') BEGIN SELECT RAISE(IGNORE); END");
+    }
+    const response = await state.request(endpoint(), json({ turnId, message: "Explain without partial publication.", locale: "en" }, state.owner));
+    assert.equal(response.status, 503, JSON.stringify(await response.clone().json()));
+    assert.deepEqual(await response.json(), { error: "assistant_persistence_failed" });
+    assertPostContextNoSend(state, turnId, beforePrivate);
+    assert.deepEqual(state.sqlite.prepare("SELECT * FROM project_event_scopes ORDER BY event_id").all(), beforeScopes);
+    assert.deepEqual(state.sqlite.prepare("SELECT * FROM project_migration_states ORDER BY project_access_id").all(), beforeMigration);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM event_write_stage").get().n, 0);
+    nativeMemoryUnpaid(state);
+  } catch (error) { failures.push(error); } finally { await finishOrdinaryFeed(state, { failures }); }
+});
+
+test("native memory context integration: immediate personal POST keeps native publication unscoped", async () => {
+  const state = await nativeMemoryFixture(), failures = [];
+  try {
+    const turn = await specialistFreeTurn(state, "native-immediate-personal", "Explain the personal document."), published = nativeMemoryPublication(state, turn);
+    assert.equal(published.events.length, 2); assert.deepEqual(published.scopes, []); assert.equal(published.migration, undefined);
+    await nativeMemoryRecallPublished(state, turn, published); nativeMemoryUnpaid(state);
+  } catch (error) { failures.push(error); } finally { await finishOrdinaryFeed(state, { failures }); }
+});
+
+// Full native memory reader integration. The ordinary Worker creates all users,
+// documents and free conversations; only explicit synthetic enrollment/reference
+// metadata is seeded here. No provider enrollment, job or authority-port substitute.
+async function nativeMemoryPrepare(state) {
+  const { prepareDocumentAuthority } = await import("../worker/context-authoring-authority.ts");
+  const prepared = await prepareDocumentAuthority(new Request("http://localhost/api/context/read", {
+    headers: state.owner ?? {},
+  }), state.env, { projectId: "project-atmosphere", documentId: "doc-atmosphere" }, "read");
+  assert.ok(!(prepared instanceof Response), prepared instanceof Response ? await prepared.text() : undefined);
+  return prepared;
+}
+async function nativeMemoryFixture({ shared = false, short = true, configure } = {}) {
+  const state = await postContextFixture({ shared, short });
+  try {
+    const { readFile } = await import("node:fs/promises");
+    for (const name of ["0025_memory_live_base.sql", "0026_memory_live_conversation.sql"])
+      state.sqlite.exec(await readFile(new URL("../drizzle/" + name, import.meta.url), "utf8"));
+    if (configure) await configure(state);
+    const prepared = await nativeMemoryPrepare(state), p = prepared.principal, s = prepared.binding.scope;
+    state.env.FORMA_MEMORY_ENABLED = "true"; state.env.FORMA_MEMORY_USER_IDS = p.userId;
+    const now = new Date().toISOString();
+    const e = { enrollment_id: "native-context-enrollment", actor_user_id: p.userId, owner_user_id: s?.ownerUserId ?? p.userId,
+      organization_id: s?.organizationId ?? null, project_access_id: s?.projectAccessId ?? null,
+      project_id: prepared.binding.projectId, document_id: prepared.binding.documentId,
+      permission_epoch: p.access.permissionEpoch, policy_version: "personal-memory-v2", revision: 1,
+      learn_enabled: 1, recall_enabled: 1, background_enabled: 0, retention_days: 30, time_zone: "UTC",
+      enrolled_at: new Date(Date.now() - 86_400_000).toISOString(), expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      cursor_sequence: prepared.sourceHead, cutoff_sequence: null, last_local_day: null, last_admitted_at: null,
+      next_due_at: now, lease_token: null, lease_expires_at: null, attempts: 0, failure_code: null };
+    const columns = Object.keys(e);
+    state.sqlite.prepare("INSERT INTO memory_live_enrollments(" + columns.join(",") + ") VALUES(" + columns.map(() => "?").join(",") + ")").run(...Object.values(e));
+    state.nativePrepared = prepared; state.nativeEnrollment = e;
+    nativeMemoryRemember(state, [state.postSource.blockEvent.eventId, state.postSource.turn.pointers.response]);
+    return state;
+  } catch (error) {
+    const failures = [error]; await finishOrdinaryFeed(state, { failures });
+  }
+}
+function nativeMemoryRemember(state, eventIds) {
+  const e = state.nativeEnrollment, put = state.sqlite.prepare("INSERT OR REPLACE INTO memory_live_sources(enrollment_id,event_id,sequence,expires_at,conversation_segmented) VALUES(?,?,?,?,0)");
+  for (const id of eventIds) {
+    const row = state.sqlite.prepare("SELECT * FROM events WHERE event_id=?").get(id); assert.ok(row, "real canonical source required");
+    put.run(e.enrollment_id, id, row.sequence, e.expires_at);
+  }
+}
+async function nativeMemoryRead(state, prepared = state.nativePrepared) {
+  const { readNativeDocumentMemory } = await import("../worker/memory-live-context.ts");
+  const { AssistantContextReadWitness } = await import("../worker/assistant-context-source.ts");
+  const witness = new AssistantContextReadWitness(state.env), value = await readNativeDocumentMemory(state.env, prepared, witness);
+  if (value) witness.seal(value);
+  return { value, witness };
+}
+async function nativeMemoryAssertCurrent(state, capture) {
+  assert.ok(capture.value, "native reader omitted: " + state.controls.lastDatabaseError);
+  assert.ok(capture.witness.statements().length >= 7, "native captured source and authority dependencies");
+  assert.equal(capture.witness.matches(await state.env.DB.batch(capture.witness.statements())), true);
+  const proofs = capture.witness.precommitStatements();
+  assert.ok(proofs.every(statement => statement.values.length <= 100));
+  assert.ok((await state.env.DB.batch(proofs)).every(result => result.success));
+}
+function nativeMemoryUnpaid(state) {
+  assertPostContextNoPaid(state);
+  assert.equal(state.env.OPENAI_API_KEY, undefined);
+  assert.equal(state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS, undefined);
+}
+for (const shared of [false, true]) test("native memory context integration: full " + (shared ? "shared" : "personal") + " native read and exact final certificate", async () => {
+  const state = await nativeMemoryFixture({ shared }), failures = [];
+  try {
+    const capture = await nativeMemoryRead(state); await nativeMemoryAssertCurrent(state, capture);
+    assert.equal(capture.value.conversationPairs.length, 1);
+    const pair = capture.value.conversationPairs[0];
+    assert.equal(pair.eventId, state.postSource.turn.pointers.response);
+    assert.equal(pair.turnId, state.postSource.turn.id);
+    assert.equal(pair.user, state.postSource.turn.user);
+    assert.equal(pair.assistant, state.postSource.turn.reply.text);
+    assert.equal(capture.value.actions.some(row => row.eventId === state.postSource.blockEvent.eventId), true);
+    assert.equal(capture.value.treatment, "untrusted-historical-evidence");
+    assert.equal(capture.value.inferredPreferences, false);
+    assert.equal(capture.value.coverage.completeFromStart, false);
+    assert.deepEqual(Object.keys(pair).sort(), ["assistant", "eventId", "recordedAt", "sequence", "turnId", "user", "validUntil"]);
+    if (shared) assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_event_scopes WHERE event_id=?").get(pair.eventId).n, 1);
+    nativeMemoryUnpaid(state);
+  } catch (error) { failures.push(error); } finally { await finishOrdinaryFeed(state, { failures }); }
+});
+
+test("native memory context integration: real authority still omits default-off, unenrolled, foreign and revoked scopes", async () => {
+  const state = await nativeMemoryFixture(), failures = [];
+  try {
+    delete state.env.FORMA_MEMORY_ENABLED; assert.equal((await nativeMemoryRead(state)).value, null);
+    state.env.FORMA_MEMORY_ENABLED = "true";
+    const foreign = structuredClone(state.nativePrepared); foreign.binding.documentId = "foreign-document";
+    assert.equal((await nativeMemoryRead(state, foreign)).value, null);
+    state.sqlite.prepare("UPDATE memory_live_enrollments SET recall_enabled=0").run();
+    assert.equal((await nativeMemoryRead(state)).value, null);
+    state.sqlite.prepare("DELETE FROM memory_live_sources").run(); state.sqlite.prepare("DELETE FROM memory_live_enrollments").run();
+    assert.equal((await nativeMemoryRead(state)).value, null); nativeMemoryUnpaid(state);
+  } catch (error) { failures.push(error); } finally { await finishOrdinaryFeed(state, { failures }); }
+});
+
+for (const shared of [false, true]) for (const change of ["answer replacement", "answer withdrawal", "remembered identity", "enrollment revision"])
+test("native memory context integration: " + (shared ? "shared " : "personal ") + change + " invalidates actual final replay and precommit", async () => {
+  const state = await nativeMemoryFixture({ shared }), failures = [];
+  try {
+    const capture = await nativeMemoryRead(state); await nativeMemoryAssertCurrent(state, capture);
+    if (change === "answer replacement") state.sqlite.prepare("UPDATE private_content SET content='NATIVE_REPLACEMENT' WHERE content_id=?").run(state.postSource.turn.pointers.answer);
+    else if (change === "answer withdrawal") state.sqlite.prepare("UPDATE private_content SET redacted_at=? WHERE content_id=?").run(new Date().toISOString(), state.postSource.turn.pointers.answer);
+    else if (change === "remembered identity") state.sqlite.prepare("UPDATE memory_live_sources SET sequence=sequence+1 WHERE event_id=?").run(state.postSource.turn.pointers.response);
+    else state.sqlite.prepare("UPDATE memory_live_enrollments SET revision=revision+1").run();
+    assert.equal(capture.witness.matches(await state.env.DB.batch(capture.witness.statements())), false);
+    await assert.rejects(state.env.DB.batch(capture.witness.precommitStatements()));
+    nativeMemoryUnpaid(state);
+  } catch (error) { failures.push(error); } finally { await finishOrdinaryFeed(state, { failures }); }
+});
+
+test("native memory context integration: shared canonical custody removal invalidates a previously readable pair", async () => {
+  const state = await nativeMemoryFixture({ shared: true }), failures = [];
+  try {
+    const capture = await nativeMemoryRead(state); await nativeMemoryAssertCurrent(state, capture);
+    state.sqlite.prepare("DELETE FROM project_event_scopes WHERE event_id=?").run(state.postSource.turn.pointers.response);
+    assert.equal(capture.witness.matches(await state.env.DB.batch(capture.witness.statements())), false);
+    const fresh = await nativeMemoryRead(state); assert.ok(fresh.value);
+    assert.deepEqual(fresh.value.conversationPairs, []); nativeMemoryUnpaid(state);
+  } catch (error) { failures.push(error); } finally { await finishOrdinaryFeed(state, { failures }); }
+});
+
+test("native memory context integration: actual segment publication keeps complete groups and current cursor", async () => {
+  const state = await nativeMemoryFixture(), failures = [];
+  try {
+    const turn = await ordinaryFeedTurn(state, "native-group-second", {}, "NATIVE_GROUP_SECOND_QUESTION");
+    nativeMemoryRemember(state, [turn.pointers.response]);
+    const e = state.nativeEnrollment, through = state.sqlite.prepare("SELECT MAX(sequence) AS n FROM events WHERE stream_id=?").get(state.nativePrepared.binding.streamId).n;
+    const { liveMemoryAuthority } = await import("../worker/memory-live-authority.ts");
+    const { liveMemorySourceQuery } = await import("../worker/memory-live-sources.ts");
+    const conversation = await import("../worker/memory-live-conversation.ts");
+    const authority = await liveMemoryAuthority(state.env, e); assert.ok(authority);
+    const before = { ...e, cursor_sequence: 0 }, q = liveMemorySourceQuery(e, authority);
+    const publish = conversation.liveConversationPublication(before, q, through, new Date().toISOString());
+    const mark = conversation.liveConversationMarkPublished(before, through);
+    await state.env.DB.batch([state.env.DB.prepare(publish.sql).bind(...publish.bindings), state.env.DB.prepare(mark.sql).bind(...mark.bindings),
+      state.env.DB.prepare("UPDATE memory_live_enrollments SET cursor_sequence=? WHERE enrollment_id=?").bind(through, e.enrollment_id)]);
+    const segment = state.sqlite.prepare("SELECT * FROM memory_live_conversation_segments").get(); assert.equal(segment.member_count, 2);
+    const capture = await nativeMemoryRead(state); await nativeMemoryAssertCurrent(state, capture);
+    assert.deepEqual(capture.value.conversationPairs.map(row => row.turnId), [state.postSource.turn.id, turn.id]);
+    state.sqlite.prepare("UPDATE memory_live_enrollments SET cursor_sequence=?").run(segment.first_sequence);
+    assert.deepEqual((await nativeMemoryRead(state)).value.conversationPairs, [], "future segment cannot leak through cursor or legacy fallback");
+    state.sqlite.prepare("UPDATE memory_live_enrollments SET cursor_sequence=?").run(through);
+    state.sqlite.prepare("UPDATE private_content SET redacted_at=? WHERE content_id=?").run(new Date().toISOString(), state.postSource.turn.pointers.answer);
+    const withdrawn = await nativeMemoryRead(state); assert.ok(withdrawn.value);
+    assert.deepEqual(withdrawn.value.conversationPairs, [], "one missing native member discards the complete group");
+    assert.equal(capture.witness.matches(await state.env.DB.batch(capture.witness.statements())), false);
+    nativeMemoryUnpaid(state);
+  } catch (error) { failures.push(error); } finally { await finishOrdinaryFeed(state, { failures }); }
+});
+
+test("native memory context integration: captured grant expiry includes raw rows filtered from capabilities", async () => {
+  let expires;
+  const state = await nativeMemoryFixture({ configure(state) {
+    const owner = state.postSource.owner, now = new Date().toISOString(); expires = new Date(Date.now() + 30_000).toISOString();
+    state.sqlite.prepare("INSERT INTO capability_grants(grant_id,user_id,capability,scope_type,status,granted_by_user_id,created_at,updated_at,expires_at) VALUES(?,?,'project.read','self','active',?,?,?,?)")
+      .run("native-filtered-grant", owner, owner, now, now, expires);
+  } }), failures = []; let clock, originalNow;
+  try {
+    assert.equal(state.nativePrepared.principal.access.grants.some(row => row.scope === "self" && row.capability === "project.read"), false);
+    assert.ok(JSON.parse(state.nativePrepared.principal.authorizationSnapshot.grants).some(row => row.expiresAt === expires));
+    const capture = await nativeMemoryRead(state); await nativeMemoryAssertCurrent(state, capture);
+    assert.equal(capture.value.lifetime.validUntil, expires);
+    clock = consequentialDbClock(state); clock.set(expires); originalNow = Date.now; Date.now = () => Date.parse(expires);
+    assert.equal(capture.witness.matches(await state.env.DB.batch(capture.witness.statements())), false);
+    assert.throws(() => capture.witness.precommitStatements(), /assistant_context_source_unavailable/u);
+    nativeMemoryUnpaid(state);
+  } catch (error) { failures.push(error); } finally {
+    if (originalNow) Date.now = originalNow;
+    await finishOrdinaryFeed(state, { failures, clock });
+  }
+});
+
+test("native memory context integration: selected session absolute expiry survives final database delivery", async () => {
+  const state = await nativeMemoryFixture({ shared: true }), failures = []; let clock, originalNow;
+  try {
+    const expires = new Date(Date.now() + 30_000).toISOString(), id = state.nativePrepared.binding.contextSessionId;
+    assert.ok(id); state.sqlite.prepare("UPDATE project_context_sessions SET expires_at=? WHERE context_id=?").run(expires, id);
+    const capture = await nativeMemoryRead(state); await nativeMemoryAssertCurrent(state, capture);
+    assert.equal(capture.value.lifetime.validUntil, expires);
+    clock = consequentialDbClock(state); clock.set(expires); originalNow = Date.now; Date.now = () => Date.parse(expires);
+    assert.equal(capture.witness.matches(await state.env.DB.batch(capture.witness.statements())), false);
+    nativeMemoryUnpaid(state);
+  } catch (error) { failures.push(error); } finally {
+    if (originalNow) Date.now = originalNow;
+    await finishOrdinaryFeed(state, { failures, clock });
+  }
+});
+
+test("native memory context integration: configured pilot end remains an absolute final-delivery deadline", async () => {
+  let expires;
+  const state = await nativeMemoryFixture({ shared: true, configure(state) {
+    const now = new Date().toISOString(), past = new Date(Date.now() - 60_000).toISOString(); expires = new Date(Date.now() + 30_000).toISOString();
+    state.sqlite.prepare("INSERT INTO pilot_cohorts(cohort_id,organization_id,status,starts_at,ends_at,created_by_user_id,created_at,updated_at) VALUES(?,?,'active',?,?,?,?,?)")
+      .run("native-context-pilot", state.organizationId, past, expires, state.postSource.owner, now, now);
+    state.sqlite.prepare("INSERT INTO pilot_participants(participant_id,cohort_id,organization_id,email_normalized,user_id,role,status,invited_by_user_id,created_at,revoked_at) VALUES(?,?,?,?,?,'member','active',?,?,NULL)")
+      .run("native-context-participant", "native-context-pilot", state.organizationId, "assistant-owner@example.test", state.postSource.owner, state.postSource.owner, now);
+    state.env.FORMA_PILOT_COHORT_ID = "native-context-pilot";
+  } }), failures = []; let clock, originalNow;
+  try {
+    const capture = await nativeMemoryRead(state); await nativeMemoryAssertCurrent(state, capture);
+    assert.equal(capture.value.lifetime.validUntil, expires);
+    clock = consequentialDbClock(state); clock.set(expires); originalNow = Date.now; Date.now = () => Date.parse(expires);
+    assert.equal(capture.witness.matches(await state.env.DB.batch(capture.witness.statements())), false); nativeMemoryUnpaid(state);
+  } catch (error) { failures.push(error); } finally {
+    if (originalNow) Date.now = originalNow;
+    await finishOrdinaryFeed(state, { failures, clock });
+  }
+});
+
+test("native memory context integration: caller and first-result mutation across await cannot replace captured authority", async () => {
+  const state = await nativeMemoryFixture(), failures = []; let restore;
+  try {
+    const prepared = structuredClone(state.nativePrepared), batch = state.env.DB.batch, prepare = state.env.DB.prepare;
+    let first, mutated = false;
+    state.env.DB.batch = async function(statements) {
+      const result = await batch.call(this, statements);
+      if (statements.some(statement => statement.sql.startsWith("SELECT * FROM memory_live_enrollments"))) first = result;
+      return result;
+    };
+    state.env.DB.prepare = function(sql) {
+      if (sql === PRINCIPAL_WITH_ACCESS_SQL && first && !mutated) {
+        mutated = true; prepared.binding.documentId = "mutated-caller-document"; prepared.principal.authorizationSnapshot.grants = "invalid";
+        first[1].results[0].document_id = "mutated-raw-document";
+      }
+      return prepare.call(this, sql);
+    };
+    restore = () => { state.env.DB.batch = batch; state.env.DB.prepare = prepare; };
+    const capture = await nativeMemoryRead(state, prepared); assert.equal(mutated, true);
+    await nativeMemoryAssertCurrent(state, capture);
+    assert.equal(capture.value.scope.documentId, "doc-atmosphere"); nativeMemoryUnpaid(state);
+  } catch (error) { failures.push(error); } finally { await finishOrdinaryFeed(state, { failures, restore }); }
+});
 for (const mode of ["personal", "migrated", "shared"]) for (const field of [
   "private-project", "private-document",
   ...(mode === "personal" ? [] : ["custody-sequence", "custody-actor", "custody-created-at", "resource-source-event", "resource-actor", "resource-created-at"]),
@@ -9418,4 +10863,3610 @@ test("main170 phase8 fourteen-event Output review rolls back the eighth canonica
     assert.equal(saved.approvalHash, preview.approvalHash); assert.equal(JSON.stringify(saved.plan.events), JSON.stringify(preview.events));
     phase8AssertNoPayment(state, paid);
   } finally { await state.cleanup(); }
+});
+
+
+// Actual ordinary enrollment handler + existing memory job runner; no route or schedule registration.
+async function nativeMemoryJobFixture(t, { shared = false, beforeEnrollment } = {}) {
+  const state = await postContextFixture({ shared, short: true });
+  t.after(() => finishOrdinaryFeed(state, { failures: [] }));
+  const { readFile } = await import('node:fs/promises');
+  for (const name of ['0025_memory_live_base.sql', '0026_memory_live_conversation.sql'])
+    state.sqlite.exec(await readFile(new URL('../drizzle/' + name, import.meta.url), 'utf8'));
+  if (beforeEnrollment) await beforeEnrollment(state);
+  const prepared = await nativeMemoryPrepare(state);
+  state.env.FORMA_MEMORY_ENABLED = 'true'; state.env.FORMA_MEMORY_USER_IDS = prepared.principal.userId;
+  // This flag is confined to the in-memory test env; no actual schedule is registered or invoked.
+  state.env.FORMA_MEMORY_SCHEDULING_ENABLED = 'true';
+  const timeZone = Intl.supportedValuesOf('timeZone').find(zone => {
+    const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', hourCycle: 'h23' }).format(new Date()));
+    return hour >= 1 && hour < 5;
+  });
+  assert.ok(timeZone);
+  const preferences = { projectId: 'project-atmosphere', documentId: 'doc-atmosphere', learn: true, recall: true, background: true,
+    retentionDays: 30, timeZone, expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString(), revision: 0,
+    confirmation: 'ENABLE_PERSONAL_MEMORY', policyVersion: 'personal-memory-v2', reviewTiming: 'daily-with-daytime-catch-up',
+    expectedCustody: prepared.binding.scope ? { kind: 'organization', organizationId: prepared.binding.scope.organizationId,
+      projectAccessId: prepared.binding.scope.projectAccessId, ownerUserId: prepared.binding.scope.ownerUserId } : { kind: 'personal' } };
+  const { handleLiveMemory } = await import('../worker/memory-live-api.ts');
+  const settingsRequest = (body, method = 'PUT') => new Request('http://localhost/api/memory/settings', { ...json(body, state.owner ?? {}), method });
+  const enrolled = await handleLiveMemory(settingsRequest(preferences), state.env, 'settings'), body = await enrolled.json();
+  assert.equal(enrolled.status, 200, JSON.stringify(body) + ' SQL:' + state.controls.lastDatabaseError);
+  const current = () => state.sqlite.prepare('SELECT * FROM memory_live_enrollments WHERE enrollment_id=?').get(body.enrollment.id);
+  state.nativePrepared = prepared; state.nativeEnrollment = current();
+  const { runLiveMemoryScheduled } = await import('../worker/memory-live-jobs.ts');
+  const due = () => state.sqlite.prepare("UPDATE memory_live_enrollments SET next_due_at='2000-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(body.enrollment.id);
+  const run = () => runLiveMemoryScheduled(state.env);
+  const send = async id => {
+    const turn = await specialistFreeTurn(state, id, 'PRIVATE_JOB_QUESTION_' + id);
+    return { ...turn, pointers: ordinaryFeedPointers(state, turn) };
+  };
+  const table = name => {
+    assert.ok(['memory_live_sources', 'memory_live_conversation_segments', 'memory_live_runs'].includes(name));
+    return state.sqlite.prepare('SELECT * FROM ' + name + ' ORDER BY rowid').all();
+  };
+  return Object.assign(state, { preferences, current, run, due, send, table, handleLiveMemory, settingsRequest });
+}
+for (const shared of [false, true]) test('native memory jobs integration: real ' + (shared ? 'shared' : 'personal') + ' free POST page publishes groups and cursor atomically', async t => {
+  const state = await nativeMemoryJobFixture(t, { shared }), before = state.current(), turns = [];
+  for (let n = 0; n < 9; n++) turns.push(await state.send('job-page-' + n));
+  const eventIds = turns.map(turn => turn.pointers.response);
+  for (const id of eventIds) assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM project_event_scopes WHERE event_id=?').get(id).n, shared ? 1 : 0,
+    'The ordinary POST itself indexes shared pairs; no GET or synchronizeProjectScope call follows it');
+  const batches = [], original = state.DB.batch;
+  state.DB.batch = async statements => { batches.push(statements.map(statement => statement.sql)); return original.call(state.DB, statements); };
+  let result;
+  try { result = await state.run(); } finally { state.DB.batch = original; }
+  assert.equal(result.status, 'completed', state.controls.lastDatabaseError); assert.equal(result.failed, 0); assert.equal(result.processed, 9);
+  const groups = state.table('memory_live_conversation_segments'); assert.deepEqual(groups.map(row => row.member_count), [8, 1]);
+  const members = groups.flatMap(row => JSON.parse(row.members_json)); assert.deepEqual(members.map(row => row.eventId), eventIds);
+  assert.deepEqual(members.map(row => row.turnId), turns.map(turn => turn.id));
+  assert.ok(groups.every(row => row.enrollment_revision === before.revision && row.recipe_version === 'live-conversation-references-v1'));
+  assert.doesNotMatch(JSON.stringify(groups), /PRIVATE_JOB_QUESTION|private_json|content_ref/u);
+  assert.ok(state.table('memory_live_sources').every(row => row.conversation_segmented === 1));
+  assert.equal(state.current().cursor_sequence, members.at(-1).sequence); assert.equal(state.current().cutoff_sequence, null);
+  const publication = batches.filter(batch => batch.some(sql => sql.includes('INSERT INTO memory_live_conversation_segments')));
+  assert.equal(publication.length, 1);
+  const sql = publication[0];
+  for (const needle of ['INSERT OR IGNORE INTO memory_live_sources', 'SET conversation_segmented=1', 'SET cursor_sequence=', "changes()=1"])
+    assert.ok(sql.some(value => value.includes(needle)), needle);
+  const capture = await nativeMemoryRead(state); await nativeMemoryAssertCurrent(state, capture);
+  assert.deepEqual(capture.value.conversationPairs.map(pair => pair.turnId), turns.slice(-8).map(turn => turn.id));
+  nativeMemoryUnpaid(state);
+});
+for (const stage of ['segment insert', 'cursor update']) test('native memory jobs integration: injected ' + stage + ' failure rolls back page then retries once', async t => {
+  const state = await nativeMemoryJobFixture(t, { shared: true }), turn = await state.send('job-retry'), before = state.current();
+  if (stage === 'segment insert') state.sqlite.exec("CREATE TEMP TRIGGER fail_job_page BEFORE INSERT ON memory_live_conversation_segments BEGIN SELECT RAISE(ABORT,'fixture_job_publication_failure'); END");
+  else state.sqlite.exec("CREATE TEMP TRIGGER fail_job_page BEFORE UPDATE OF cursor_sequence ON memory_live_enrollments WHEN NEW.cursor_sequence>OLD.cursor_sequence BEGIN SELECT RAISE(ABORT,'fixture_job_cursor_failure'); END");
+  const failed = await state.run(); assert.equal(failed.status, 'partial'); assert.equal(failed.failed, 1);
+  assert.deepEqual(state.table('memory_live_sources'), []); assert.deepEqual(state.table('memory_live_conversation_segments'), []);
+  assert.equal(state.current().cursor_sequence, before.cursor_sequence); assert.equal(state.current().lease_token, null);
+  assert.ok(state.current().cutoff_sequence > before.cursor_sequence); assert.equal(state.current().failure_code, 'review-failed');
+  state.sqlite.exec('DROP TRIGGER fail_job_page'); state.due();
+  const retried = await state.run(); assert.equal(retried.status, 'completed', state.controls.lastDatabaseError); assert.equal(retried.processed, 1);
+  assert.equal(state.table('memory_live_sources').length, 1); assert.equal(state.table('memory_live_conversation_segments').length, 1);
+  assert.equal(JSON.parse(state.table('memory_live_conversation_segments')[0].members_json)[0].eventId, turn.pointers.response);
+  assert.equal(state.current().attempts, 0); assert.equal(state.current().cutoff_sequence, null);
+  assert.deepEqual(state.table('memory_live_runs').map(row => row.status), ['partial', 'completed']);
+  state.due(); assert.equal((await state.run()).processed, 0); assert.equal(state.table('memory_live_conversation_segments').length, 1);
+  nativeMemoryUnpaid(state);
+});
+for (const failMaintenance of [false, true]) test(failMaintenance
+  ? 'native memory jobs integration: failed paused maintenance restores source group and native lineage before retry'
+  : 'native memory jobs integration: paused learning still prunes an unavailable whole group without relearning survivors', async t => {
+  const state = await nativeMemoryConsumerFixture(t, { shared: true, sourceCount: 3 }), turns = state.consumerSources;
+  const cursor = state.current().cursor_sequence, enrollmentId = state.current().enrollment_id;
+  const recalled = await nativeMemoryConsumerRequest(state, 'job-pause-native-answer');
+  assert.equal(recalled.status, 201, await recalled.clone().text());
+  const selected = nativeMemoryConsumerOrigins(state).origins[0];
+  const other = await nativePrivacyAdditionalScope(state, 'job-pause-independent');
+  assert.notEqual(other.id, enrollmentId); assert.notEqual(other.saved.origins[0].document_id, selected.document_id);
+  const originalScope = () => nativePrivacyMemory(state, enrollmentId);
+  // Mutable enrollment setup isolates runner maintenance; preserving-settings retagging is not part of this jobs slice.
+  state.sqlite.prepare('UPDATE memory_live_enrollments SET learn_enabled=0 WHERE enrollment_id=?').run(enrollmentId);
+  state.sqlite.prepare("UPDATE private_content SET redacted_at=?,content='' WHERE content_id=?").run(new Date().toISOString(), turns[1].pointers.answer);
+  await state.send('job-paused-new-human'); state.due();
+  const before = nativeMemoryDependencyJobData(state), trace = nativeMemoryDependencyJobTrace(state, failMaintenance ? 'maintenance' : undefined);
+  assert.ok(before.origins.dependencies.some(row => row.origin_id === selected.origin_id && row.event_id === turns[1].pointers.response));
+  let result; try { result = await state.run(); } finally { trace.stop(); }
+  nativeMemoryDependencyJobBatches(trace, enrollmentId); assert.deepEqual(trace.jobs.map(job => job.phase), ['maintenance']);
+  assert.ok(trace.executions.some(entry => entry.sql.includes('DELETE FROM memory_native_answer_dependencies') && entry.succeeded && entry.changes > 0),
+    'The real inverse deletes lineage inside the batch, even when a later statement rolls it back');
+  if (failMaintenance) {
+    assert.equal(result.status, 'partial'); assert.equal(result.failed, 1); assert.equal(result.processed, 0); assert.equal(result.erased, 0);
+    assert.deepEqual(trace.jobs[0].after, trace.jobs[0].before);
+    assert.deepEqual(nativeMemoryDependencyJobData(state), before, 'Prune, whole-group deletion, origin withdrawal, body redaction and dependency deletion roll back together');
+    assert.equal(state.current().cursor_sequence, cursor);
+    state.due(); result = await state.run();
+  }
+  assert.equal(result.status, 'completed', state.controls.lastDatabaseError); assert.equal(result.failed, 0);
+  assert.equal(result.processed, 0); assert.equal(result.erased, 1);
+  nativeMemoryDependencyJobMinimized(state, before, [selected.origin_id]);
+  assert.deepEqual(nativePrivacyMemory(state, other.id), other.saved);
+  assert.deepEqual(originalScope().groups, []); assert.equal(originalScope().sources.length, 2);
+  assert.ok(originalScope().sources.every(row => row.conversation_segmented === 1)); assert.equal(state.current().cursor_sequence, cursor);
+  const capture = await nativeMemoryRead(state); assert.ok(capture.value); assert.deepEqual(capture.value.conversationPairs, [], 'Marked survivors cannot return as legacy');
+  const terminal = nativeMemoryDependencyJobData(state);
+  state.due(); assert.equal((await state.run()).processed, 0); assert.deepEqual(originalScope().groups, []);
+  assert.deepEqual(nativeMemoryDependencyJobData(state), terminal, 'Repeated maintenance retains the first tombstone and does not relearn survivors');
+  nativeMemoryUnpaid(state);
+});
+test('native memory jobs integration: real forget handler removes segments and keeps revision tombstone', async t => {
+  const state = await nativeMemoryJobFixture(t); await state.send('job-forget'); assert.equal((await state.run()).processed, 1);
+  const e = state.current();
+  const response = await state.handleLiveMemory(new Request('http://localhost/api/memory/settings?id=' + e.enrollment_id,
+    { ...json({ confirmation: 'FORGET_MY_MEMORY', revision: e.revision }, state.owner), method: 'DELETE' }), state.env, 'settings');
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+  assert.deepEqual(state.table('memory_live_sources'), []); assert.deepEqual(state.table('memory_live_conversation_segments'), []);
+  assert.equal(state.current().revision, e.revision + 1); assert.equal(state.current().learn_enabled, 0); assert.equal(state.current().recall_enabled, 0);
+  state.due(); assert.equal((await state.run()).processed, 0); assert.deepEqual(state.table('memory_live_conversation_segments'), []);
+  nativeMemoryUnpaid(state);
+});
+test('native memory jobs integration: lost native authority revokes references and durable groups together', async t => {
+  const state = await nativeMemoryJobFixture(t, { shared: true }); await state.send('job-revoke'); assert.equal((await state.run()).processed, 1);
+  const e = state.current(); state.sqlite.prepare('UPDATE users SET consent_version=NULL WHERE user_id=?').run(e.actor_user_id); state.due();
+  const result = await state.run(); assert.equal(result.status, 'completed'); assert.equal(result.processed, 0); assert.equal(result.erased, 1);
+  assert.deepEqual(state.table('memory_live_sources'), []); assert.deepEqual(state.table('memory_live_conversation_segments'), []);
+  assert.equal(state.current().revision, e.revision + 1); assert.equal(state.current().failure_code, 'access-changed'); assert.equal(state.current().recall_enabled, 0);
+  nativeMemoryUnpaid(state);
+});
+test('native memory jobs integration: one raw 128-event page per invocation continues without a second human input', async t => {
+  const state = await nativeMemoryJobFixture(t), before = state.current(), turns = [];
+  for (let n = 0; n < 70; n++) turns.push(await state.send('job-capacity-' + n));
+  const head = state.sqlite.prepare('SELECT MAX(sequence) AS n FROM events WHERE stream_id=?').get(state.nativePrepared.binding.streamId).n;
+  assert.equal(head - before.cursor_sequence, 140, 'Actual free POST contributes its two canonical events');
+  const first = await state.run(); assert.equal(first.status, 'completed', state.controls.lastDatabaseError); assert.equal(first.processed, 64);
+  assert.equal(state.current().cursor_sequence, before.cursor_sequence + 128); assert.equal(state.current().cutoff_sequence, head);
+  assert.equal(state.table('memory_live_conversation_segments').length, 8);
+  state.due(); const second = await state.run(); assert.equal(second.processed, 6); assert.equal(second.failed, 0);
+  assert.equal(state.current().cursor_sequence, head); assert.equal(state.current().cutoff_sequence, null);
+  assert.equal(state.table('memory_live_sources').length, 70); assert.equal(state.table('memory_live_conversation_segments').length, 9);
+  state.due(); assert.equal((await state.run()).processed, 0); assert.equal(state.table('memory_live_sources').length, 70);
+  nativeMemoryUnpaid(state);
+});
+test('native memory jobs integration: running receipt cap defers without creating a ninth run or learning', async t => {
+  const state = await nativeMemoryJobFixture(t); await state.send('job-capacity-receipts'); const before = state.current();
+  for (let n = 0; n < 8; n++) state.sqlite.prepare("INSERT INTO memory_live_runs(run_id,trigger_kind,status,started_at) VALUES(?,'scheduled','running',?)").run('running-' + n, new Date().toISOString());
+  const result = await state.run(); assert.deepEqual(result, { status: 'deferred', reason: 'running-receipt-capacity' });
+  assert.equal(state.table('memory_live_runs').length, 8); assert.equal(state.current().cursor_sequence, before.cursor_sequence);
+  assert.deepEqual(state.table('memory_live_sources'), []); assert.deepEqual(state.table('memory_live_conversation_segments'), []);
+  nativeMemoryUnpaid(state);
+});
+for (const stateName of ['scheduling disabled', 'conversation schema absent']) test('native memory jobs integration: ' + stateName + ' is not activation', async t => {
+  const state = await nativeMemoryJobFixture(t); await state.send('job-gated');
+  if (stateName === 'scheduling disabled') delete state.env.FORMA_MEMORY_SCHEDULING_ENABLED;
+  else state.sqlite.exec('DROP TABLE memory_live_conversation_segments');
+  const result = await state.run(); assert.deepEqual(result, { status: stateName === 'scheduling disabled' ? 'scheduling-disabled' : 'schema-unavailable' });
+  assert.deepEqual(state.table('memory_live_runs'), []); assert.deepEqual(state.table('memory_live_sources'), []);
+  nativeMemoryUnpaid(state);
+});
+for (const paused of ['learn_enabled', 'background_enabled']) test('native memory jobs integration: new human input does not override ' + paused + '=0', async t => {
+  const state = await nativeMemoryJobFixture(t); await state.send('job-no-learn'); const e = state.current();
+  state.sqlite.prepare('UPDATE memory_live_enrollments SET ' + paused + '=0 WHERE enrollment_id=?').run(e.enrollment_id);
+  const result = await state.run(); assert.equal(result.status, 'completed'); assert.equal(result.processed, 0);
+  assert.deepEqual(state.table('memory_live_sources'), []); assert.deepEqual(state.table('memory_live_conversation_segments'), []);
+  assert.equal(state.current().cursor_sequence, e.cursor_sequence); nativeMemoryUnpaid(state);
+});
+test('native memory jobs integration: no new event means no learning or nightly admission', async t => {
+  const state = await nativeMemoryJobFixture(t), e = state.current();
+  const result = await state.run(); assert.equal(result.status, 'completed'); assert.equal(result.processed, 0);
+  assert.deepEqual(state.table('memory_live_sources'), []); assert.deepEqual(state.table('memory_live_conversation_segments'), []);
+  assert.equal(state.current().cursor_sequence, e.cursor_sequence); assert.equal(state.current().last_admitted_at, null);
+  nativeMemoryUnpaid(state);
+});
+test('native memory jobs integration: synthetic-only tail advances bookkeeping without learning references', async t => {
+  const state = await nativeMemoryJobFixture(t), e = state.current();
+  const events = await appendContextReadEvents(state, [['DocumentOpened', { project_id: e.project_id, document_id: e.document_id, synthetic: true }]]);
+  const result = await state.run(); assert.equal(result.status, 'completed'); assert.equal(result.processed, 0);
+  assert.deepEqual(state.table('memory_live_sources'), []); assert.deepEqual(state.table('memory_live_conversation_segments'), []);
+  assert.equal(state.current().cursor_sequence, events[0].sequence);
+  assert.ok(state.current().last_admitted_at, 'Current admission pages the raw owner stream, not a claim of new human intent');
+  nativeMemoryUnpaid(state);
+});
+test('native memory jobs integration: actor-private erasure support clears groups and cannot recreate a stale revision', async t => {
+  const state = await nativeMemoryJobFixture(t); await state.send('job-erasure'); assert.equal((await state.run()).processed, 1);
+  const e = state.current(), { liveMemoryErasureStatements, revokeLiveMemoryCounted } = await import('../worker/memory-live-store.ts');
+  await state.DB.batch(await liveMemoryErasureStatements(state.env, { actorUserId: e.actor_user_id, personalOnly: true }, new Date().toISOString()));
+  assert.deepEqual(state.table('memory_live_sources'), []); assert.deepEqual(state.table('memory_live_conversation_segments'), []);
+  assert.equal(state.current().revision, e.revision + 1); assert.equal(state.current().failure_code, 'erased');
+  assert.deepEqual(await revokeLiveMemoryCounted(state.env, e), { revoked: false, erased: 0 });
+  nativeMemoryUnpaid(state);
+});
+test('native memory jobs integration: in-flight page cannot publish after committed actor erasure', async t => {
+  const state = await nativeMemoryJobFixture(t, { shared: true }); await state.send('job-stale-publisher'); const e = state.current();
+  const { liveMemoryErasureStatements } = await import('../worker/memory-live-store.ts'), original = state.DB.batch;
+  let intercepted = 0;
+  state.DB.batch = async statements => {
+    if (statements.some(statement => statement.sql.includes('INSERT INTO memory_live_conversation_segments'))) {
+      intercepted++; assert.ok(state.current().lease_token, 'Erasure occurs after the actual lease transaction');
+      await original.call(state.DB, await liveMemoryErasureStatements(state.env, { actorUserId: e.actor_user_id }, new Date().toISOString()));
+      assert.equal(state.current().revision, e.revision + 1, 'Erasure is independently committed before stale publication');
+    }
+    return original.call(state.DB, statements);
+  };
+  let result; try { result = await state.run(); } finally { state.DB.batch = original; }
+  assert.equal(intercepted, 1); assert.equal(result.status, 'partial'); assert.equal(result.failed, 1); assert.equal(result.processed, 0);
+  assert.deepEqual(state.table('memory_live_sources'), []); assert.deepEqual(state.table('memory_live_conversation_segments'), []);
+  assert.equal(state.current().revision, e.revision + 1); assert.equal(state.current().failure_code, 'erased');
+  assert.equal(state.current().cursor_sequence, e.cursor_sequence); assert.equal(state.current().lease_token, null);
+  assert.equal(state.current().learn_enabled, 0); assert.equal(state.current().recall_enabled, 0);
+  nativeMemoryUnpaid(state);
+});
+test('native memory jobs integration: committed maintenance survives a later page rollback', async t => {
+  const state = await nativeMemoryConsumerFixture(t, { shared: true, sourceCount: 1 }), old = state.consumerSources[0];
+  // The consumer fixture retains the original one-source successful seed job.
+  const before = state.current(), recallId = 'job-committed-native-answer';
+  const recalled = await nativeMemoryConsumerRequest(state, recallId), recalledBody = await recalled.json();
+  assert.equal(recalled.status, 201, JSON.stringify(recalledBody)); nativeMemoryConsumerTurn(recalledBody, recallId);
+  const active = nativeMemoryDependencyJobData(state), origin = active.origins.origins.find(row => row.turn_id === recallId);
+  assert.ok(origin); assert.equal(origin.enrollment_id, before.enrollment_id); assert.equal(origin.status, 'active');
+  const copied = active.contents.find(row => row.content_id === origin.answer_content_id);
+  assert.ok(copied); assert.ok(copied.content.length > 0); assert.equal(copied.redacted_at, null);
+  assert.ok(active.origins.dependencies.some(row => row.origin_id === origin.origin_id && row.event_id === old.pointers.response),
+    'The genuine native answer depends on the exact ordinary source that maintenance will prune');
+  state.sqlite.prepare("UPDATE private_content SET redacted_at=?,content='' WHERE content_id=?").run(new Date().toISOString(), old.pointers.answer);
+  const next = await state.send('job-new-rollback');
+  // Model the next due review without changing event clocks, membership, custody, or the job's clock checks.
+  state.sqlite.prepare("UPDATE memory_live_enrollments SET last_local_day=NULL,last_admitted_at=NULL,next_due_at='2000-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(before.enrollment_id);
+  state.sqlite.exec("CREATE TEMP TRIGGER fail_job_after_cleanup BEFORE UPDATE OF cursor_sequence ON memory_live_enrollments WHEN NEW.cursor_sequence>OLD.cursor_sequence BEGIN SELECT RAISE(ABORT,'fixture_job_after_cleanup_failure'); END");
+  // Snapshot after the intentional redaction and genuine new POST, not before those setup writes.
+  const preFailurePrivacy = nativeMemoryDependencyJobData(state);
+  assert.deepEqual(preFailurePrivacy.origins, active.origins, 'Setup must leave the active native origin and its dependencies for maintenance');
+  assert.deepEqual(preFailurePrivacy.contents.find(row => row.content_id === origin.answer_content_id), copied);
+  assert.notEqual(state.controls.lastDatabaseError, 'fixture_job_after_cleanup_failure');
+  const trace = nativeMemoryDependencyJobTrace(state);
+  let result; try { result = await state.run(); } finally { trace.stop(); }
+  assert.equal(result.status, 'partial'); assert.equal(result.failed, 1); assert.equal(result.erased, 1); assert.equal(result.processed, 0);
+  nativeMemoryDependencyJobBatches(trace, before.enrollment_id);
+  assert.deepEqual(trace.jobs.map(job => job.phase), ['maintenance', 'publication']);
+  assert.equal(trace.jobs[0].succeeded, true); assert.equal(trace.jobs[1].succeeded, false);
+  assert.deepEqual(trace.jobs[0].before, preFailurePrivacy);
+  const publicationBaseline = trace.jobs[1].before;
+  assert.deepEqual(publicationBaseline, trace.jobs[0].after, 'Publication starts after native cleanup has separately committed');
+  assert.deepEqual(trace.jobs[1].after, publicationBaseline);
+  assert.deepEqual(nativeMemoryDependencyJobData(state), publicationBaseline, 'Later publication rollback cannot undo committed native cleanup');
+  const deletes = trace.executions.filter(entry => entry.sql.includes('DELETE FROM memory_native_answer_dependencies'));
+  assert.equal(deletes.length, 2); assert.ok(deletes[0].succeeded && deletes[0].changes > 0);
+  const cursorWrites = trace.executions.filter(entry => entry.sql.startsWith('UPDATE memory_live_enrollments SET cursor_sequence='));
+  assert.equal(cursorWrites.length, 1); assert.equal(cursorWrites[0].succeeded, false);
+  assert.equal(state.controls.lastDatabaseError, 'fixture_job_after_cleanup_failure', 'The unchanged cursor trigger is the sole publication fault');
+  const terminal = nativeMemoryDependencyJobMinimized(state, preFailurePrivacy, [origin.origin_id]);
+  assert.deepEqual(state.table('memory_live_sources'), []); assert.deepEqual(state.table('memory_live_conversation_segments'), []);
+  assert.equal(state.current().cursor_sequence, before.cursor_sequence); assert.equal(state.current().lease_token, null);
+  assert.equal(state.current().failure_code, 'review-failed');
+  state.sqlite.exec('DROP TRIGGER fail_job_after_cleanup'); state.due();
+  assert.equal((await state.run()).processed, 1); assert.equal(state.table('memory_live_sources').length, 1);
+  assert.notEqual(state.table('memory_live_sources')[0].event_id, old.pointers.response);
+  assert.equal(state.table('memory_live_sources')[0].event_id, next.pointers.response, 'Retry publishes only the new ordinary source, not the retired native answer');
+  nativeMemoryDependencyJobMinimized(state, terminal, [origin.origin_id]);
+  nativeMemoryUnpaid(state);
+});
+test('native memory jobs integration: legacy settings and forget remain available before additive conversation schema', async t => {
+  const state = await nativeMemoryJobFixture(t), e = state.current();
+  state.sqlite.exec('DROP TABLE memory_live_conversation_segments; ALTER TABLE memory_live_sources DROP COLUMN conversation_segmented');
+  const response = await state.handleLiveMemory(new Request('http://localhost/api/memory/settings', { headers: state.owner ?? {} }), state.env, 'settings');
+  assert.equal(response.status, 200); assert.equal((await response.json()).enrollments[0].id, e.enrollment_id);
+  const forgotten = await state.handleLiveMemory(new Request('http://localhost/api/memory/settings?id=' + e.enrollment_id,
+    { ...json({ confirmation: 'FORGET_MY_MEMORY', revision: e.revision }, state.owner), method: 'DELETE' }), state.env, 'settings');
+  assert.equal(forgotten.status, 200, JSON.stringify(await forgotten.clone().json()));
+  assert.equal(state.current().revision, e.revision + 1); assert.equal(state.current().failure_code, 'forgotten');
+  assert.deepEqual(await state.run(), { status: 'schema-unavailable' }); nativeMemoryUnpaid(state);
+});
+
+// Real Worker routes and the unmodified strict browser client, using only the
+// existing in-memory SQLite/free-POST fixture. These are not workerd/browser tests.
+async function nativeMemoryApiFixture(t, options = {}) {
+  const state = await nativeMemoryJobFixture(t, options);
+  const { createLiveMemoryClient } = await import('../src/state/live-memory-client.ts');
+  const apiResponses = [];
+  const client = createLiveMemoryClient(async (path, init) => {
+    const headers = new Headers(init?.headers);
+    for (const [name, value] of Object.entries(state.owner ?? {})) headers.set(name, value);
+    const response = await state.request(String(path), { ...init, headers });
+    apiResponses.push({ path: String(path), method: init?.method, response: response.clone() });
+    return response;
+  });
+  const listed = await client.settings(); assert.equal(listed.enrollments.length, 1);
+  const selected = () => client.settings().then(value => {
+    assert.equal(value.enrollments.length, 1); return value.enrollments[0];
+  });
+  return Object.assign(state, { client, selected, apiResponses, apiEnrollment: listed.enrollments[0] });
+}
+function nativeMemoryApiSnapshot(state) {
+  return {
+    enrollments: state.sqlite.prepare('SELECT * FROM memory_live_enrollments ORDER BY enrollment_id').all(),
+    sources: state.table('memory_live_sources'), groups: state.table('memory_live_conversation_segments'),
+    runs: state.table('memory_live_runs'),
+    canonicalEvents: state.sqlite.prepare('SELECT COUNT(*) AS n FROM events').get().n,
+  };
+}
+function nativeMemoryApiNoProof(value) {
+  assertPostContextNoWitness(value);
+  assert.doesNotMatch(JSON.stringify(value), /"(?:lifetime_json|private_event_id|actor_user_id|owner_user_id|permission_epoch|authorizationSnapshot|projectAccessId|contextSessionId|members_json|enrollment_revision|recipe_version|turnId|turn_id|sql|bindings|context_source_current)"\s*:/u);
+}
+async function nativeMemoryApiDenied(state, request, status, code) {
+  await assert.rejects(request, error => error.name === 'MemoryClientError' && error.status === status && error.code === code);
+  const response = state.apiResponses.at(-1).response;
+  assert.equal(response.status, status); assert.equal(response.headers.get('content-disposition'), null);
+  const body = await response.json(); assert.deepEqual(body, { error: code }); nativeMemoryApiNoProof(body);
+}
+const NATIVE_MEMORY_REQUEST_SNAPSHOT = 'SELECT * FROM memory_live_enrollments WHERE enrollment_id=? AND actor_user_id=? AND revision=?';
+function nativeMemoryApiFinalHook(state, effect, after = false) {
+  const original = state.DB.batch; let fired = 0;
+  state.DB.batch = async function(statements) {
+    const selected = statements.length >= 8 && statements[0].sql === NATIVE_MEMORY_REQUEST_SNAPSHOT;
+    if (!selected) return original.call(this, statements);
+    assert.equal(++fired, 1, 'one actual final witness replay');
+    assert.ok(statements.some(statement => statement.sql.includes('memory_live_conversation_segments')));
+    if (!after) await effect();
+    const results = await original.call(this, statements);
+    assert.ok(results.every(result => result.success), 'the actual native SQL batch completed');
+    if (after) await effect();
+    return results;
+  };
+  return { get fired() { return fired; }, restore() { state.DB.batch = original; } };
+}
+
+for (const shared of [false, true]) test('native memory API integration: ' + (shared ? 'shared' : 'personal') + ' real recall and reference export satisfy the strict client', async t => {
+  const state = await nativeMemoryApiFixture(t, { shared });
+  const common = { project_id: state.current().project_id, document_id: state.current().document_id };
+  const actionResponse = await state.request('/api/events', json({ action: 'batch', clientId: 'native-memory-api-actions', events: shared ? [
+    { type: 'BlockPropertyEdited', payload: { ...common, block_id: state.postSource.blockId, property_path: 'text', old_value: 'PRIVATE_CONTEXT_READ_BLOCK_TEXT', new_value: 'PRIVATE_API_FIRST_EDIT' } },
+    { type: 'BlockPropertyEdited', payload: { ...common, block_id: state.postSource.blockId, property_path: 'text', old_value: 'PRIVATE_API_FIRST_EDIT', new_value: 'PRIVATE_API_SECOND_EDIT' } },
+  ] : [
+    { type: 'DocumentOpened', payload: common }, { type: 'ObjectViewed', payload: { ...common, block_id: state.postSource.blockId } },
+  ] }, state.owner));
+  assert.equal(actionResponse.status, 200, await actionResponse.clone().text()); const actions = (await actionResponse.json()).appended;
+  assert.equal(actions.length, 2);
+  const turns = [];
+  for (let index = 0; index < 9; index++) turns.push(await state.send('api-pair-' + index));
+  const result = await state.run(); assert.equal(result.status, 'completed', state.controls.lastDatabaseError);
+  assert.equal(result.processed, 11); assert.deepEqual(state.table('memory_live_conversation_segments').map(group => group.member_count), [8, 1]);
+  const expiry = new Date(Date.now() + 20_000).toISOString();
+  state.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run(expiry, turns.at(-1).pointers.answer);
+  const item = await state.selected(), before = nativeMemoryApiSnapshot(state), lease = await state.client.recall(item), value = lease.value;
+  assert.equal(value.mode, 'live-reference-memory'); assert.equal(value.lifetime.version, 'memory-recall-lifetime-v1');
+  assert.equal(value.lifetime.validUntil, expiry); assert.ok(lease.remaining() > 0 && lease.remaining() <= 20_000);
+  assert.deepEqual(value.scope, { organizationId: shared ? state.organizationId : null, projectId: common.project_id, documentId: common.document_id });
+  assert.deepEqual(value.sources.map(source => source.eventId), [...actions.map(event => event.eventId), ...turns.slice(-8).map(turn => turn.pointers.response)]);
+  assert.equal(value.sources.at(-1).validUntil, expiry);
+  assert.deepEqual(value.rollingConversation.summary.map(pair => pair.sourceEventId), turns.slice(1, -2).map(turn => turn.pointers.response));
+  assert.deepEqual(value.rollingConversation.recent.map(pair => pair.sourceEventId), turns.slice(-2).map(turn => turn.pointers.response));
+  assert.equal(value.rollingConversation.recent.at(-1).user, turns.at(-1).user);
+  assert.equal(value.coverage.sourceCount, 10); assert.equal(value.coverage.throughSequence, state.current().cursor_sequence);
+  assert.equal(value.rollingConversation.completeFromStart, false);
+  assert.deepEqual(value.consumption, shared ? { edit: 2, conversation: 8 } : { encounter: 1, inspect: 1, conversation: 8 });
+  assert.deepEqual(value.rollingConsumption.windows.map(window => window.windowDays), [7, 30]);
+  for (const window of value.rollingConsumption.windows) {
+    assert.deepEqual(window.document.actions, shared ? { edit: 2 } : { encounter: 1, inspect: 1 });
+    assert.deepEqual(window.document.sourceIndexes, [0, 1], 'Document consumption excludes separately rendered conversation pairs');
+    assert.equal(window.blocks.length, 1); assert.deepEqual(window.blocks[0].actions, shared ? { edit: 2 } : { inspect: 1 });
+    assert.deepEqual(window.blocks[0].sourceIndexes, shared ? [0, 1] : [1]); assert.equal(window.blocks[0].sourceIndex, shared ? 0 : 1);
+  }
+  nativeMemoryApiNoProof(value);
+  const recallResponse = state.apiResponses.at(-1).response;
+  assert.equal(recallResponse.headers.get('cache-control'), 'private, no-store');
+  assert.match(recallResponse.headers.get('vary'), /oai-authenticated-user-id/u);
+  assert.deepEqual(await recallResponse.json(), value);
+  const exported = await state.client.exportReferences(item), file = JSON.parse(exported), exportResponse = state.apiResponses.at(-1).response;
+  assert.equal(file.format, 'forma-memory-reference-export-v1'); assert.equal(file.enrollment.revision, item.revision);
+  assert.equal(file.sources.length, 11, 'Reference export retains all eligible pairs, not only the eight-pair display selection');
+  assert.deepEqual(file.sources.map(source => source.eventId), [...actions.map(event => event.eventId), ...turns.map(turn => turn.pointers.response)]);
+  const remembered = state.table('memory_live_sources').find(row => row.event_id === turns.at(-1).pointers.response);
+  assert.equal(file.sources.at(-1).retentionExpiresAt, new Date(Math.min(Date.parse(remembered.expires_at), Date.parse(item.expiresAt),
+    Date.parse(file.sources.at(-1).recordedAt) + item.retentionDays * 86_400_000)).toISOString());
+  assert.ok(Date.parse(file.sources.at(-1).retentionExpiresAt) > Date.parse(expiry), 'Export retention upper bounds are not the private source access lease');
+  assert.deepEqual(file.includes, { prose: false, vectors: false, inferredPreferences: false, completeHistory: false });
+  assert.equal(file.deadlineSemantics, 'retention-upper-bounds-not-an-access-lease');
+  assert.ok(new TextEncoder().encode(exported).byteLength <= 65_536);
+  assert.doesNotMatch(exported, /PRIVATE_JOB_QUESTION|PRIVATE_CONTEXT_READ|private_json|content_ref/u); nativeMemoryApiNoProof(file);
+  assert.equal(exportResponse.headers.get('content-disposition'), 'attachment; filename="forma-memory-references.json"');
+  assert.equal(exportResponse.headers.get('cache-control'), 'private, no-store');
+  assert.equal(exportResponse.headers.get('x-content-type-options'), 'nosniff');
+  await state.drainBackground(); assert.deepEqual(nativeMemoryApiSnapshot(state), before, 'GET performs no enrollment, cursor, source/group, receipt or event processing');
+  assert.deepEqual(state.apiResponses.map(row => row.method), ['GET', 'GET', 'GET', 'GET']);
+  lease.retire(); assert.equal(lease.remaining(), 0); nativeMemoryUnpaid(state);
+});
+
+test('native memory API integration: empty admitted history stays empty until an explicit job and no HTTP scheduler exists', async t => {
+  const state = await nativeMemoryApiFixture(t); await state.send('api-not-yet-processed');
+  delete state.env.FORMA_MEMORY_SCHEDULING_ENABLED;
+  const before = nativeMemoryApiSnapshot(state), item = await state.selected(), lease = await state.client.recall(item);
+  assert.deepEqual(lease.value.sources, []); assert.deepEqual(lease.value.rollingConversation, { summary: [], recent: [], completeFromStart: false });
+  const exported = JSON.parse(await state.client.exportReferences(item)); assert.deepEqual(exported.sources, []);
+  for (const path of ['/api/memory/scheduled', '/api/memory/jobs']) {
+    const response = await state.request(path, { method: 'POST', headers: state.owner }); assert.equal(response.status, 404);
+  }
+  for (const operation of ['recall', 'export']) {
+    const response = await state.request('/api/memory/' + operation, { method: 'POST', headers: state.owner }); assert.equal(response.status, 405);
+  }
+  await state.drainBackground(); assert.deepEqual(nativeMemoryApiSnapshot(state), before); lease.retire(); nativeMemoryUnpaid(state);
+});
+
+for (const change of ['revision', 'cursor', 'recall permission']) test('native memory API integration: original requested ' + change + ' cannot be replaced during the first native snapshot', async t => {
+  const state = await nativeMemoryApiFixture(t); await state.send('api-original-snapshot'); assert.equal((await state.run()).processed, 1);
+  const item = await state.selected(), original = state.DB.batch; let fired = 0;
+  state.DB.batch = async function(statements) {
+    if (statements.length === 1 && statements[0].sql === NATIVE_MEMORY_REQUEST_SNAPSHOT) {
+      assert.equal(++fired, 1);
+      const assignment = change === 'revision' ? 'revision=revision+1' : change === 'cursor' ? 'cursor_sequence=cursor_sequence-1' : 'recall_enabled=0';
+      state.sqlite.prepare('UPDATE memory_live_enrollments SET ' + assignment + ' WHERE enrollment_id=?').run(item.id);
+    }
+    return original.call(this, statements);
+  };
+  try { await nativeMemoryApiDenied(state, state.client.recall(item), 403, 'memory_unavailable'); }
+  finally { state.DB.batch = original; }
+  assert.equal(fired, 1); nativeMemoryUnpaid(state);
+});
+
+for (const change of ['answer replacement', 'answer withdrawal', 'remembered identity', 'shared custody', 'durable group loss'])
+test('native memory API integration: final replay denies ' + change + ' without a cached or legacy fallback', async t => {
+  const state = await nativeMemoryApiFixture(t, { shared: true }), turns = [await state.send('api-final-one'), await state.send('api-final-two')];
+  assert.equal((await state.run()).processed, 2); const item = await state.selected();
+  const hook = nativeMemoryApiFinalHook(state, () => {
+    if (change === 'answer replacement') state.sqlite.prepare("UPDATE private_content SET content='PRIVATE_REPLACEMENT_MUST_NOT_ESCAPE' WHERE content_id=?").run(turns[0].pointers.answer);
+    else if (change === 'answer withdrawal') state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(), turns[0].pointers.answer);
+    else if (change === 'remembered identity') state.sqlite.prepare('UPDATE memory_live_sources SET sequence=sequence+1 WHERE event_id=?').run(turns[0].pointers.response);
+    else if (change === 'shared custody') state.sqlite.prepare('DELETE FROM project_event_scopes WHERE event_id=?').run(turns[0].pointers.response);
+    else state.sqlite.prepare('DELETE FROM memory_live_conversation_segments WHERE enrollment_id=?').run(item.id);
+  });
+  try { await nativeMemoryApiDenied(state, state.client.recall(item), 403, 'memory_unavailable'); }
+  finally { hook.restore(); }
+  assert.equal(hook.fired, 1);
+  if (change !== 'answer replacement') {
+    const fresh = await state.client.recall(item);
+    assert.deepEqual(fresh.value.rollingConversation, { summary: [], recent: [], completeFromStart: false }, 'Marked survivors of an unavailable group never return as legacy');
+    fresh.retire();
+  }
+  nativeMemoryUnpaid(state);
+});
+
+test('native memory API integration: absent migration 0025 denies recall while actor-owned settings remain available', async t => {
+  const state = await nativeMemoryApiFixture(t); await state.send('api-missing-conversation-schema'); assert.equal((await state.run()).processed, 1);
+  const item = await state.selected(); state.sqlite.exec('DROP TABLE memory_live_conversation_segments; ALTER TABLE memory_live_sources DROP COLUMN conversation_segmented');
+  const before = state.current(), sourceCount = state.table('memory_live_sources').length, runs = state.table('memory_live_runs');
+  await nativeMemoryApiDenied(state, state.client.recall(item), 403, 'memory_unavailable');
+  assert.equal((await state.client.settings()).writeContractVersion, null);
+  await nativeMemoryApiDenied(state, state.client.save({ ...state.preferences, revision: item.revision }), 503, 'memory_schema_unavailable');
+  assert.equal((await state.selected()).id, item.id); assert.deepEqual(state.current(), before);
+  assert.equal(state.table('memory_live_sources').length, sourceCount); assert.deepEqual(state.table('memory_live_runs'), runs); nativeMemoryUnpaid(state);
+});
+
+for (const deadline of ['source', 'original request grant']) test('native memory API integration: ' + deadline + ' expiry after native final delivery denies the prepared response', async t => {
+  const expires = new Date(Date.now() + 30_000).toISOString();
+  const state = await nativeMemoryApiFixture(t, { beforeEnrollment(state) {
+    if (deadline !== 'original request grant') return;
+    const now = new Date().toISOString(), actor = state.postSource.owner;
+    state.sqlite.prepare("INSERT INTO capability_grants(grant_id,user_id,capability,scope_type,status,granted_by_user_id,created_at,updated_at,expires_at) VALUES(?,?,'project.read','self','active',?,?,?,?)")
+      .run('api-final-http-grant', actor, actor, now, now, expires);
+  } }), turn = await state.send('api-final-deadline'); assert.equal((await state.run()).processed, 1);
+  if (deadline === 'source') state.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run(expires, turn.pointers.answer);
+  const current = await state.client.recall(await state.selected()); assert.equal(current.value.lifetime.validUntil, expires); current.retire();
+  const item = await state.selected(), originalNow = Date.now, clock = consequentialDbClock(state);
+  const hook = nativeMemoryApiFinalHook(state, () => { clock.set(expires); Date.now = () => Date.parse(expires); }, true);
+  try { await nativeMemoryApiDenied(state, state.client.recall(item), 403, 'memory_unavailable'); }
+  finally { hook.restore(); Date.now = originalNow; await state.drainBackground(); clock.close(); }
+  assert.equal(hook.fired, 1); nativeMemoryUnpaid(state);
+});
+
+for (const operation of ['recall', 'export']) test('native memory API integration: ' + operation + ' keeps the original HTTP grant deadline across the enrollment await', async t => {
+  const expires = new Date(Date.now() + 30_000).toISOString();
+  const state = await nativeMemoryApiFixture(t, { beforeEnrollment(state) {
+    const now = new Date().toISOString(), actor = state.postSource.owner;
+    state.sqlite.prepare("INSERT INTO capability_grants(grant_id,user_id,capability,scope_type,status,granted_by_user_id,created_at,updated_at,expires_at) VALUES(?,?,'project.read','self','active',?,?,?,?)")
+      .run('api-original-http-grant', actor, actor, now, now, expires);
+  } }); await state.send('api-authenticated-deadline'); assert.equal((await state.run()).processed, 1);
+  const current = await state.client.recall(await state.selected()); assert.equal(current.value.lifetime.validUntil, expires); current.retire();
+  const item = await state.selected(), originalNow = Date.now, clock = consequentialDbClock(state); let fired = 0;
+  if (operation === 'export') assert.equal(JSON.parse(await state.client.exportReferences(item)).sources.length, 1, 'The same original grant initially permits export, not only recall');
+  const restore = interceptConsequentialDb(state, 'first', /^SELECT \* FROM memory_live_enrollments WHERE enrollment_id=\? AND actor_user_id=\?$/u,
+    () => { fired++; clock.set(expires); Date.now = () => Date.parse(expires); }, 'after');
+  try { await nativeMemoryApiDenied(state, operation === 'recall' ? state.client.recall(item) : state.client.exportReferences(item),
+    403, operation === 'recall' ? 'memory_unavailable' : 'memory_export_unavailable'); }
+  finally { restore(); Date.now = originalNow; await state.drainBackground(); clock.close(); }
+  assert.equal(fired, 1); nativeMemoryUnpaid(state);
+});
+
+test('native memory API integration: routed export rejects stale revision and foreign enrollment without writes', async t => {
+  const state = await nativeMemoryApiFixture(t); await state.send('api-request-identity'); assert.equal((await state.run()).processed, 1);
+  const item = await state.selected(), before = nativeMemoryApiSnapshot(state);
+  await nativeMemoryApiDenied(state, state.client.exportReferences({ ...item, revision: item.revision + 1 }), 409, 'memory_revision_changed');
+  await nativeMemoryApiDenied(state, state.client.exportReferences({ ...item, id: 'f'.repeat(64) }), 404, 'memory_not_found');
+  delete state.env.FORMA_MEMORY_ENABLED;
+  await nativeMemoryApiDenied(state, state.client.recall(item), 503, 'memory_disabled');
+  await nativeMemoryApiDenied(state, state.client.exportReferences(item), 503, 'memory_disabled');
+  await state.drainBackground(); assert.deepEqual(nativeMemoryApiSnapshot(state), before); nativeMemoryUnpaid(state);
+});
+
+for (const shared of [false, true]) test('native memory API integration: ' + (shared ? 'shared' : 'personal') + ' preserving pause and resume retag groups without extending retained deadlines', async t => {
+  const state = await nativeMemoryApiFixture(t, { shared }), turns = [await state.send('api-settings-one'), await state.send('api-settings-two')];
+  assert.equal((await state.run()).processed, 2); const old = state.current(), short = new Date(Date.now() + 7 * 86_400_000).toISOString();
+  const settings = await state.client.settings(); assert.equal(settings.writeContractVersion, 'memory-settings-custody-v1');
+  const paused = await state.client.save({ ...state.preferences, revision: old.revision, learn: false, background: false,
+    retentionDays: 7, expiresAt: short });
+  assert.equal(paused.priorMemoryCleared, false); assert.equal(paused.historyStartsAt, old.enrolled_at);
+  assert.equal(paused.enrollment.revision, old.revision + 1); assert.equal(paused.enrollment.learn, false);
+  const groups = state.table('memory_live_conversation_segments'), refs = state.table('memory_live_sources');
+  assert.equal(groups.length, 1); assert.equal(groups[0].enrollment_revision, paused.enrollment.revision);
+  assert.deepEqual(JSON.parse(groups[0].members_json).map(member => member.eventId), turns.map(turn => turn.pointers.response));
+  assert.ok(Date.parse(groups[0].expires_at) <= Date.parse(short)); assert.ok(refs.every(row => Date.parse(row.expires_at) <= Date.parse(short)));
+  const retained = await state.client.recall(paused.enrollment); assert.equal(retained.value.rollingConversation.recent.length, 2); retained.retire();
+  const resumed = await state.client.save({ ...state.preferences, revision: paused.enrollment.revision });
+  assert.equal(resumed.priorMemoryCleared, false); assert.equal(resumed.historyStartsAt, old.enrolled_at);
+  const after = state.table('memory_live_conversation_segments'); assert.equal(after.length, 1);
+  assert.equal(after[0].enrollment_revision, resumed.enrollment.revision); assert.equal(after[0].members_json, groups[0].members_json);
+  assert.equal(after[0].expires_at, groups[0].expires_at, 'Longer future preferences cannot extend an already shortened durable group');
+  assert.deepEqual(state.table('memory_live_sources').map(row => [row.event_id, row.sequence, row.expires_at]), refs.map(row => [row.event_id, row.sequence, row.expires_at]));
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_live_enrollments').get().n, 1); nativeMemoryUnpaid(state);
+});
+
+for (const reason of ['all preferences disabled', 'old owner differs']) test('native memory API integration: nonpreserving ' + reason + ' clears references and groups without resurrection', async t => {
+  const state = await nativeMemoryApiFixture(t, { shared: reason === 'old owner differs' }); await state.send('api-nonpreserve');
+  assert.equal((await state.run()).processed, 1); const old = state.current();
+  if (reason === 'old owner differs') state.sqlite.prepare("UPDATE memory_live_enrollments SET owner_user_id='dev-local-creative' WHERE enrollment_id=?").run(old.enrollment_id);
+  const saved = await state.client.save({ ...state.preferences, revision: old.revision,
+    ...(reason === 'all preferences disabled' ? { learn: false, recall: false, background: false } : {}) });
+  assert.equal(saved.priorMemoryCleared, true); assert.deepEqual(state.table('memory_live_sources'), []); assert.deepEqual(state.table('memory_live_conversation_segments'), []);
+  assert.equal(state.current().owner_user_id, state.nativePrepared.binding.scope?.ownerUserId ?? state.postSource.owner);
+  const reenabled = reason === 'all preferences disabled'
+    ? await state.client.save({ ...state.preferences, revision: saved.enrollment.revision }) : saved;
+  state.due(); const result = await state.run(); assert.equal(result.status, 'completed'); assert.equal(result.failed, 0); assert.equal(result.processed, 0);
+  const read = await state.client.recall(reenabled.enrollment); assert.deepEqual(read.value.sources, []); read.retire();
+  assert.deepEqual(state.table('memory_live_conversation_segments'), []); nativeMemoryUnpaid(state);
+});
+
+for (const invalid of ['missing custody', 'malformed custody', 'changed custody', 'revision overflow']) test('native memory API integration: settings rejects ' + invalid + ' before any memory write', async t => {
+  const state = await nativeMemoryApiFixture(t, { shared: true }); await state.send('api-settings-rejected'); assert.equal((await state.run()).processed, 1);
+  const body = { ...state.preferences, revision: state.current().revision }, before = nativeMemoryApiSnapshot(state);
+  if (invalid === 'missing custody') delete body.expectedCustody;
+  else if (invalid === 'malformed custody') body.expectedCustody = { kind: 'organization', organizationId: state.organizationId };
+  else if (invalid === 'changed custody') body.expectedCustody = { ...body.expectedCustody, ownerUserId: 'dev-local-creative' };
+  else body.revision = Number.MAX_SAFE_INTEGER;
+  const response = await state.request('/api/memory/settings', { ...json(body, state.owner), method: 'PUT' });
+  assert.equal(response.status, invalid === 'changed custody' ? 409 : 400);
+  assert.deepEqual(await response.json(), { error: invalid === 'missing custody' ? 'explicit_memory_custody_required'
+    : invalid === 'malformed custody' ? 'invalid_memory_custody' : invalid === 'changed custody' ? 'memory_custody_changed' : 'explicit_memory_preferences_required' });
+  const { canonicalEvents: _beforeEvents, ...memoryBefore } = before, { canonicalEvents: _afterEvents, ...memoryAfter } = nativeMemoryApiSnapshot(state);
+  assert.deepEqual(memoryAfter, memoryBefore, 'Native authority may read/synchronize ordinary indexes; it may not write memory on rejected consent'); nativeMemoryUnpaid(state);
+});
+
+for (const change of ['personal transfer', 'shared owner', 'shared migration']) test('native memory API integration: settings commit denies ' + change + ' and rolls back all memory changes', async t => {
+  const state = await nativeMemoryApiFixture(t, { shared: change !== 'personal transfer' }); await state.send('api-custody-commit'); assert.equal((await state.run()).processed, 1);
+  let organizationId;
+  if (change === 'personal transfer') {
+    const organization = await state.request('/api/workspaces', json({ name: 'API consent transition fixture' }, state.owner));
+    assert.equal(organization.status, 201); organizationId = (await organization.json()).organizationId;
+  }
+  const item = await state.selected(), { canonicalEvents: _beforeEvents, ...before } = nativeMemoryApiSnapshot(state), original = state.DB.batch; let fired = 0;
+  state.DB.batch = async function(statements) {
+    if (statements.some(statement => statement.sql.startsWith('INSERT INTO memory_live_enrollments('))) {
+      assert.equal(++fired, 1);
+      if (change === 'personal transfer') {
+        const transfer = await state.request('/api/workspaces/' + organizationId + '/projects', json({ projectId: item.projectId }, state.owner));
+        assert.equal(transfer.status, 201, await transfer.clone().text());
+      } else if (change === 'shared owner') state.sqlite.prepare("UPDATE organization_projects SET owner_user_id='dev-local-creative' WHERE project_access_id=?").run(state.projectAccessId);
+      else state.sqlite.prepare('DELETE FROM project_migration_states WHERE project_access_id=?').run(state.projectAccessId);
+    }
+    return original.call(this, statements);
+  };
+  try { await nativeMemoryApiDenied(state, state.client.save({ ...state.preferences, revision: item.revision, retentionDays: 7 }), 409, 'memory_authority_or_revision_changed'); }
+  finally { state.DB.batch = original; }
+  assert.equal(fired, 1); const { canonicalEvents: _afterEvents, ...after } = nativeMemoryApiSnapshot(state);
+  assert.deepEqual(after, before, 'Changed custody can commit independently; no partial memory pruning, retagging, enrollment or expiry write survives'); nativeMemoryUnpaid(state);
+});
+
+for (const operation of ['preserving save', 'paused maintenance']) test('native memory API integration: ' + operation + ' purges a mismatched remembered sequence without legacy revival', async t => {
+  const state = await nativeMemoryApiFixture(t, { shared: true }), turns = [await state.send('api-sequence-one'), await state.send('api-sequence-two')];
+  assert.equal((await state.run()).processed, 2); const item = await state.selected();
+  let paused = operation === 'paused maintenance' ? await state.client.save({ ...state.preferences, revision: item.revision, learn: false, background: false }) : null;
+  state.sqlite.prepare('UPDATE memory_live_sources SET sequence=sequence+1 WHERE event_id=?').run(turns[0].pointers.response);
+  if (operation === 'preserving save') paused = await state.client.save({ ...state.preferences, revision: item.revision, learn: false, background: false });
+  else { state.due(); const result = await state.run(); assert.equal(result.status, 'completed'); assert.equal(result.processed, 0); assert.equal(result.erased, 1); }
+  const references = state.table('memory_live_sources'); assert.equal(references.length, 1); assert.equal(references[0].event_id, turns[1].pointers.response);
+  assert.equal(references[0].conversation_segmented, 1); assert.deepEqual(state.table('memory_live_conversation_segments'), []);
+  const recalled = await state.client.recall(paused.enrollment); assert.deepEqual(recalled.value.sources, []); recalled.retire(); nativeMemoryUnpaid(state);
+});
+
+for (const behavior of ['ignored', 'altered']) test('native memory API integration: ' + behavior + ' enrollment UPSERT rolls back prior source pruning and group retagging', async t => {
+  const state = await nativeMemoryApiFixture(t, { shared: true }); await state.send('api-upsert-completion'); assert.equal((await state.run()).processed, 1);
+  const item = await state.selected(), before = nativeMemoryApiSnapshot(state);
+  if (behavior === 'ignored') state.sqlite.exec('CREATE TEMP TRIGGER api_enrollment_completion BEFORE INSERT ON memory_live_enrollments BEGIN SELECT RAISE(IGNORE); END');
+  else state.sqlite.exec('CREATE TEMP TRIGGER api_enrollment_completion AFTER UPDATE ON memory_live_enrollments BEGIN UPDATE memory_live_enrollments SET retention_days=NEW.retention_days+1 WHERE enrollment_id=NEW.enrollment_id; END');
+  try { await nativeMemoryApiDenied(state, state.client.save({ ...state.preferences, revision: item.revision, retentionDays: 7 }), 409, 'memory_authority_or_revision_changed'); }
+  finally { state.sqlite.exec('DROP TRIGGER api_enrollment_completion'); }
+  assert.deepEqual(nativeMemoryApiSnapshot(state), before); nativeMemoryUnpaid(state);
+});
+
+
+// Frozen 36-case export regression port; fixture adaptations are recorded in verification/export-regression-port.md.
+function nativeApiExportEvent(state,{type='DocumentOpened',payload={},actor,document='doc-atmosphere',recordedAt}={}){
+  const e=state.current(),stream='creative:'+e.owner_user_id,id=crypto.randomUUID();
+  const sequence=state.sqlite.prepare('SELECT COALESCE(MAX(sequence),0)+1 AS seq FROM events WHERE stream_id=?').get(stream).seq;
+  const now=recordedAt??new Date().toISOString();
+  state.sqlite.prepare('INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES(?,?,?,?,?,?,?, ?,NULL,NULL,1,?,?)')
+    .run(id,stream,sequence,now,now,actor??'user:'+e.actor_user_id,'web:memory-test',id,type,JSON.stringify({project_id:e.project_id,document_id:document,...payload,...(payload._private_ref===true?{_private_ref:id}:{})}));
+  if(e.organization_id){
+    const next=state.sqlite.prepare('SELECT COALESCE(MAX(project_sequence),0)+1 AS seq FROM project_event_scopes WHERE project_access_id=?').get(e.project_access_id).seq;
+    state.sqlite.prepare("INSERT INTO project_event_scopes(event_id,organization_id,project_access_id,project_id,owner_user_id,actor_user_id,project_sequence,source_stream_id,source_sequence,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
+      .run(id,e.organization_id,e.project_access_id,e.project_id,e.owner_user_id,e.actor_user_id,next,stream,sequence,now);
+  }
+  return {id,sequence};
+}
+// Existing runtime fixtures own auth/documents and actual settings enrollment.
+// Reference rows below remain explicit synthetic admission, not a scheduled run.
+async function nativeApiExportRegressionFixture(t,shared=false,suppliedState){
+  const state=suppliedState??(shared?await sharedProjectFixture():await fixture());
+  t.after(async()=>{
+    const failures=[];
+    while(state.background.length){
+      const results=await Promise.allSettled(state.background.splice(0));
+      for(const result of results)if(result.status==='rejected')failures.push(result.reason);
+    }
+    try{await state.cleanup?.();}catch(error){failures.push(error);}
+    try{state.sqlite.close();}catch(error){failures.push(error);}
+    if(failures.length)throw new AggregateError(failures,'memory export fixture cleanup failed');
+  });
+  const {readFile}=await import('node:fs/promises');
+  for(const name of ['0025_memory_live_base.sql','0026_memory_live_conversation.sql'])
+    state.sqlite.exec(await readFile(new URL('../drizzle/'+name,import.meta.url),'utf8'));
+  state.env.FORMA_MEMORY_ENABLED='true';
+  state.env.FORMA_MEMORY_USER_IDS='dev-local-creative,assistant-owner';
+  assert.equal((await state.request(endpoint(),{headers:shared?state.owner:{}})).status,200);
+  const prepared=await nativeMemoryPrepare(state),scope=prepared.binding.scope;
+  const preferences={projectId:'project-atmosphere',documentId:'doc-atmosphere',learn:true,recall:true,background:true,
+    retentionDays:30,timeZone:'UTC',expiresAt:new Date(Date.now()+30*86_400_000).toISOString(),revision:0,
+    confirmation:'ENABLE_PERSONAL_MEMORY',policyVersion:'personal-memory-v2',reviewTiming:'daily-with-daytime-catch-up',
+    expectedCustody:scope?{kind:'organization',organizationId:scope.organizationId,
+      projectAccessId:scope.projectAccessId,ownerUserId:scope.ownerUserId}:{kind:'personal'}};
+  const response=await state.request('/api/memory/settings',{...json(preferences,shared?state.owner:{}),method:'PUT'});
+  const result=await response.json();assert.equal(response.status,200,JSON.stringify(result)+' SQL '+state.controls.lastDatabaseError);
+  const enrollment=result.enrollment;
+  const current=()=>state.sqlite.prepare('SELECT * FROM memory_live_enrollments WHERE enrollment_id=?').get(enrollment.id);
+  const read=()=>state.request('/api/memory/recall?id='+enrollment.id,{headers:shared?state.owner:{}});
+  Object.assign(state,{enrollment,preferences,current,read});
+  await state.drainBackground();
+  const remember=event=>{
+    const e=state.current();
+    state.sqlite.prepare('INSERT INTO memory_live_sources(enrollment_id,event_id,sequence,expires_at,conversation_segmented) VALUES(?,?,?,?,0)')
+      .run(e.enrollment_id,event.id,event.sequence,e.expires_at);
+    state.sqlite.prepare('UPDATE memory_live_enrollments SET cursor_sequence=MAX(cursor_sequence,?) WHERE enrollment_id=?').run(event.sequence,e.enrollment_id);
+    return event;
+  };
+  const request=(revision=state.current().revision,headers=shared?state.owner:{})=>state.request('/api/memory/export?id='+state.enrollment.id+'&revision='+revision,{headers});
+  return Object.assign(state,{remember,seed:(options={})=>remember(nativeApiExportEvent(state,options)),exportRequest:request});
+}
+for(const shared of [false,true])test('live memory export: current actor reference-only snapshot '+(shared?'shared':'personal'),async t=>{
+  const state=await nativeApiExportRegressionFixture(t,shared),e=state.current();
+  const own=state.seed({type:'BlockCreated',payload:{block_id:'export-block',_private_ref:true}});
+  state.sqlite.prepare('INSERT INTO event_private_payloads(private_event_id,owner_id,project_id,document_id,private_json,created_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)')
+    .run(own.id,e.owner_user_id,e.project_id,e.document_id,JSON.stringify({text:'PRIVATE_EXPORT_BODY_MUST_NOT_COPY',embedding:[9,8,7]}),new Date().toISOString());
+  const otherActor=state.seed({actor:'user:someone-else'}),otherDocument=state.seed({document:'another-document'});
+  const response=await state.exportRequest();assert.equal(response.status,200,await response.clone().text());
+  const raw=await response.text(),body=JSON.parse(raw);
+  assert.equal(response.headers.get('cache-control'),'private, no-store');assert.match(response.headers.get('content-disposition'),/^attachment;/u);
+  assert.match(response.headers.get('vary'),/oai-authenticated-user-id/u);assert.equal(response.headers.get('x-content-type-options'),'nosniff');
+  assert.equal(body.format,'forma-memory-reference-export-v1');assert.deepEqual(body.sources.map(row=>row.eventId),[own.id]);
+  assert.equal(body.sources[0].blockId,'export-block');assert.equal(body.sources[0].action,'edit');
+  assert.equal(body.enrollment.revision,e.revision);assert.equal(body.coverage.throughSequence,state.current().cursor_sequence);
+  assert.equal(body.coverage.completeFromStart,false);assert.equal(body.includes.prose,false);assert.equal(body.includes.vectors,false);
+  assert.equal(body.deadlineSemantics,'retention-upper-bounds-not-an-access-lease');
+  assert.ok(Date.parse(body.sources[0].retentionExpiresAt)<=Date.parse(e.expires_at));
+  for(const value of ['PRIVATE_EXPORT_BODY_MUST_NOT_COPY','embedding',otherActor.id,otherDocument.id])assert.equal(raw.includes(value),false);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_live_runs').get().n,0);
+  assert.equal((await state.exportRequest(e.revision,shared?state.viewer:{'oai-authenticated-user-id':'export-other','oai-authenticated-user-email':'other@example.test'})).status,404);
+});
+test('live memory export: revision required and settings/recall remain unchanged',async t=>{
+  const state=await nativeApiExportRegressionFixture(t);state.seed();
+  for(const revision of ['',0,'1.5','9007199254740992'])assert.equal((await state.exportRequest(revision)).status,400);
+  assert.equal((await state.exportRequest(2)).status,409);
+  assert.equal((await state.exportRequest()).status,200);assert.equal((await state.read()).status,200);
+  assert.equal((await state.request('/api/memory/settings')).status,200);
+  assert.equal((await state.request('/api/memory/export',json({}))).status,405);
+});
+test('live memory export: empty and lookahead-limited coverage remain explicitly incomplete',async t=>{
+  const state=await nativeApiExportRegressionFixture(t);
+  const empty=await(await state.exportRequest()).json();assert.equal(empty.coverage.sourceCount,0);assert.equal(empty.coverage.completeFromStart,false);
+  const events=Array.from({length:66},()=>state.seed());
+  const response=await state.exportRequest();assert.equal(response.status,200,await response.clone().text());const body=await response.json();
+  assert.equal(body.sources.length,64);assert.equal(body.coverage.moreEligibleSources,true);assert.equal(body.coverage.sourceLimit,64);
+  assert.deepEqual(body.sources.map(row=>row.eventId),events.slice(-64).map(row=>row.id));
+  assert.equal(body.coverage.completeFromStart,false);assert.equal(body.coverage.bounded,true);
+});
+for(const reason of ['disabled','recall-paused','enrollment-expired'])test('live memory export: initial unavailable '+reason,async t=>{
+  const state=await nativeApiExportRegressionFixture(t);state.seed();assert.equal((await state.exportRequest()).status,200);
+  if(reason==='disabled')delete state.env.FORMA_MEMORY_ENABLED;
+  else if(reason==='recall-paused')state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0').run();
+  else state.sqlite.prepare("UPDATE memory_live_enrollments SET expires_at='2000-01-01T00:00:00.000Z'").run();
+  assert.equal((await state.exportRequest()).status,reason==='disabled'?503:403);
+});
+for(const change of ['revision','cursor','retention','enrollment-expiry','reference-expiry','reference-sequence','reference-removed','private-source-withdrawn','shared-custody-withdrawn'])test('live memory export: final certification rejects '+change,async t=>{
+  const shared=change==='shared-custody-withdrawn',state=await nativeApiExportRegressionFixture(t,shared),e=state.current();
+  const event=state.seed({type:'BlockCreated',payload:{block_id:'export-private-block',_private_ref:true}});
+  state.sqlite.prepare('INSERT INTO event_private_payloads(private_event_id,owner_id,project_id,document_id,private_json,created_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)')
+    .run(event.id,e.owner_user_id,e.project_id,e.document_id,JSON.stringify({text:'EXPORT_WITHDRAWN_BODY'}),new Date().toISOString());
+  const positive=await state.exportRequest();assert.equal(positive.status,200,await positive.clone().text());assert.equal((await positive.json()).sources[0].eventId,event.id);
+  const original=state.DB.batch;let snapshots=0;
+  state.DB.batch=async statements=>{
+    if(statements.some(statement=>statement.sql.includes('remembered.expires_at AS remembered_expires_at'))&&++snapshots===2){
+      if(change==='revision')state.sqlite.prepare('UPDATE memory_live_enrollments SET revision=revision+1').run();
+      else if(change==='cursor')state.sqlite.prepare('UPDATE memory_live_enrollments SET cursor_sequence=cursor_sequence+1').run();
+      else if(change==='retention')state.sqlite.prepare('UPDATE memory_live_enrollments SET retention_days=1').run();
+      else if(change==='enrollment-expiry')state.sqlite.prepare("UPDATE memory_live_enrollments SET expires_at='2000-01-01T00:00:00.000Z'").run();
+      else if(change==='reference-expiry')state.sqlite.prepare("UPDATE memory_live_sources SET expires_at='2000-01-01T00:00:00.000Z' WHERE event_id=?").run(event.id);
+      else if(change==='reference-sequence')state.sqlite.prepare('UPDATE memory_live_sources SET sequence=sequence+1 WHERE event_id=?').run(event.id);
+      else if(change==='reference-removed')state.sqlite.prepare('DELETE FROM memory_live_sources WHERE event_id=?').run(event.id);
+      else if(change==='shared-custody-withdrawn')state.sqlite.prepare('DELETE FROM project_event_scopes WHERE event_id=?').run(event.id);
+      else state.sqlite.prepare("UPDATE event_private_payloads SET private_json='',redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),event.id);
+    }
+    return original.call(state.DB,statements);
+  };
+  try{const response=await state.exportRequest();assert.equal(snapshots,2);assert.equal(response.status,403);assert.deepEqual(await response.json(),{error:'memory_export_unavailable'});}
+  finally{state.DB.batch=original;}
+});
+test('live memory export: corrupt captured source is rejected without mutating its canonical event',async t=>{
+  const state=await nativeApiExportRegressionFixture(t),event=state.seed({payload:{block_id:'unchanged-block'}});
+  const before=state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(event.id),original=state.DB.batch;let snapshots=0;
+  state.DB.batch=async statements=>{
+    const results=await original.call(state.DB,statements);
+    if(statements.some(statement=>statement.sql.includes('remembered.expires_at AS remembered_expires_at'))&&++snapshots===1){
+      const index=statements.findIndex(statement=>statement.sql.includes('remembered.expires_at AS remembered_expires_at'));
+      results[index].results[0].block_id='CORRUPTED_CAPTURE';
+    }
+    return results;
+  };
+  try{const response=await state.exportRequest();assert.equal(snapshots,2);assert.equal(response.status,403);assert.equal((await response.text()).includes('CORRUPTED_CAPTURE'),false);}
+  finally{state.DB.batch=original;}
+  assert.deepEqual(state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(event.id),before);
+});
+test('live memory export: aggregate byte bound rejects otherwise bounded captured identifiers',async t=>{
+  const state=await nativeApiExportRegressionFixture(t);for(let n=0;n<64;n++)state.seed({type:'BlockCreated',payload:{block_id:'block'}});
+  const original=state.DB.batch;let snapshots=0;
+  state.DB.batch=async statements=>{
+    const results=await original.call(state.DB,statements);
+    if(statements.some(statement=>statement.sql.includes('remembered.expires_at AS remembered_expires_at'))&&++snapshots===1){
+      const sourceIndex=statements.findIndex(statement=>statement.sql.includes('remembered.expires_at AS remembered_expires_at'));
+      results[sourceIndex].results.forEach((row,index)=>{row.event_id='event-'+index+'-'.repeat(500);row.block_id='b'.repeat(512);});
+    }
+    return results;
+  };
+  try{const response=await state.exportRequest();assert.equal(response.status,403);assert.equal(snapshots,1);assert.deepEqual(await response.json(),{error:'memory_export_unavailable'});}
+  finally{state.DB.batch=original;}
+});
+test('live memory export: known source deadline is rechecked after final database delivery',async t=>{
+  const state=await nativeApiExportRegressionFixture(t),event=state.seed(),expires=Date.now()+3_600_000;
+  state.sqlite.prepare('UPDATE memory_live_sources SET expires_at=? WHERE event_id=?').run(new Date(expires).toISOString(),event.id);
+  assert.equal((await state.exportRequest()).status,200);
+  const original=state.DB.batch,now=Date.now;let snapshots=0;
+  state.DB.batch=async statements=>{
+    const results=await original.call(state.DB,statements);
+    if(statements.some(statement=>statement.sql.includes('remembered.expires_at AS remembered_expires_at'))&&++snapshots===2)Date.now=()=>expires+1;
+    return results;
+  };
+  try{const response=await state.exportRequest();assert.equal(snapshots,2);assert.equal(response.status,403);assert.deepEqual(await response.json(),{error:'memory_export_unavailable'});}
+  finally{Date.now=now;state.DB.batch=original;}
+});
+test('live memory export: withdrawn shared free conversation custody is not invented into eligible evidence',async t=>{
+  const state=await nativeApiExportRegressionFixture(t,true),turn=await specialistFreeTurn(state,crypto.randomUUID(),'Shared conversation custody withdrawal.');
+  const event=state.sqlite.prepare("SELECT * FROM events WHERE type='AssistantReasoned' AND json_extract(payload,'$.turn_id')=? ORDER BY sequence DESC LIMIT 1").get(turn.id);
+  state.remember({id:event.event_id,sequence:event.sequence});
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM project_event_scopes WHERE event_id=?').get(event.event_id).n,1,'The ordinary shared POST publishes real custody immediately');
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM assistant_specialist_tasks WHERE turn_id=?').get(turn.id).n,0);
+  const admitted=await state.exportRequest();assert.equal(admitted.status,200);
+  assert.deepEqual((await admitted.json()).sources.map(source=>source.eventId),[event.event_id]);
+  state.sqlite.prepare('DELETE FROM project_event_scopes WHERE event_id=?').run(event.event_id);
+  const response=await state.exportRequest();assert.equal(response.status,200);assert.equal((await response.json()).sources.length,0);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM project_event_scopes WHERE event_id=?').get(event.event_id).n,0,'Export does not repair withdrawn custody');
+  assert.deepEqual(state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(event.event_id),event);
+});
+for(const [shared,paid,part] of [
+  [false,false,'user'],[false,false,'answer'],[true,false,'user'],[true,false,'answer'],
+  [true,false,'assigned-user'],[true,false,'assigned-answer'],
+  [false,true,'consent'],[false,true,'result'],[true,true,'consent'],[true,true,'result'],
+  [true,true,'assigned-consent'],[true,true,'assigned-result'],
+])test('live memory export: native conversation deadline at final delivery '+[shared?'shared':'personal',paid?'mock-paid':'free',part].join('/'),async t=>{
+  const supplied=paid?await specialistMockFixture({shared}):undefined;
+  const state=await nativeApiExportRegressionFixture(t,shared,supplied),expires=Date.now()+3_600_000;
+  const turn=await specialistFreeTurn(state,crypto.randomUUID(),'This retained chat text must not be exported.');
+  let execution;
+  if(paid){
+    assert.equal(state.env.OPENAI_API_KEY,'fixture-provider-key');
+    const review=await specialistQuote(state,turn.id);await specialistExecute(state,review);await state.drainBackground();
+    assert.equal(state.calls.length,1,'Only the explicitly intercepted fake provider fixture is called');
+    execution=state.sqlite.prepare('SELECT * FROM consequential_executions WHERE execution_id=?').get(review.quote.executionId);
+  }
+  const saved=state.sqlite.prepare('SELECT * FROM assistant_turns WHERE turn_id=?').get(turn.id);
+  const event=state.sqlite.prepare("SELECT event_id,sequence FROM events WHERE type='AssistantReasoned' AND json_extract(payload,'$.turn_id')=? ORDER BY sequence DESC LIMIT 1").get(turn.id);
+  state.remember({id:event.event_id,sequence:event.sequence});
+  if(shared&&!paid){
+    assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM project_event_scopes WHERE event_id=?').get(event.event_id).n,1,
+      'The ordinary shared POST published this custody; no GET or synchronizer repairs it');
+  }
+  const ref=part.endsWith('consent')?execution.consent_ref:part.endsWith('result')?execution.result_ref:part.endsWith('user')?saved.user_content_ref:saved.assistant_content_ref;
+  if(part.startsWith('assigned-'))state.sqlite.prepare('UPDATE private_content_retention_scopes SET assigned_expires_at=? WHERE content_id=?').run(new Date(expires).toISOString(),ref);
+  else state.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run(new Date(expires).toISOString(),ref);
+  const positive=await state.exportRequest(),view=await positive.json();assert.equal(positive.status,200,JSON.stringify(view));
+  assert.ok(view.sources.some(source=>source.eventId===event.event_id));
+  assert.doesNotMatch(JSON.stringify(view),/This retained chat text|PRIVATE_VERIFIED_SPECIALIST_REPLY/);
+  assert.ok(Date.parse(view.sources.find(source=>source.eventId===event.event_id).retentionExpiresAt)>expires,'Native content deadline is earlier than the disclosed retention upper bound');
+  const original=state.DB.batch,now=Date.now;let snapshots=0;
+  state.DB.batch=async statements=>{
+    const results=await original.call(state.DB,statements);
+    if(statements.some(statement=>statement.sql.includes('remembered.expires_at AS remembered_expires_at'))&&++snapshots===2)Date.now=()=>expires+1;
+    return results;
+  };
+  try{const response=await state.exportRequest();assert.equal(snapshots,2);assert.equal(response.status,403);assert.deepEqual(await response.json(),{error:'memory_export_unavailable'});}
+  finally{Date.now=now;state.DB.batch=original;}
+});
+for(const filtered of [false,true])test('live memory export: original '+(filtered?'raw-filtered':'active')+' grant deadline survives final delivery',async t=>{
+  const supplied=await fixture(),expires=Date.now()+3_600_000,at=new Date().toISOString();
+  supplied.sqlite.prepare("INSERT INTO capability_grants(grant_id,user_id,capability,scope_type,organization_id,project_access_id,project_id,status,granted_by_user_id,created_at,updated_at,expires_at,revoked_at) VALUES(?,'dev-local-creative','product.delivery.read',?,NULL,NULL,NULL,'active','dev-local-creative',?,?,?,NULL)")
+    .run('export-deadline-grant',filtered?'self':'platform',at,at,new Date(expires).toISOString());
+  const state=await nativeApiExportRegressionFixture(t,false,supplied);state.seed();
+  assert.equal((await state.exportRequest()).status,200);
+  const original=state.DB.batch,now=Date.now;let snapshots=0;
+  state.DB.batch=async statements=>{
+    const results=await original.call(state.DB,statements);
+    if(statements.some(statement=>statement.sql.includes('remembered.expires_at AS remembered_expires_at'))&&++snapshots===2)Date.now=()=>expires+1;
+    return results;
+  };
+  try{const response=await state.exportRequest();assert.equal(snapshots,2);assert.equal(response.status,403);}
+  finally{Date.now=now;state.DB.batch=original;}
+});
+for(const boundary of ['cohort-end','future-successor-start'])test('live memory export: original pilot '+boundary+' survives final delivery',async t=>{
+  const supplied=await sharedProjectFixture(),expires=Date.now()+3_600_000,at=new Date().toISOString();
+  const insert=supplied.sqlite.prepare("INSERT INTO pilot_cohorts(cohort_id,organization_id,status,starts_at,ends_at,created_by_user_id,created_at,updated_at) VALUES(?,?,?,?,?,'assistant-owner',?,?)");
+  insert.run('export-current-pilot',supplied.organizationId,boundary==='cohort-end'?'active':'closed',new Date(Date.now()-7_200_000).toISOString(),new Date(boundary==='cohort-end'?expires:Date.now()-3_600_000).toISOString(),at,at);
+  if(boundary==='future-successor-start')insert.run('export-next-pilot',supplied.organizationId,'active',new Date(expires).toISOString(),new Date(expires+3_600_000).toISOString(),at,at);
+  for(const cohort of ['export-current-pilot',...(boundary==='future-successor-start'?['export-next-pilot']:[])])
+    supplied.sqlite.prepare("INSERT INTO pilot_participants(participant_id,cohort_id,organization_id,email_normalized,user_id,role,status,invited_by_user_id,created_at,revoked_at) VALUES(?,?,?,'assistant-owner@example.test','assistant-owner','member','active','assistant-owner',?,NULL)")
+      .run('participant-'+cohort,cohort,supplied.organizationId,at);
+  supplied.env.FORMA_PILOT_COHORT_ID='export-current-pilot';
+  delete supplied.env.FORMA_ADMIN_EMAILS;
+  const state=await nativeApiExportRegressionFixture(t,true,supplied);state.seed();
+  assert.equal((await state.exportRequest()).status,200);
+  const original=state.DB.batch,now=Date.now;let snapshots=0;
+  state.DB.batch=async statements=>{
+    const results=await original.call(state.DB,statements);
+    if(statements.some(statement=>statement.sql.includes('remembered.expires_at AS remembered_expires_at'))&&++snapshots===2)Date.now=()=>expires+1;
+    return results;
+  };
+  try{const response=await state.exportRequest();assert.equal(snapshots,2);assert.equal(response.status,403);}
+  finally{Date.now=now;state.DB.batch=original;}
+});
+
+for (const invalid of ['foreign stream', 'other user', 'spoofed claimed actor', 'shared user alias', 'conversation alias', 'synthetic alias', 'withdrawn private alias'])
+test('native memory API integration: personal legacy actor admission excludes ' + invalid, async t => {
+  const state = await nativeApiExportRegressionFixture(t, invalid === 'shared user alias'), e = state.current();
+  let good;
+  if (invalid === 'conversation alias') {
+    const turn = await specialistFreeTurn(state, crypto.randomUUID(), 'PRIVATE_ALIAS_CONVERSATION');
+    const row = state.sqlite.prepare("SELECT * FROM events WHERE type='AssistantReasoned' AND json_extract(payload,'$.turn_id')=? ORDER BY sequence DESC LIMIT 1").get(turn.id);
+    good = state.remember({ id: row.event_id, sequence: row.sequence });
+  } else good = state.seed();
+  const canonical = state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(good.id);
+  const positive = await state.exportRequest(); assert.equal(positive.status, 200, await positive.clone().text());
+  assert.deepEqual((await positive.json()).sources.map(source => source.eventId), [good.id]);
+  let bad;
+  // New synthetic adverse rows only: the real append-only triggers remain installed.
+  const appendCopy = values => {
+    const columns = Object.keys(values);
+    state.sqlite.prepare('INSERT INTO events(' + columns.join(',') + ') VALUES(' + columns.map(() => '?').join(',') + ')').run(...Object.values(values));
+    return { id: values.event_id, sequence: values.sequence };
+  };
+  if (invalid === 'foreign stream') bad = state.remember(appendCopy({ ...canonical, event_id: crypto.randomUUID(), stream_id: 'creative:foreign-alias-stream', actor: 'user' }));
+  else if (invalid === 'conversation alias') {
+    const message = state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(canonical.causation_id);
+    const head = state.sqlite.prepare('SELECT MAX(sequence) AS head FROM events WHERE stream_id=?').get(canonical.stream_id).head;
+    const newMessage = appendCopy({ ...message, event_id: crypto.randomUUID(), sequence: head + 1, actor: 'user' });
+    bad = state.remember(appendCopy({ ...canonical, event_id: crypto.randomUUID(), sequence: head + 2, actor: 'user', causation_id: newMessage.id }));
+  } else {
+    bad = state.seed({ actor: invalid === 'other user' ? 'user:foreign-alias-user' : 'user',
+      ...(invalid === 'withdrawn private alias' ? { type: 'BlockCreated', payload: { block_id: 'api-alias-private', _private_ref: true } }
+        : { payload: invalid === 'spoofed claimed actor' ? { actor_user_id: 'foreign-alias-user' } : invalid === 'synthetic alias' ? { synthetic: true } : {} }) });
+    if (invalid === 'withdrawn private alias') {
+      state.sqlite.prepare('INSERT INTO event_private_payloads(private_event_id,owner_id,project_id,document_id,private_json,created_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)')
+        .run(bad.id, e.owner_user_id, e.project_id, e.document_id, JSON.stringify({ text: 'PRIVATE_ALIAS_BODY' }), new Date().toISOString());
+      const beforeWithdrawal = await state.exportRequest(); assert.equal(beforeWithdrawal.status, 200);
+      assert.ok((await beforeWithdrawal.json()).sources.some(source => source.eventId === bad.id));
+      state.sqlite.prepare("UPDATE event_private_payloads SET private_json='',redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(), bad.id);
+    }
+  }
+  const expected = invalid === 'conversation alias' ? [] : [good.id];
+  const exported = await state.exportRequest(); assert.equal(exported.status, 200);
+  assert.deepEqual((await exported.json()).sources.map(source => source.eventId), expected);
+  const recalled = await state.read(); assert.equal(recalled.status, 200); const value = await recalled.json();
+  assert.deepEqual(value.sources.map(source => source.eventId), expected); assert.equal(value.sources.some(source => source.eventId === bad.id), false);
+  assert.deepEqual(value.rollingConversation, { summary: [], recent: [], completeFromStart: false });
+  assert.deepEqual(state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(good.id), canonical, 'No canonical source was rewritten to manufacture this assertion');
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_live_runs').get().n, 0);
+});
+
+for (const claimedActor of ['foreign actor <unsafe>', { user: 'foreign-actor' }])
+test('native memory API integration: actual personal action with hidden ' + (typeof claimedActor === 'string' ? 'text' : 'object') + ' actor claim cannot become memory', async t => {
+  const state = await nativeMemoryApiFixture(t), item = await state.selected();
+  const response = await state.request('/api/events', json({ action: 'append', clientId: 'native-memory-api-private-actor', event: {
+    type: 'BlockPropertyEdited', payload: { project_id: item.projectId, document_id: item.documentId, block_id: state.postSource.blockId,
+      property_path: 'text', old_value: 'PRIVATE_CONTEXT_READ_BLOCK_TEXT', new_value: 'PRIVATE_UNTRUSTED_ACTOR_ACTION', actor_user_id: claimedActor },
+  } }, state.owner));
+  assert.equal(response.status, 200, await response.clone().text()); const appended = (await response.json()).appended;
+  assert.equal(appended.length, 1); const id = appended[0].eventId;
+  const canonical = state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(id), envelope = JSON.parse(canonical.payload);
+  assert.equal(canonical.actor, 'user'); assert.equal(Object.hasOwn(envelope, 'actor_user_id'), false, 'Public identity sanitizer does not expose this malformed claim');
+  assert.equal(envelope._private_ref, id);
+  const secret = state.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(id);
+  assert.deepEqual(JSON.parse(secret.private_json).actor_user_id, claimedActor, 'The exact native private envelope retains the contradictory claim');
+  const benign = await state.request('/api/events', json({ action: 'append', clientId: 'native-memory-api-benign-actor', event: {
+    type: 'BlockPropertyEdited', payload: { project_id: item.projectId, document_id: item.documentId, block_id: state.postSource.blockId,
+      property_path: 'text', old_value: 'PRIVATE_UNTRUSTED_ACTOR_ACTION', new_value: 'PRIVATE_BENIGN_ACTOR_ACTION' },
+  } }, state.owner));
+  assert.equal(benign.status, 200, await benign.clone().text()); const benignEvent = (await benign.json()).appended[0];
+  assert.equal(benignEvent.actor, 'user'); assert.ok(state.sqlite.prepare('SELECT 1 AS present FROM event_private_payloads WHERE private_event_id=?').get(benignEvent.eventId));
+  const run = await state.run(); assert.equal(run.status, 'completed'); assert.equal(run.failed, 0); assert.equal(run.processed, 1);
+  assert.deepEqual(state.table('memory_live_sources').map(row => row.event_id), [benignEvent.eventId]); assert.deepEqual(state.table('memory_live_conversation_segments'), []);
+  const current = await state.selected(), recalled = await state.client.recall(current); assert.deepEqual(recalled.value.sources.map(row => row.eventId), [benignEvent.eventId]); recalled.retire();
+  assert.deepEqual(JSON.parse(await state.client.exportReferences(current)).sources.map(row => row.eventId), [benignEvent.eventId]);
+  assert.deepEqual(state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(id), canonical);
+  assert.deepEqual(state.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(id), secret); nativeMemoryUnpaid(state);
+});
+
+// Provider-free consumer integration. All original conversations and enrollments
+// use the actual Worker and existing isolated job fixture. Origin DDL is applied
+// explicitly by this test, never lazily by a request or production scheduler.
+async function nativeMemoryConsumerFixture(t, { shared = false, sourceCount = 2, sourceMessages, originSchema = true, beforeEnrollment } = {}) {
+  const state = await nativeMemoryJobFixture(t, { shared, beforeEnrollment });
+  if (originSchema) {
+    const { readFile } = await import('node:fs/promises');
+    state.sqlite.exec(await readFile(new URL('../drizzle/0027_memory_native_origins.sql', import.meta.url), 'utf8'));
+  }
+  const consumerSources = [];
+  for (let index = 0; index < sourceCount; index++) {
+    const id = 'consumer-source-' + index + '-' + crypto.randomUUID();
+    if (sourceMessages) {
+      const turn = await specialistFreeTurn(state, id, sourceMessages[index]);
+      consumerSources.push({ ...turn, pointers: ordinaryFeedPointers(state, turn) });
+    } else consumerSources.push(await state.send(id));
+  }
+  if (sourceCount) {
+    const run = await state.run();
+    assert.equal(run.status, 'completed', state.controls.lastDatabaseError);
+    assert.equal(run.processed, sourceCount);
+  }
+  return Object.assign(state, { consumerSources });
+}
+function nativeMemoryConsumerRequest(state, turnId, message = 'Recall my previous conversation.', fields = {}) {
+  return state.request(endpoint(), json({ turnId, message, locale: 'en', memoryMode: 'recall', ...fields }, state.owner));
+}
+function nativeMemoryConsumerOrigins(state) {
+  return {
+    origins: state.sqlite.prepare('SELECT * FROM memory_native_answer_origins ORDER BY origin_id').all(),
+    dependencies: state.sqlite.prepare('SELECT * FROM memory_native_answer_dependencies ORDER BY origin_id,ordinal').all(),
+  };
+}
+function nativeMemoryConsumerPrivateCount(state) {
+  return state.sqlite.prepare('SELECT COUNT(*) AS n FROM private_content').get().n;
+}
+function nativeMemoryConsumerNoSend(state, turnId, beforePrivateCount) {
+  for (const [name, rows] of Object.entries(postContextSendFootprint(state, turnId))) assert.deepEqual(rows, [], name);
+  assert.equal(nativeMemoryConsumerPrivateCount(state), beforePrivateCount, 'No orphaned user, answer or proposal content');
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_native_answer_origins WHERE turn_id=?').get(turnId).n, 0);
+  nativeMemoryUnpaid(state);
+}
+function nativeMemoryConsumerNoProof(body) {
+  assertPostContextNoWitness(body);
+  assert.doesNotMatch(JSON.stringify(body), /"(?:origin_id|answer_sha256|consumed_value_sha256|dependency_list_sha256|projection_sha256|source_retention_ceiling|memory_origin_id|memory_origin_version|sourceSequence|source_sequence|bindings|sql)"\s*:/u);
+}
+function nativeMemoryConsumerUnavailable(response, body) {
+  assert.equal(response.status, 409, JSON.stringify(body));
+  assert.equal(body.error, 'assistant_memory_unavailable');
+  assert.equal(body.noAutomaticRetry, true); assert.equal(body.turn, undefined);
+  nativeMemoryConsumerNoProof(body);
+}
+function nativeMemoryConsumerTurn(body, turnId) {
+  const turn = body.turn;
+  assert.equal(turn?.id, turnId, JSON.stringify(body));
+  assert.equal(turn.memory?.version, 'native-memory-answer-v1');
+  assert.equal(turn.memory?.method, 'extractive-not-semantic');
+  assert.ok(Number.isFinite(Date.parse(turn.memory.checkedAt)));
+  assert.ok(Date.parse(turn.memory.validUntil) > Date.parse(turn.memory.checkedAt));
+  assert.equal(typeof turn.reply.text, 'string'); assert.ok(turn.reply.text.length > 0);
+  assert.equal(turn.proposal, null); assert.deepEqual(turn.proposals ?? [], []);
+  nativeMemoryConsumerNoProof(body); return turn;
+}
+async function nativeMemoryConsumerMeasured(t, state, label, operation) {
+  state.controls.requestQueryLimit = 1000; state.controls.requestQueryCount = 0; state.controls.queryLimitSql = '';
+  try {
+    const response = await operation(), queries = state.controls.requestQueryCount;
+    assert.ok(queries > 0 && queries <= 1000, state.controls.queryLimitSql);
+    t.diagnostic(JSON.stringify({ nativeMemoryConsumerRequest: label, queries, ceiling: 1000, runtime: 'ordinary Node SQLite fixture, not hosted qualification' }));
+    return response;
+  } finally { state.controls.requestQueryLimit = 0; }
+}
+
+for (const shared of [false, true]) test('native memory consumer: ' + (shared ? 'shared' : 'personal') + ' explicit recall commits one certified answer and replay/feed are read-only', async t => {
+  const state = await nativeMemoryConsumerFixture(t, { shared }), turnId = 'consumer-certified-' + (shared ? 'shared' : 'personal');
+  const beforeMemory = nativeMemoryApiSnapshot(state), beforeOrigins = nativeMemoryConsumerOrigins(state);
+  assert.deepEqual(beforeOrigins, { origins: [], dependencies: [] });
+  const response = await nativeMemoryConsumerMeasured(t, state, 'create-' + (shared ? 'shared' : 'personal'), () => nativeMemoryConsumerRequest(state, turnId));
+  const body = await response.json(); assert.equal(response.status, 201, JSON.stringify(body) + ' SQL:' + state.controls.lastDatabaseError);
+  const turn = nativeMemoryConsumerTurn(body, turnId), saved = postContextSendFootprint(state, turnId), origin = nativeMemoryConsumerOrigins(state);
+  assert.match(turn.reply.text, /PRIVATE_JOB_QUESTION_consumer-source-/u, 'The actual admitted conversation is consumed');
+  assert.equal(saved.turns.length, 1); assert.equal(saved.events.length, 2); assert.equal(saved.receipts.length, 2); assert.deepEqual(saved.proposals, []);
+  const answer = saved.private.find(row => row.content_id === saved.turns[0].assistant_content_ref);
+  assert.equal(answer.kind, 'chat-assistant-memory'); assert.equal(answer.content, turn.reply.text);
+  const event = saved.events.find(row => row.type === 'AssistantReasoned'), payload = JSON.parse(event.payload);
+  assert.equal(payload.memory_origin_version, 1, 'The immutable public event prevents missing-origin downgrade');
+  assert.equal(payload.organization_id, state.current().organization_id, 'Personal marker custody uses an explicit null, not a missing field');
+  assert.equal(payload.project_access_id, state.current().project_access_id);
+  assert.equal(payload.owner_user_id, state.current().owner_user_id);
+  assert.equal(origin.origins.length, 1); assert.equal(origin.origins[0].turn_id, turnId); assert.equal(origin.origins[0].status, 'active');
+  assert.equal(origin.origins[0].answer_content_id, answer.content_id); assert.equal(origin.origins[0].answer_event_id, event.event_id);
+  assert.equal(origin.origins[0].user_content_id, saved.turns[0].user_content_ref);
+  assert.equal(origin.dependencies.length, origin.origins[0].dependency_count);
+  assert.deepEqual(new Set(origin.dependencies.map(row => row.event_id)), new Set(state.consumerSources.map(source => source.pointers.response)));
+  assert.doesNotMatch(JSON.stringify(origin), /PRIVATE_JOB_QUESTION|PRIVATE_CONTEXT_READ/u, 'Durable lineage contains identities and hashes, not source prose');
+  const afterMemory = nativeMemoryApiSnapshot(state);
+  for (const key of ['enrollments', 'sources', 'groups', 'runs']) assert.deepEqual(afterMemory[key], beforeMemory[key], key);
+  const snapshot = { origin, saved, memory: afterMemory };
+  const repeated = await nativeMemoryConsumerMeasured(t, state, 'same-turn-replay', () => nativeMemoryConsumerRequest(state, turnId));
+  const duplicate = await repeated.json(); assert.equal(repeated.status, 200, JSON.stringify(duplicate));
+  assert.equal(nativeMemoryConsumerTurn(duplicate, turnId).reply.text, turn.reply.text);
+  const feed = await nativeMemoryConsumerMeasured(t, state, 'feed', () => state.request(endpoint(), { headers: state.owner })), page = await feed.json();
+  assert.equal(feed.status, 200, JSON.stringify(page));
+  const visible = page.turns.find(item => item.id === turnId); assert.ok(visible); nativeMemoryConsumerTurn({ turn: visible }, turnId);
+  assert.equal(visible.reply.text, turn.reply.text);
+  assert.ok(page.context.recentTurns.every(item => !item.id.startsWith(turnId + ':')), 'Memory reply is visible in feed but excluded from ordinary generation context');
+  assert.deepEqual({ origin: nativeMemoryConsumerOrigins(state), saved: postContextSendFootprint(state, turnId), memory: nativeMemoryApiSnapshot(state) }, snapshot);
+  nativeMemoryUnpaid(state);
+});
+
+test('native memory consumer: full eight-pair display keeps hidden group members in lineage and stays within request ceiling', async t => {
+  const messages = Array.from({ length: 9 }, (_, index) => 'Remember this source-bound observation number ' + index + '.');
+  const state = await nativeMemoryConsumerFixture(t, { shared: true, sourceCount: 9, sourceMessages: messages }), turnId = 'consumer-bounded-nine';
+  const response = await nativeMemoryConsumerMeasured(t, state, 'nine-pair-complete-groups', () => nativeMemoryConsumerRequest(state, turnId));
+  const body = await response.json(); assert.equal(response.status, 201, JSON.stringify(body) + ' SQL:' + state.controls.lastDatabaseError);
+  nativeMemoryConsumerTurn(body, turnId);
+  assert.doesNotMatch(body.turn.reply.text, /observation number 0\./u, 'The ninth-oldest pair is outside the rolling eight-pair view');
+  for (const message of messages.slice(1)) assert.ok(body.turn.reply.text.includes(message), 'Earlier-six quotations and the exact recent two remain present: ' + message);
+  assert.match(body.turn.reply.text, /Earlier conversation — selected quotations in source order/u);
+  assert.match(body.turn.reply.text, /Historical excerpts are incomplete evidence/u);
+  const origin = nativeMemoryConsumerOrigins(state);
+  assert.equal(origin.dependencies.length, 9, 'The hidden ninth source remains part of complete segment provenance');
+  assert.equal(origin.dependencies.filter(row => row.consumed === 1).length, 8);
+  assert.equal(origin.dependencies.filter(row => row.consumed === 0).length, 1);
+  const hidden = origin.dependencies.find(row => row.consumed === 0);
+  state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(), hidden.assistant_content_id);
+  const feed = await state.request(endpoint(), { headers: state.owner }), page = await feed.json();
+  assert.equal(feed.status, 200, JSON.stringify(page)); assert.ok(!page.turns.some(item => item.id === turnId), 'Hidden segment member withdrawal retires the derived answer too');
+  assert.deepEqual(nativeMemoryConsumerOrigins(state), origin, 'Read validation never substitutes or repairs original lineage');
+  nativeMemoryUnpaid(state);
+});
+
+test('native memory consumer: maximum six-turn memory feed remains bounded and never becomes generation history', async t => {
+  const state = await nativeMemoryConsumerFixture(t, { shared: true, sourceCount: 9 }), ids = [];
+  for (let index = 0; index < 6; index++) {
+    const id = 'consumer-full-feed-' + index, response = await nativeMemoryConsumerMeasured(t, state, 'full-feed-create-' + index, () => nativeMemoryConsumerRequest(state, id));
+    const body = await response.json(); assert.equal(response.status, 201, JSON.stringify(body)); nativeMemoryConsumerTurn(body, id); ids.push(id);
+  }
+  const before = { origin: nativeMemoryConsumerOrigins(state), memory: nativeMemoryApiSnapshot(state) };
+  const response = await nativeMemoryConsumerMeasured(t, state, 'full-six-memory-turn-feed', () => state.request(endpoint(), { headers: state.owner })), page = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(page)); assert.deepEqual(page.turns.map(turn => turn.id), ids);
+  assert.ok(page.turns.every(turn => turn.memory?.version === 'native-memory-answer-v1'));
+  assert.ok(page.context.recentTurns.every(item => !ids.some(id => item.id.startsWith(id + ':'))));
+  assert.deepEqual({ origin: nativeMemoryConsumerOrigins(state), memory: nativeMemoryApiSnapshot(state) }, before); nativeMemoryUnpaid(state);
+  const ordinary = await nativeMemoryConsumerMeasured(t, state, 'ordinary-after-full-memory-feed', () => postContextRequest(state, 'consumer-full-feed-ordinary'));
+  const body = await ordinary.json(); assert.equal(ordinary.status, 201, JSON.stringify(body)); assert.equal(body.turn.memory, undefined);
+  assert.ok(body.context.recentTurns.every(item => !ids.some(id => item.id.startsWith(id + ':'))));
+  assert.doesNotMatch(JSON.stringify(body.turn.reply), /PRIVATE_JOB_QUESTION_consumer-source-/u);
+  assert.deepEqual(nativeMemoryConsumerOrigins(state), before.origin); nativeMemoryUnpaid(state);
+});
+
+for (const memoryMode of [null, false, 'automatic', '']) test('native memory consumer: invalid memoryMode ' + JSON.stringify(memoryMode) + ' is explicit and creates no turn', async t => {
+  const state = await nativeMemoryConsumerFixture(t), turnId = 'consumer-invalid-' + String(memoryMode), before = nativeMemoryConsumerPrivateCount(state);
+  const response = await nativeMemoryConsumerRequest(state, turnId, undefined, { memoryMode }), body = await response.json();
+  assert.equal(response.status, 400, JSON.stringify(body)); assert.equal(body.error, 'assistant_memory_mode_invalid');
+  nativeMemoryConsumerNoProof(body); nativeMemoryConsumerNoSend(state, turnId, before);
+});
+
+for (const unavailable of ['empty', 'unenrolled', 'recall disabled', 'feature disabled', 'conversation schema absent', 'origin schema absent'])
+test('native memory consumer: ' + unavailable + ' denies explicit recall without a fallback or runtime migration', async t => {
+  const state = await nativeMemoryConsumerFixture(t, { sourceCount: ['empty', 'unenrolled'].includes(unavailable) ? 0 : 2, originSchema: unavailable !== 'origin schema absent' });
+  if (unavailable === 'unenrolled') state.sqlite.prepare('DELETE FROM memory_live_enrollments').run();
+  else if (unavailable === 'recall disabled') state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0').run();
+  else if (unavailable === 'feature disabled') state.env.FORMA_MEMORY_ENABLED = 'false';
+  else if (unavailable === 'conversation schema absent') state.sqlite.exec('DROP TABLE memory_live_conversation_segments; ALTER TABLE memory_live_sources DROP COLUMN conversation_segmented');
+  const turnId = 'consumer-unavailable-' + unavailable.replaceAll(' ', '-'), before = nativeMemoryConsumerPrivateCount(state);
+  const schema = state.sqlite.prepare("SELECT name,sql FROM sqlite_schema WHERE name LIKE 'memory_%' ORDER BY name").all();
+  const response = await nativeMemoryConsumerRequest(state, turnId), body = await response.json();
+  nativeMemoryConsumerUnavailable(response, body);
+  for (const [name, rows] of Object.entries(postContextSendFootprint(state, turnId))) assert.deepEqual(rows, [], name);
+  assert.equal(nativeMemoryConsumerPrivateCount(state), before);
+  assert.deepEqual(state.sqlite.prepare("SELECT name,sql FROM sqlite_schema WHERE name LIKE 'memory_%' ORDER BY name").all(), schema);
+  nativeMemoryUnpaid(state);
+});
+
+for (const failure of ['turn insert', 'origin insert', 'dependency insert']) test('native memory consumer: ' + failure + ' failure rolls back the entire uncharged send', async t => {
+  const state = await nativeMemoryConsumerFixture(t, { shared: true }), turnId = 'consumer-rollback-' + failure.replaceAll(' ', '-');
+  const before = nativeMemoryConsumerPrivateCount(state), origins = nativeMemoryConsumerOrigins(state);
+  if (failure === 'turn insert') state.controls.failAssistantTurnInsert = true;
+  else state.sqlite.exec('CREATE TEMP TRIGGER consumer_origin_failure BEFORE INSERT ON ' + (failure === 'origin insert' ? 'memory_native_answer_origins' : 'memory_native_answer_dependencies') + " BEGIN SELECT RAISE(ABORT,'fixture_consumer_origin_failure'); END");
+  const response = await nativeMemoryConsumerRequest(state, turnId), body = await response.json();
+  assert.equal(response.status, 503, JSON.stringify(body)); assert.equal(body.error, 'assistant_persistence_failed'); assert.equal(body.turn, undefined);
+  nativeMemoryConsumerNoProof(body); nativeMemoryConsumerNoSend(state, turnId, before); assert.deepEqual(nativeMemoryConsumerOrigins(state), origins);
+});
+
+for (const stale of [false, true]) test('native memory consumer: lost committed response ' + (stale ? 'cannot recover after source withdrawal' : 'recovers only the exact original memory answer'), async t => {
+  const state = await nativeMemoryConsumerFixture(t, { shared: true }), turnId = 'consumer-lost-' + stale; let fired = 0, committed;
+  const restore = interceptConsequentialDb(state, 'batch', /INSERT INTO assistant_turns\b/u, () => {
+    fired++; committed = { saved: postContextSendFootprint(state, turnId), origin: nativeMemoryConsumerOrigins(state) };
+    assert.equal(committed.saved.turns.length, 1, 'Transport failure only after actual SQLite commit');
+    if (stale) state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(), state.consumerSources[0].pointers.answer);
+    throw new Error('fixture_consumer_committed_response_lost');
+  }, 'after');
+  let response, body;
+  try { response = await nativeMemoryConsumerRequest(state, turnId); body = await response.json(); }
+  finally { restore(); }
+  assert.equal(fired, 1); assert.equal(body.messageNotSaved, undefined);
+  assert.deepEqual({ saved: postContextSendFootprint(state, turnId), origin: nativeMemoryConsumerOrigins(state) }, committed, 'Recovery cannot regenerate or replace the committed origin');
+  if (stale) { assert.equal(response.status, 409, JSON.stringify(body)); assert.equal(body.turn, undefined); }
+  else { assert.equal(response.status, 200, JSON.stringify(body)); nativeMemoryConsumerTurn(body, turnId); }
+  nativeMemoryConsumerNoProof(body); nativeMemoryUnpaid(state);
+});
+
+for (const change of ['missing origin', 'withdrawn origin', 'source redacted', 'source replaced', 'segment missing', 'enrollment revision', 'retyped marked answer', 'turn row missing'])
+test('native memory consumer: exact replay and feed withhold ' + change + ' without legacy revival', async t => {
+  const state = await nativeMemoryConsumerFixture(t, { shared: true }), turnId = 'consumer-withdraw-' + change.replaceAll(' ', '-');
+  const created = await nativeMemoryConsumerRequest(state, turnId), initial = await created.json();
+  assert.equal(created.status, 201, JSON.stringify(initial) + ' SQL:' + state.controls.lastDatabaseError);
+  const turn = nativeMemoryConsumerTurn(initial, turnId), saved = postContextSendFootprint(state, turnId), source = state.consumerSources[0];
+  if (change === 'missing origin') {
+    state.sqlite.prepare("UPDATE memory_native_answer_origins SET status='withdrawn',withdrawn_at=?,withdrawal_reason='manual' WHERE turn_id=?").run(new Date().toISOString(), turnId);
+    state.sqlite.prepare('DELETE FROM memory_native_answer_origins WHERE turn_id=?').run(turnId);
+  }
+  else if (change === 'withdrawn origin') state.sqlite.prepare("UPDATE memory_native_answer_origins SET status='withdrawn',withdrawn_at=?,withdrawal_reason='manual' WHERE turn_id=?").run(new Date().toISOString(), turnId);
+  else if (change === 'source redacted') state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(), source.pointers.answer);
+  else if (change === 'source replaced') state.sqlite.prepare("UPDATE private_content SET content='PRIVATE_REPLACEMENT_MUST_NOT_ESCAPE' WHERE content_id=?").run(source.pointers.answer);
+  else if (change === 'segment missing') state.sqlite.prepare('DELETE FROM memory_live_conversation_segments WHERE enrollment_id=?').run(state.current().enrollment_id);
+  else if (change === 'enrollment revision') state.sqlite.prepare('UPDATE memory_live_enrollments SET revision=revision+1').run();
+  else if (change === 'turn row missing') state.sqlite.prepare('DELETE FROM assistant_turns WHERE turn_id=?').run(turnId);
+  else state.sqlite.prepare("UPDATE private_content SET kind='chat-assistant' WHERE content_id=?").run(saved.turns[0].assistant_content_ref);
+  const before = { saved: postContextSendFootprint(state, turnId), origin: nativeMemoryConsumerOrigins(state), privateCount: nativeMemoryConsumerPrivateCount(state) };
+  const repeated = await nativeMemoryConsumerRequest(state, turnId), duplicate = await repeated.json();
+  assert.equal(repeated.status, 409, JSON.stringify(duplicate)); assert.equal(duplicate.turn, undefined); assert.equal(duplicate.messageNotSaved, undefined);
+  assert.ok(!JSON.stringify(duplicate).includes(turn.reply.text)); nativeMemoryConsumerNoProof(duplicate);
+  const response = await state.request(endpoint(), { headers: state.owner }), page = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(page)); assert.ok(!page.turns.some(item => item.id === turnId));
+  assert.ok(page.context.recentTurns.every(item => !item.id.startsWith(turnId + ':')));
+  assert.ok(!JSON.stringify(page).includes(turn.reply.text)); nativeMemoryConsumerNoProof(page);
+  assert.deepEqual({ saved: postContextSendFootprint(state, turnId), origin: nativeMemoryConsumerOrigins(state), privateCount: nativeMemoryConsumerPrivateCount(state) }, before);
+  nativeMemoryUnpaid(state);
+});
+
+test('native memory consumer: subsequent ordinary answer cannot silently consume or remember a memory-derived reply', async t => {
+  const state = await nativeMemoryConsumerFixture(t, { shared: true }), turnId = 'consumer-no-ancestry';
+  const created = await nativeMemoryConsumerRequest(state, turnId), body = await created.json();
+  assert.equal(created.status, 201, JSON.stringify(body)); nativeMemoryConsumerTurn(body, turnId);
+  const origin = nativeMemoryConsumerOrigins(state), memoryAnswer = postContextSendFootprint(state, turnId).turns[0].assistant_content_ref;
+  const ordinaryId = 'consumer-following-ordinary', response = await postContextRequest(state, ordinaryId), ordinary = await response.json();
+  assert.equal(response.status, 201, JSON.stringify(ordinary) + ' SQL:' + state.controls.lastDatabaseError);
+  assert.equal(ordinary.turn.memory, undefined);
+  assert.ok(ordinary.context.recentTurns.every(item => !item.id.startsWith(turnId + ':')));
+  assert.deepEqual(nativeMemoryConsumerOrigins(state), origin);
+  state.due(); const run = await state.run(); assert.equal(run.status, 'completed');
+  const refs = state.table('memory_live_sources');
+  const memoryEvent = state.sqlite.prepare("SELECT event_id FROM events WHERE type='AssistantReasoned' AND json_extract(payload,'$.content_ref')=?").get(memoryAnswer);
+  assert.ok(memoryEvent); assert.ok(refs.every(row => row.event_id !== memoryEvent.event_id));
+  nativeMemoryUnpaid(state);
+});
+
+for (const boundary of ['precommit', 'final response']) test('native memory consumer: source withdrawal at ' + boundary + ' cannot disclose a newly copied answer', async t => {
+  const state = await nativeMemoryConsumerFixture(t, { shared: true }), turnId = 'consumer-race-' + boundary.replaceAll(' ', '-');
+  const before = nativeMemoryConsumerPrivateCount(state); let fired = 0;
+  const restore = interceptConsequentialDb(state, 'batch', boundary === 'precommit' ? /INSERT INTO assistant_turns\b/u : /AS response_authorized/u, () => {
+    fired++; state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(), state.consumerSources[0].pointers.answer);
+  });
+  let response, body;
+  try { response = await nativeMemoryConsumerRequest(state, turnId); body = await response.json(); }
+  finally { restore(); }
+  assert.equal(fired, 1); assert.equal(response.status, 409, JSON.stringify(body)); assert.equal(body.turn, undefined); nativeMemoryConsumerNoProof(body);
+  if (boundary === 'precommit') { assert.equal(body.messageNotSaved, true); nativeMemoryConsumerNoSend(state, turnId, before); }
+  else { assert.equal(body.messageNotSaved, undefined); assert.equal(postContextSendFootprint(state, turnId).turns.length, 1); }
+  nativeMemoryUnpaid(state);
+});
+
+for (const deadline of ['source', 'original request grant']) test('native memory consumer: ' + deadline + ' expiry after final database delivery withholds the committed answer', async t => {
+  const expires = new Date(Date.now() + 30_000).toISOString();
+  const state = await nativeMemoryConsumerFixture(t, { beforeEnrollment(state) {
+    if (deadline !== 'original request grant') return;
+    const now = new Date().toISOString(), actor = state.postSource.owner;
+    state.sqlite.prepare("INSERT INTO capability_grants(grant_id,user_id,capability,scope_type,status,granted_by_user_id,created_at,updated_at,expires_at) VALUES(?,?,'project.read','self','active',?,?,?,?)")
+      .run('consumer-final-original-grant', actor, actor, now, now, expires);
+  } });
+  if (deadline === 'source') state.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run(expires, state.consumerSources[0].pointers.answer);
+  const originalNow = Date.now, clock = consequentialDbClock(state), turnId = 'consumer-deadline-' + deadline.replaceAll(' ', '-'); let fired = 0;
+  const restore = interceptConsequentialDb(state, 'batch', /AS response_authorized/u, () => {
+    fired++; clock.set(expires); Date.now = () => Date.parse(expires);
+  }, 'after');
+  let response, body;
+  try { response = await nativeMemoryConsumerRequest(state, turnId); body = await response.json(); }
+  finally { restore(); Date.now = originalNow; await state.drainBackground(); clock.close(); }
+  assert.equal(fired, 1); assert.ok([403, 409].includes(response.status), JSON.stringify(body));
+  assert.equal(body.turn, undefined); assert.equal(body.messageNotSaved, undefined); nativeMemoryConsumerNoProof(body);
+  assert.equal(postContextSendFootprint(state, turnId).turns.length, 1, 'Expiry after committed read is not an unsaved message');
+  nativeMemoryUnpaid(state);
+});
+
+test('native memory consumer: original request grant cannot be refreshed after the native enrollment snapshot await', async t => {
+  const expires = new Date(Date.now() + 30_000).toISOString();
+  const state = await nativeMemoryConsumerFixture(t, { beforeEnrollment(state) {
+    const now = new Date().toISOString(), actor = state.postSource.owner;
+    state.sqlite.prepare("INSERT INTO capability_grants(grant_id,user_id,capability,scope_type,status,granted_by_user_id,created_at,updated_at,expires_at) VALUES(?,?,'project.read','self','active',?,?,?,?)")
+      .run('consumer-original-grant-await', actor, actor, now, now, expires);
+  } });
+  const originalNow = Date.now, clock = consequentialDbClock(state), turnId = 'consumer-original-grant-await', before = nativeMemoryConsumerPrivateCount(state); let fired = 0;
+  const restore = interceptConsequentialDb(state, 'batch', /^SELECT \* FROM memory_live_enrollments WHERE actor_user_id=\? AND owner_user_id=\?/u, () => {
+    fired++; clock.set(expires); Date.now = () => Date.parse(expires);
+  }, 'after');
+  let response, body;
+  try { response = await nativeMemoryConsumerRequest(state, turnId); body = await response.json(); }
+  finally { restore(); Date.now = originalNow; await state.drainBackground(); clock.close(); }
+  assert.equal(fired, 1); nativeMemoryConsumerUnavailable(response, body); nativeMemoryConsumerNoSend(state, turnId, before);
+});
+
+const nativePrivacyPersonalBody = { action: 'erase-personal-authored-context', confirmation: 'ERASE_MY_PERSONAL_AUTHORED_CONTEXT' };
+const nativePrivacyIdentity = state => Object.fromEntries(Object.entries(state.owner).filter(([key]) => key.toLowerCase() !== 'cookie'));
+const nativePrivacyMemory = (state, id) => ({
+  enrollment: state.sqlite.prepare('SELECT * FROM memory_live_enrollments WHERE enrollment_id=?').get(id),
+  sources: state.sqlite.prepare('SELECT * FROM memory_live_sources WHERE enrollment_id=? ORDER BY sequence').all(id),
+  groups: state.sqlite.prepare('SELECT * FROM memory_live_conversation_segments WHERE enrollment_id=? ORDER BY first_sequence').all(id),
+  origins: state.sqlite.prepare('SELECT * FROM memory_native_answer_origins WHERE enrollment_id=? ORDER BY origin_id').all(id),
+  originAnswers: state.sqlite.prepare('SELECT content.* FROM private_content content JOIN memory_native_answer_origins origin ON origin.answer_content_id=content.content_id WHERE origin.enrollment_id=? ORDER BY content.content_id').all(id),
+});
+const nativePrivacyErase = state => state.request('/api/privacy/events', json(nativePrivacyPersonalBody, nativePrivacyIdentity(state)));
+const nativePrivacyDelete = state => state.request('/api/workspaces/' + state.organizationId + '/deletion',
+  json({ confirmation: 'DELETE_ORGANIZATION_AND_SCOPED_DATA', organizationId: state.organizationId }, nativePrivacyIdentity(state)));
+function nativePrivacyAssertTombstone(state, before) {
+  const after = nativePrivacyMemory(state, before.enrollment.enrollment_id);
+  assert.deepEqual(after.sources, []); assert.deepEqual(after.groups, []);
+  assert.equal(after.enrollment.revision, before.enrollment.revision + 1);
+  assert.equal(after.enrollment.failure_code, 'erased');
+  for (const key of ['learn_enabled', 'recall_enabled', 'background_enabled']) assert.equal(after.enrollment[key], 0);
+  for (const key of ['lease_token', 'lease_expires_at', 'cutoff_sequence']) assert.equal(after.enrollment[key], null);
+  assert.equal(after.origins.length, before.origins.length);
+  assert.ok(after.origins.length > 0, 'Actual provider-free memory answers are enrolled in erasure coverage');
+  assert.ok(after.origins.every(row => row.status === 'withdrawn' && row.withdrawn_at !== null && row.withdrawal_reason === 'erased'));
+  assert.ok(after.originAnswers.every(row => row.content === '' && row.redacted_at !== null));
+  return after;
+}
+async function nativePrivacyPublished(t, shared = false) {
+  const state = await nativeMemoryApiFixture(t, { shared }), { readFile } = await import('node:fs/promises');
+  state.sqlite.exec(await readFile(new URL('../drizzle/0027_memory_native_origins.sql', import.meta.url), 'utf8'));
+  const turn = await state.send('native-privacy-source');
+  const result = await state.run(); assert.equal(result.status, 'completed'); assert.equal(result.processed, 1);
+  const recalled = await nativeMemoryConsumerRequest(state, 'native-privacy-derived-answer'), recalledBody = await recalled.json();
+  assert.equal(recalled.status, 201, JSON.stringify(recalledBody)); nativeMemoryConsumerTurn(recalledBody, 'native-privacy-derived-answer');
+  state.privacyTurn = turn; state.privacyBefore = nativePrivacyMemory(state, state.current().enrollment_id);
+  assert.equal(state.privacyBefore.sources.length, 1); assert.equal(state.privacyBefore.groups.length, 1); assert.equal(state.privacyBefore.origins.length, 1);
+  return state;
+}
+// Additional scopes use the real event, workspace, enrollment and free-chat routes;
+// only test-local rollout lists are extended. No reference/custody rows are fabricated.
+async function nativePrivacyAdditionalScope(state, prefix, { organization = false, actorId } = {}) {
+  let headers = actorId ? { 'oai-authenticated-user-id': actorId, 'oai-authenticated-user-email': actorId + '@example.test' } : nativePrivacyIdentity(state);
+  if (actorId) {
+    assert.equal((await state.request('/api/session', { headers })).status, 200);
+    state.sqlite.prepare('UPDATE users SET consent_version=? WHERE user_id=?').run('pilot-2026-08-10', actorId);
+    state.env.FORMA_ASSISTANT_INTERNAL_USER_IDS += ',' + actorId; state.env.FORMA_MEMORY_USER_IDS += ',' + actorId;
+  }
+  const projectId = 'privacy-project-' + prefix, documentId = 'privacy-document-' + prefix;
+  const authored = await state.request('/api/events', json({ action: 'batch', events: [
+    { type: 'ProjectCreated', payload: { project_id: projectId, name: 'Private isolation project' } },
+    { type: 'DocumentCreated', payload: { project_id: projectId, document_id: documentId, title: 'Private isolation document' } },
+  ] }, headers)); assert.equal(authored.status, 200, await authored.clone().text()); assert.equal((await authored.json()).appended.length, 2);
+  if (organization) {
+    const created = await state.request('/api/workspaces', json({ name: 'Independent privacy organization' }, headers));
+    assert.equal(created.status, 201, await created.clone().text()); const organizationId = (await created.json()).organizationId;
+    const moved = await state.request('/api/workspaces/' + organizationId + '/projects', json({ projectId }, headers));
+    assert.equal(moved.status, 201, await moved.clone().text()); const projectAccessId = (await moved.json()).projectAccessId;
+    const opened = await state.request('/api/workspaces/' + organizationId + '/projects/' + projectAccessId + '/context', { method: 'POST', headers });
+    assert.equal(opened.status, 200); headers = { ...headers, cookie: opened.headers.get('set-cookie').split(';')[0] };
+  }
+  const { prepareDocumentAuthority } = await import('../worker/context-authoring-authority.ts');
+  const prepared = await prepareDocumentAuthority(new Request('http://localhost/api/context/read', { headers }), state.env, { projectId, documentId }, 'read');
+  assert.ok(!(prepared instanceof Response), prepared instanceof Response ? await prepared.text() : undefined);
+  const scope = prepared.binding.scope;
+  const preferences = { ...state.preferences, projectId, documentId, revision: 0, expectedCustody: scope ? {
+    kind: 'organization', organizationId: scope.organizationId, projectAccessId: scope.projectAccessId, ownerUserId: scope.ownerUserId,
+  } : { kind: 'personal' } };
+  const enrolled = await state.request('/api/memory/settings', { ...json(preferences, headers), method: 'PUT' });
+  assert.equal(enrolled.status, 200, await enrolled.clone().text()); const id = (await enrolled.json()).enrollment.id;
+  const turn = await specialistFreeTurn(state, crypto.randomUUID(), 'PRIVATE_ISOLATED_MEMORY_' + prefix, { headers, route: '/document/' + documentId, project: projectId });
+  const result = await state.run(); assert.equal(result.status, 'completed', state.controls.lastDatabaseError); assert.equal(result.processed, 1);
+  const memoryId = 'privacy-memory-' + prefix, recalled = await state.request(endpoint('/document/' + documentId, projectId),
+    json({ turnId: memoryId, message: 'Recall my isolated conversation.', memoryMode: 'recall', locale: 'en' }, headers));
+  const recalledBody = await recalled.json(); assert.equal(recalled.status, 201, JSON.stringify(recalledBody)); nativeMemoryConsumerTurn(recalledBody, memoryId);
+  const saved = nativePrivacyMemory(state, id); assert.equal(saved.sources.length, 1); assert.equal(saved.groups.length, 1);
+  assert.equal(saved.origins.length, 1);
+  return { id, headers, turn, saved };
+}
+test('native memory privacy integration: personal HTTP erasure retains organization and other-actor memory with rollout off', async t => {
+  const state = await nativePrivacyPublished(t), personal = state.privacyBefore;
+  const shared = await nativePrivacyAdditionalScope(state, 'shared-control', { organization: true });
+  const other = await nativePrivacyAdditionalScope(state, 'other-actor', { actorId: 'memory-privacy-other' });
+  // Creating the real second account legitimately installs its zero-use budget counters.
+  // The erasure operation must not change any of those already-established financial rows.
+  const financialBefore = adaptiveReentryFinancialState(state);
+  const events = state.sqlite.prepare('SELECT * FROM events ORDER BY stream_id,sequence').all();
+  state.sqlite.prepare('INSERT INTO external_content(content_id,owner_id,content,created_at) VALUES(?,?,?,?)')
+    .run('native-privacy-derived', personal.enrollment.actor_user_id, 'PRIVATE_DERIVED_CONTENT', new Date().toISOString());
+  delete state.env.FORMA_MEMORY_ENABLED; delete state.env.FORMA_MEMORY_SCHEDULING_ENABLED;
+  const batches = [], original = state.DB.batch;
+  state.DB.batch = async statements => { if (statements.some(statement => statement.sql.startsWith('DELETE FROM memory_live_sources'))) batches.push(statements.map(statement => statement.sql)); return original.call(state.DB, statements); };
+  let response; try { response = await nativePrivacyErase(state); } finally { state.DB.batch = original; }
+  assert.equal(response.status, 200, await response.clone().text()); const body = await response.json();
+  nativePrivacyAssertTombstone(state, personal);
+  assert.deepEqual(nativePrivacyMemory(state, shared.id), shared.saved); assert.deepEqual(nativePrivacyMemory(state, other.id), other.saved);
+  assert.ok(body.erasedAuthoredEventBodies > 0); assert.ok(body.erasedTemporaryContent > 0); assert.equal(body.clearedDerivedContent, 1);
+  assert.equal(body.erasedPlatformConversations, 0); assert.equal(body.erasedLegacyPresentationJobs, 0); assert.equal(body.revokedOutputGrantCount, 0);
+  assert.equal(body.sharedOrganizationContextRetained, true); assert.equal(body.otherDevicesAndBackupsPurged, false);
+  assert.equal(batches.length, 1); assert.ok(batches[0].some(sql => sql.includes('UPDATE event_private_payloads')));
+  assert.ok(batches[0].some(sql => sql.includes('DELETE FROM memory_live_conversation_segments')));
+  assert.match(batches[0].at(-1), /^UPDATE document_jobs/u, 'Legacy result.at(-1) retains its original meaning');
+  assert.deepEqual(state.sqlite.prepare('SELECT * FROM events ORDER BY stream_id,sequence').all(), events);
+  assert.deepEqual(adaptiveReentryFinancialState(state), financialBefore); assert.equal(state.calls.length, 0);
+  for (const table of ['consequential_executions', 'consequential_execution_steps', 'assistant_specialist_tasks', 'assistant_action_commits'])
+    assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM ' + table).get().n, 0);
+  assert.equal(state.env.OPENAI_API_KEY, undefined);
+});
+test('native memory privacy integration: personal memory tombstone failure rolls back the entire erasure batch then retries', async t => {
+  const state = await nativePrivacyPublished(t), before = state.privacyBefore;
+  const privateBefore = state.sqlite.prepare('SELECT * FROM private_content ORDER BY content_id').all();
+  const bodiesBefore = state.sqlite.prepare('SELECT * FROM event_private_payloads ORDER BY private_event_id').all();
+  state.sqlite.exec("CREATE TEMP TRIGGER fail_memory_personal_erasure BEFORE UPDATE ON memory_live_enrollments WHEN NEW.failure_code='erased' BEGIN SELECT RAISE(ABORT,'fixture_memory_personal_erasure'); END");
+  await assert.rejects(nativePrivacyErase(state), /fixture_memory_personal_erasure/u);
+  assert.deepEqual(nativePrivacyMemory(state, before.enrollment.enrollment_id), before);
+  assert.deepEqual(state.sqlite.prepare('SELECT * FROM private_content ORDER BY content_id').all(), privateBefore);
+  assert.deepEqual(state.sqlite.prepare('SELECT * FROM event_private_payloads ORDER BY private_event_id').all(), bodiesBefore);
+  state.sqlite.exec('DROP TRIGGER fail_memory_personal_erasure');
+  assert.equal((await nativePrivacyErase(state)).status, 200); nativePrivacyAssertTombstone(state, before); nativeMemoryUnpaid(state);
+});
+test('native memory privacy integration: organization HTTP finalization erases only its memory with rollout off', async t => {
+  const state = await nativePrivacyPublished(t, true), target = state.privacyBefore;
+  const personal = await nativePrivacyAdditionalScope(state, 'personal-control');
+  const other = await nativePrivacyAdditionalScope(state, 'organization-control', { organization: true });
+  const canonical = state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(target.sources[0].event_id);
+  delete state.env.FORMA_MEMORY_ENABLED; delete state.env.FORMA_MEMORY_SCHEDULING_ENABLED;
+  const response = await nativePrivacyDelete(state); assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json(); assert.equal(body.status, 'completed'); nativePrivacyAssertTombstone(state, target);
+  assert.deepEqual(nativePrivacyMemory(state, personal.id), personal.saved); assert.deepEqual(nativePrivacyMemory(state, other.id), other.saved);
+  assert.equal(state.sqlite.prepare('SELECT status FROM organizations WHERE organization_id=?').get(state.organizationId).status, 'deleted');
+  assert.equal(body.receipt.immutableOperationalMetadataRetained, true); assert.equal(body.receipt.externalBackupsPurged, false);
+  assert.deepEqual(state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(canonical.event_id), canonical); nativeMemoryUnpaid(state);
+});
+test('native memory privacy integration: late organization finalization failure rolls back memory and native bodies then retries', async t => {
+  const state = await nativePrivacyPublished(t, true), before = state.privacyBefore;
+  const source = state.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(before.sources[0].event_id);
+  const answer = state.sqlite.prepare('SELECT * FROM private_content WHERE content_id=?').get(state.privacyTurn.pointers.answer);
+  state.sqlite.exec("CREATE TEMP TRIGGER fail_memory_organization_erasure BEFORE UPDATE OF status ON organizations WHEN NEW.status='deleted' BEGIN SELECT RAISE(ABORT,'fixture_memory_organization_erasure'); END");
+  const failed = await nativePrivacyDelete(state); assert.equal(failed.status, 503, await failed.clone().text());
+  const body = await failed.json(); assert.equal(body.error, 'organization_deletion_finalization_failed');
+  assert.deepEqual(nativePrivacyMemory(state, before.enrollment.enrollment_id), before);
+  assert.deepEqual(state.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(before.sources[0].event_id), source);
+  assert.deepEqual(state.sqlite.prepare('SELECT * FROM private_content WHERE content_id=?').get(answer.content_id), answer);
+  assert.equal(state.sqlite.prepare('SELECT status FROM organization_deletion_jobs WHERE job_id=?').get(body.jobId).status, 'partial');
+  state.sqlite.exec('DROP TRIGGER fail_memory_organization_erasure');
+  const retried = await nativePrivacyDelete(state); assert.equal(retried.status, 200, await retried.clone().text());
+  nativePrivacyAssertTombstone(state, before); nativeMemoryUnpaid(state);
+});
+test('native memory privacy integration: a legal hold present at final transaction retains all memory', async t => {
+  const state = await nativePrivacyPublished(t, true), before = state.privacyBefore, original = state.DB.batch; let intercepted = 0;
+  const held = await state.request('/api/workspaces/' + state.organizationId + '/holds', json({ scope: 'organization', reason: 'Synthetic final-guard control' }, nativePrivacyIdentity(state)));
+  assert.equal(held.status, 201, await held.clone().text()); const holdId = (await held.json()).holdId;
+  const initiallyRefused = await nativePrivacyDelete(state); assert.equal(initiallyRefused.status, 409);
+  assert.equal((await initiallyRefused.json()).error, 'organization_legal_hold_active');
+  assert.deepEqual(nativePrivacyMemory(state, before.enrollment.enrollment_id), before);
+  assert.equal((await state.request('/api/workspaces/' + state.organizationId + '/holds/' + holdId, { method: 'DELETE', headers: nativePrivacyIdentity(state) })).status, 200);
+  state.DB.batch = async statements => {
+    if (statements.some(statement => statement.sql.includes('AS hold_guard'))) {
+      intercepted++;
+      // Adverse mutable-row transition only. Native INSERT guards are retained;
+      // this does not claim that the public API can create a hold after deletion claim.
+      state.sqlite.prepare("UPDATE organization_legal_holds SET status='active',released_at=NULL WHERE hold_id=? AND status='released'").run(holdId);
+    }
+    return original.call(state.DB, statements);
+  };
+  let response; try { response = await nativePrivacyDelete(state); } finally { state.DB.batch = original; }
+  assert.equal(intercepted, 1); assert.equal(response.status, 503, await response.clone().text());
+  assert.deepEqual(nativePrivacyMemory(state, before.enrollment.enrollment_id), before);
+  assert.equal(state.sqlite.prepare('SELECT status FROM organization_legal_holds WHERE hold_id=?').get(holdId).status, 'active');
+  const refused = await nativePrivacyDelete(state); assert.equal(refused.status, 409); assert.equal((await refused.json()).error, 'organization_legal_hold_active'); nativeMemoryUnpaid(state);
+});
+for (const shared of [false, true]) test('native memory privacy integration: actual ' + (shared ? 'organization deletion' : 'personal erasure') + ' defeats an already leased publisher', async t => {
+  const state = await nativePrivacyPublished(t, shared); await state.send('native-privacy-inflight');
+  state.sqlite.prepare("UPDATE memory_live_enrollments SET last_local_day=NULL,last_admitted_at=NULL,next_due_at='2000-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(state.current().enrollment_id);
+  const before = nativePrivacyMemory(state, state.current().enrollment_id), original = state.DB.batch; let intercepted = 0;
+  state.DB.batch = async statements => {
+    if (statements.some(statement => statement.sql.includes('INSERT INTO memory_live_conversation_segments'))) {
+      intercepted++; assert.ok(state.current().lease_token);
+      const erased = await (shared ? nativePrivacyDelete(state) : nativePrivacyErase(state));
+      assert.equal(erased.status, 200, await erased.clone().text()); nativePrivacyAssertTombstone(state, before);
+    }
+    return original.call(state.DB, statements);
+  };
+  let result; try { result = await state.run(); } finally { state.DB.batch = original; }
+  assert.equal(intercepted, 1); assert.equal(result.status, 'partial'); assert.equal(result.failed, 1); assert.equal(result.processed, 0);
+  const after = nativePrivacyAssertTombstone(state, before); assert.equal(after.enrollment.cursor_sequence, before.enrollment.cursor_sequence);
+  nativeMemoryUnpaid(state);
+});
+for (const shared of [false, true]) for (const missing of ['all memory tables', 'conversation supplement'])
+test('native memory privacy integration: ' + (shared ? 'organization deletion' : 'personal erasure') + ' remains compatible without ' + missing, async t => {
+  const state = await nativePrivacyPublished(t, shared), before = state.privacyBefore;
+  state.sqlite.exec('DROP TABLE memory_live_conversation_segments; ALTER TABLE memory_live_sources DROP COLUMN conversation_segmented');
+  if (missing === 'all memory tables') state.sqlite.exec('DROP TABLE memory_live_sources; DROP TABLE memory_live_runs; DROP TABLE memory_live_enrollments');
+  const response = await (shared ? nativePrivacyDelete(state) : nativePrivacyErase(state));
+  assert.equal(response.status, 200, await response.clone().text());
+  if (missing === 'conversation supplement') {
+    assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_live_sources WHERE enrollment_id=?').get(before.enrollment.enrollment_id).n, 0);
+    assert.equal(state.current().revision, before.enrollment.revision + 1); assert.equal(state.current().failure_code, 'erased');
+  }
+  const origins = state.sqlite.prepare('SELECT status,withdrawal_reason FROM memory_native_answer_origins WHERE enrollment_id=?').all(before.enrollment.enrollment_id);
+  assert.deepEqual(origins.map(row => ({ ...row })), [{ status: 'withdrawn', withdrawal_reason: 'erased' }], 'Origin erasure does not require the legacy memory tables');
+  assert.equal(state.sqlite.prepare('SELECT content FROM private_content WHERE content_id=?').get(before.origins[0].answer_content_id).content, '');
+  nativeMemoryUnpaid(state);
+});
+test('native memory privacy integration: selected shared context cannot invoke personal erasure', async t => {
+  const state = await nativePrivacyPublished(t, true), before = state.privacyBefore;
+  const response = await state.request('/api/privacy/events', json(nativePrivacyPersonalBody, state.owner));
+  assert.equal(response.status, 409); assert.equal((await response.json()).error, 'personal_privacy_context_required');
+  assert.deepEqual(nativePrivacyMemory(state, before.enrollment.enrollment_id), before); nativeMemoryUnpaid(state);
+});
+test('native memory privacy integration: organization deletion clears separately enrolled collaborator memory', async t => {
+  const state = await nativePrivacyPublished(t, true), actorId = 'native-memory-privacy-collaborator';
+  const identity = { 'oai-authenticated-user-id': actorId, 'oai-authenticated-user-email': actorId + '@example.test' };
+  assert.equal((await state.request('/api/session', { headers: identity })).status, 200);
+  state.sqlite.prepare("UPDATE users SET role='viewer',consent_version=? WHERE user_id=?").run('pilot-2026-08-10', actorId);
+  state.env.FORMA_ASSISTANT_INTERNAL_USER_IDS += ',' + actorId; state.env.FORMA_MEMORY_USER_IDS += ',' + actorId;
+  const invited = await state.request('/api/workspaces/' + state.organizationId + '/members',
+    json({ email: actorId + '@example.test', role: 'member' }, nativePrivacyIdentity(state)));
+  assert.equal(invited.status, 201, await invited.clone().text()); const invitation = await invited.json();
+  const token = new URL(invitation.invitationUrl).searchParams.get('token');
+  assert.equal((await state.request('/api/workspaces/' + state.organizationId + '/invitations/' + invitation.invitationId + '/accept', json({ token }, identity))).status, 200);
+  assert.equal((await state.request('/api/workspaces/' + state.organizationId + '/projects/' + state.projectAccessId + '/members',
+    json({ userId: actorId, role: 'viewer' }, nativePrivacyIdentity(state)))).status, 201);
+  const opened = await state.request('/api/workspaces/' + state.organizationId + '/projects/' + state.projectAccessId + '/context', { method: 'POST', headers: identity });
+  assert.equal(opened.status, 200); const headers = { ...identity, cookie: opened.headers.get('set-cookie').split(';')[0] };
+  const enrolled = await state.request('/api/memory/settings', { ...json(state.preferences, headers), method: 'PUT' });
+  assert.equal(enrolled.status, 200, await enrolled.clone().text()); const id = (await enrolled.json()).enrollment.id;
+  const turn = await specialistFreeTurn(state, crypto.randomUUID(), 'PRIVATE_COLLABORATOR_MEMORY', { headers });
+  const run = await state.run(); assert.equal(run.status, 'completed', state.controls.lastDatabaseError); assert.equal(run.processed, 1);
+  const recalled = await state.request(endpoint(), json({ turnId: 'privacy-collaborator-derived', message: 'Recall my conversation.', memoryMode: 'recall', locale: 'en' }, headers));
+  const recalledBody = await recalled.json(); assert.equal(recalled.status, 201, JSON.stringify(recalledBody)); nativeMemoryConsumerTurn(recalledBody, 'privacy-collaborator-derived');
+  const collaborator = nativePrivacyMemory(state, id); assert.equal(collaborator.enrollment.actor_user_id, actorId);
+  assert.equal(collaborator.enrollment.owner_user_id, state.privacyBefore.enrollment.owner_user_id);
+  assert.notEqual(id, state.privacyBefore.enrollment.enrollment_id); assert.equal(collaborator.sources.length, 1); assert.equal(collaborator.groups.length, 1);
+  assert.equal(JSON.parse(collaborator.groups[0].members_json)[0].turnId, turn.id);
+  const response = await nativePrivacyDelete(state); assert.equal(response.status, 200, await response.clone().text());
+  nativePrivacyAssertTombstone(state, state.privacyBefore); nativePrivacyAssertTombstone(state, collaborator);
+  assert.equal(state.calls.length, 0); assert.equal(state.env.OPENAI_API_KEY, undefined);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM assistant_specialist_tasks').get().n, 0);
+});
+
+// Observe the real store's preparation and the existing transactional adapter;
+// never replace the handler, prepared inverse, or database batch implementation.
+function nativeMemoryWithdrawalTrace(state, beforeBatch) {
+  const db = state.env.DB, prepare = db.prepare, batch = db.batch;
+  const trace = { captures: [], prepared: [], batches: [], executions: [], injected: 0 };
+  const inverse = sql => /^WITH expected AS /u.test(sql) && /memory_native_answer_/u.test(sql);
+  const wrap = statement => {
+    const bind = statement.bind, all = statement.all, execute = statement.execute;
+    statement.bind = function(...values) {
+      const bound = wrap(bind.apply(this, values));
+      if (inverse(bound.sql)) trace.prepared.push(bound);
+      return bound;
+    };
+    statement.all = async function() {
+      const result = await all.call(this);
+      if (/^SELECT origin\.origin_id,/u.test(this.sql) && this.sql.includes('FROM memory_native_answer_origins origin WHERE'))
+        trace.captures.push({ statement: this, rows: structuredClone(result.results), batchesBefore: trace.batches.length });
+      return result;
+    };
+    statement.execute = function(kind) {
+      const entry = { sql: this.sql, succeeded: false };
+      trace.executions.push(entry);
+      const result = execute.call(this, kind); entry.succeeded = true;
+      // The existing adapter executes WITH statements through .all(); observe
+      // SQLite's actual write count rather than that read-shaped result metadata.
+      if (this.sql.includes('DELETE FROM memory_native_answer_dependencies'))
+        entry.changes = Number(state.sqlite.prepare('SELECT changes() AS n').get().n);
+      return result;
+    };
+    return statement;
+  };
+  db.prepare = function(sql) { return wrap(prepare.call(this, sql)); };
+  db.batch = async function(statements) {
+    const selected = statements.filter(statement => inverse(statement.sql));
+    if (!selected.length) return batch.call(this, statements);
+    const entry = { statements: [...statements], inverse: selected, succeeded: false };
+    trace.batches.push(entry);
+    if (beforeBatch && !trace.injected) { trace.injected++; await beforeBatch(trace); }
+    const result = await batch.call(this, statements); entry.succeeded = true; return result;
+  };
+  trace.stop = () => { db.prepare = prepare; db.batch = batch; };
+  return trace;
+}
+function nativeMemoryWithdrawalBatch(trace, { enrollmentAfter = false } = {}) {
+  assert.equal(trace.captures.length, 1, 'The real store performs one target .all() capture');
+  assert.equal(trace.captures[0].batchesBefore, 0, 'Capture precedes the withdrawal transaction');
+  assert.equal(trace.batches.length, 1, 'The caller submits one inverse transaction');
+  const entry = trace.batches[0], first = entry.statements.indexOf(trace.prepared[0]);
+  assert.equal(trace.prepared.length, 7, 'Retain the complete captured Phase 1 inverse');
+  assert.ok(first >= 0); assert.deepEqual(entry.inverse, trace.prepared);
+  assert.deepEqual(entry.statements.slice(first, first + trace.prepared.length), trace.prepared,
+    'No caller write may split the prepared inverse');
+  if (enrollmentAfter) {
+    const revision = entry.statements.findIndex(statement => /^(?:UPDATE memory_live_enrollments SET|INSERT INTO memory_live_enrollments\()/u.test(statement.sql));
+    assert.ok(revision >= first + trace.prepared.length, 'Enrollment publication follows every inverse statement');
+  }
+  return entry;
+}
+function nativeMemoryWithdrawalIdentity(state, origins) {
+  return {
+    headers: origins.map(({ status: _status, withdrawn_at: _at, withdrawal_reason: _reason, ...identity }) => identity),
+    markers: origins.flatMap(origin => [origin.user_event_id, origin.answer_event_id]
+      .map(id => state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(id))),
+  };
+}
+function nativeMemoryWithdrawalSnapshot(state) {
+  return { origins: nativeMemoryConsumerOrigins(state), memory: nativeMemoryApiSnapshot(state),
+    contents: state.sqlite.prepare('SELECT * FROM private_content ORDER BY content_id').all(),
+    events: state.sqlite.prepare('SELECT * FROM events ORDER BY event_id').all(),
+    privateEvents: state.sqlite.prepare('SELECT * FROM event_private_payloads ORDER BY private_event_id').all(),
+    turns: state.sqlite.prepare('SELECT * FROM assistant_turns ORDER BY actor_user_id,scope_key,turn_id').all() };
+}
+
+// The two genuine job transactions have different rollback boundaries. Keep
+// receipt/lease bookkeeping outside this privacy-data snapshot, but retain every
+// origin/dependency/body, source/group, canonical marker and private envelope.
+function nativeMemoryDependencyJobData(state) {
+  const { origins, memory, contents, events, privateEvents, turns } = nativeMemoryWithdrawalSnapshot(state);
+  return { origins, sources: memory.sources, groups: memory.groups, contents, events, privateEvents, turns,
+    identity: nativeMemoryWithdrawalIdentity(state, origins.origins) };
+}
+function nativeMemoryDependencyJobTrace(state, failPhase) {
+  const trace = nativeMemoryWithdrawalTrace(state), db = state.env.DB, tracedBatch = db.batch;
+  trace.jobs = [];
+  db.batch = async function(statements) {
+    const phase = statements.some(statement => statement.sql.includes('INSERT INTO memory_live_conversation_segments')) ? 'publication'
+      : statements.some(statement => statement.sql.startsWith('WITH tracked AS (')) ? 'maintenance' : null;
+    if (!phase) return tracedBatch.call(this, statements);
+    const entry = { phase, before: nativeMemoryDependencyJobData(state), cursor: state.current().cursor_sequence, succeeded: false };
+    trace.jobs.push(entry);
+    // This is the existing DB.batch seam, not a replacement fixture or trigger.
+    // The injected statement is later than every real source/group/inverse write.
+    const work = phase === failPhase ? [...statements, db.prepare("SELECT json('fixture_dependency_job_late_failure')")] : statements;
+    try { const result = await tracedBatch.call(this, work); entry.succeeded = true; return result; }
+    finally { entry.after = nativeMemoryDependencyJobData(state); }
+  };
+  const stop = trace.stop;
+  trace.stop = () => { db.batch = tracedBatch; stop(); };
+  return trace;
+}
+function nativeMemoryDependencyJobBatches(trace, enrollmentId) {
+  assert.equal(trace.captures.length, trace.jobs.length, 'Each separately committed job transaction captures fresh full headers');
+  assert.equal(trace.batches.length, trace.jobs.length);
+  for (const [index, job] of trace.jobs.entries()) {
+    const batch = trace.batches[index], capture = trace.captures[index], sql = batch.statements.map(statement => statement.sql);
+    assert.equal(capture.batchesBefore, index, 'The next snapshot is read after the previous inverse transaction');
+    assert.deepEqual(capture.rows, job.before.origins.origins.filter(row => row.enrollment_id === enrollmentId).map(row => ({ ...row })),
+      'Capture preserves every original header field, not only currently unavailable origins');
+    const first = batch.statements.indexOf(batch.inverse[0]), after = batch.statements.indexOf(batch.inverse[1]);
+    assert.ok(first >= 0 && after > first + 1, 'The source/group mutation interval follows the entry header proof');
+    assert.deepEqual(batch.inverse[0].sql, batch.inverse[1].sql);
+    assert.deepEqual(batch.inverse[0].values, batch.inverse[1].values, 'The after-mutation entry proof retains the same captured originals');
+    assert.deepEqual(batch.statements.slice(after, after + batch.inverse.length - 1), batch.inverse.slice(1),
+      'The complete after-mutation inverse remains contiguous');
+    const mutations = sql.map((value, position) => ({ value, position })).filter(({ value }) =>
+      /(?:DELETE FROM|INSERT OR IGNORE INTO|INSERT INTO|UPDATE) memory_live_(?:sources|conversation_segments)/u.test(value));
+    assert.ok(mutations.length > 0);
+    assert.ok(mutations.every(({ position }) => position > first && position < after), 'Every prune, mark, publication and final trim is bracketed');
+    const deletion = batch.inverse.findIndex(statement => statement.sql.includes('DELETE FROM memory_native_answer_dependencies'));
+    assert.ok(deletion > 1 && deletion < batch.inverse.length - 1, 'Dependency deletion retains its final direct-ID proof');
+    const revision = sql.findIndex(value => value.startsWith('UPDATE memory_live_enrollments SET cursor_sequence='));
+    if (job.phase === 'publication') assert.ok(revision >= after + batch.inverse.length - 1, 'Cursor publication follows the complete inverse');
+    else assert.equal(revision, -1);
+    assert.equal(batch.succeeded, job.succeeded);
+  }
+  assert.deepEqual(trace.prepared, trace.batches.flatMap(batch => batch.inverse), 'No prepared array is reused across transactions');
+  if (trace.captures.length > 1) assert.notEqual(trace.captures[0].statement, trace.captures[1].statement);
+}
+function nativeMemoryDependencyJobMinimized(state, before, ids) {
+  const selected = new Set(ids), after = nativeMemoryDependencyJobData(state);
+  assert.ok(selected.size > 0);
+  assert.deepEqual(after.identity, before.identity, 'Original headers, lifetimes, dependency counts and canonical event markers are immutable');
+  assert.deepEqual(after.origins.dependencies, before.origins.dependencies.filter(row => !selected.has(row.origin_id)));
+  assert.deepEqual(after.origins.origins.filter(row => !selected.has(row.origin_id)), before.origins.origins.filter(row => !selected.has(row.origin_id)));
+  for (const original of before.origins.origins.filter(row => selected.has(row.origin_id))) {
+    const origin = after.origins.origins.find(row => row.origin_id === original.origin_id);
+    if (original.status === 'withdrawn') assert.deepEqual(origin, original, 'Terminal residue retains the first tombstone');
+    else { assert.equal(origin.status, 'withdrawn'); assert.equal(origin.withdrawal_reason, 'source-unavailable'); assert.ok(origin.withdrawn_at); }
+    const body = after.contents.find(row => row.content_id === original.answer_content_id);
+    const priorBody = before.contents.find(row => row.content_id === original.answer_content_id);
+    assert.ok(body.redacted_at); assert.deepEqual({ ...body }, { ...priorBody, content: '', redacted_at: priorBody.redacted_at ?? body.redacted_at });
+  }
+  const answers = new Set(before.origins.origins.filter(row => selected.has(row.origin_id)).map(row => row.answer_content_id));
+  assert.deepEqual(after.contents.filter(row => !answers.has(row.content_id)), before.contents.filter(row => !answers.has(row.content_id)),
+    'Unrelated answers, source prose and original user content are retained exactly');
+  for (const name of ['events', 'privateEvents', 'turns']) assert.deepEqual(after[name], before[name], name);
+  return after;
+}
+
+for (const kind of ['event', 'content']) test('native memory store withdrawal: captured dependency ' + kind + ' selector preserves a real unrelated origin', async t => {
+  const state = await nativeMemoryConsumerFixture(t), id = 'store-selector-' + kind;
+  const published = await nativeMemoryConsumerRequest(state, id);
+  assert.equal(published.status, 201, await published.clone().text());
+  const selected = nativeMemoryConsumerOrigins(state).origins[0];
+  // A real second project/document/enrollment supplies independent sources.
+  // Keep the original actor and financial baseline: account creation would add
+  // legitimate zero-use counters unrelated to the withdrawal being qualified.
+  const other = await nativePrivacyAdditionalScope(state, 'store-selector-' + kind);
+  assert.notEqual(other.id, selected.enrollment_id);
+  assert.notEqual(other.saved.origins[0].document_id, selected.document_id);
+  const before = nativeMemoryWithdrawalSnapshot(state), identity = nativeMemoryWithdrawalIdentity(state, before.origins.origins);
+  const source = state.consumerSources[0].pointers;
+  const selector = kind === 'event' ? { eventStreamId: state.nativePrepared.binding.streamId, eventId: source.response }
+    : { contentId: source.answer };
+  assert.notEqual(kind === 'event' ? selected.answer_event_id : selected.answer_content_id, kind === 'event' ? source.response : source.answer);
+  assert.ok(before.origins.dependencies.some(row => row.origin_id === selected.origin_id
+    && (kind === 'event' ? row.event_id === source.response : row.assistant_content_id === source.answer)));
+  const { liveMemoryOriginWithdrawalStatements } = await import('../worker/memory-live-store.ts');
+  const trace = nativeMemoryWithdrawalTrace(state); let statements;
+  try {
+    statements = await liveMemoryOriginWithdrawalStatements(state.env, selector, 'source-changed', new Date().toISOString());
+    assert.deepEqual(trace.captures[0].rows.map(row => row.origin_id), [selected.origin_id]);
+    await state.env.DB.batch(statements);
+  } finally { trace.stop(); }
+  assert.equal(nativeMemoryWithdrawalBatch(trace).succeeded, true);
+  const after = nativeMemoryWithdrawalSnapshot(state), kept = row => row.origin_id !== selected.origin_id;
+  assert.deepEqual(after.origins.dependencies, before.origins.dependencies.filter(kept));
+  assert.ok(after.origins.dependencies.some(row => row.origin_id === other.saved.origins[0].origin_id));
+  assert.deepEqual(after.origins.origins.filter(kept), before.origins.origins.filter(kept));
+  assert.equal(after.origins.origins.find(row => row.origin_id === selected.origin_id).status, 'withdrawn');
+  assert.deepEqual(nativeMemoryWithdrawalIdentity(state, after.origins.origins), identity);
+  assert.deepEqual(after.contents.filter(row => row.content_id !== selected.answer_content_id), before.contents.filter(row => row.content_id !== selected.answer_content_id));
+  const answer = after.contents.find(row => row.content_id === selected.answer_content_id);
+  assert.equal(answer.content, ''); assert.ok(answer.redacted_at);
+  for (const field of ['memory', 'events', 'privateEvents', 'turns']) assert.deepEqual(after[field], before[field], field);
+  nativeMemoryUnpaid(state);
+});
+
+for (const caller of ['counted revoke', 'Forget HTTP']) test('native memory store withdrawal: captured revision loses before ' + caller + ' batch without erasing new state', async t => {
+  const state = await nativeMemoryConsumerFixture(t), id = 'store-stale-' + caller.replaceAll(' ', '-');
+  const published = await nativeMemoryConsumerRequest(state, id);
+  assert.equal(published.status, 201, await published.clone().text());
+  const e = state.current(); let raced;
+  const trace = nativeMemoryWithdrawalTrace(state, observed => {
+    assert.equal(observed.captures.length, 1); assert.ok(observed.captures[0].rows.length > 0);
+    // Independently committed before the real BEGIN, never inserted between
+    // statements of the prepared inverse submitted by the original caller.
+    assert.equal(Number(state.sqlite.prepare('UPDATE memory_live_enrollments SET revision=revision+1 WHERE enrollment_id=? AND revision=?')
+      .run(e.enrollment_id, e.revision).changes), 1);
+    raced = nativeMemoryWithdrawalSnapshot(state);
+  });
+  try {
+    if (caller === 'counted revoke') {
+      const { revokeLiveMemoryCounted } = await import('../worker/memory-live-store.ts');
+      assert.deepEqual(await revokeLiveMemoryCounted(state.env, e, 'forgotten'), { revoked: false, erased: 0 });
+    } else {
+      const response = await state.request('/api/memory/settings?id=' + encodeURIComponent(e.enrollment_id),
+        { ...json({ confirmation: 'FORGET_MY_MEMORY', revision: e.revision }, state.owner), method: 'DELETE' });
+      assert.equal(response.status, 409); assert.equal((await response.json()).error, 'memory_revision_changed');
+    }
+  } finally { trace.stop(); }
+  assert.equal(trace.injected, 1); assert.equal(nativeMemoryWithdrawalBatch(trace, { enrollmentAfter: true }).succeeded, true);
+  assert.deepEqual(nativeMemoryWithdrawalSnapshot(state), raced, 'The stale caller cannot undo the external revision or alter its retained data');
+  nativeMemoryUnpaid(state);
+});
+
+for (const capture of ['empty', 'nonempty']) test('native memory store withdrawal: ' + capture + ' capture rejects same-revision origin arrival before settings batch', async t => {
+  const state = await nativeMemoryConsumerFixture(t), id = 'store-arrival-' + capture;
+  if (capture === 'nonempty') {
+    const first = await nativeMemoryConsumerRequest(state, id + '-original');
+    assert.equal(first.status, 201, await first.clone().text());
+  }
+  const e = state.current(); let raced;
+  const trace = nativeMemoryWithdrawalTrace(state, async observed => {
+    assert.equal(observed.captures.length, 1); assert.equal(observed.captures[0].rows.length, capture === 'empty' ? 0 : 1);
+    // Publish the additional matching origin through the existing actual native
+    // consumer before the settings batch begins; do not fabricate lineage rows.
+    const arrived = await nativeMemoryConsumerRequest(state, id + '-arrived'), body = await arrived.json();
+    assert.equal(arrived.status, 201, JSON.stringify(body)); nativeMemoryConsumerTurn(body, id + '-arrived');
+    assert.equal(state.current().revision, e.revision);
+    raced = nativeMemoryWithdrawalSnapshot(state);
+  });
+  let response;
+  try { response = await state.request('/api/memory/settings', { ...json({ ...state.preferences, revision: e.revision, learn: false }, state.owner), method: 'PUT' }); }
+  finally { trace.stop(); }
+  assert.equal(trace.injected, 1); assert.equal(response.status, 409, await response.clone().text());
+  assert.equal((await response.json()).error, 'memory_authority_or_revision_changed');
+  assert.equal(nativeMemoryWithdrawalBatch(trace, { enrollmentAfter: true }).succeeded, false);
+  assert.ok(trace.executions.some(entry => entry.sql === trace.prepared[0].sql && !entry.succeeded),
+    'The captured-set precheck itself rejects the arrival, not merely an unrelated outer guard');
+  assert.deepEqual(nativeMemoryWithdrawalSnapshot(state), raced, 'Failed retirement preserves the separately committed arrival and rolls back its own writes');
+  nativeMemoryUnpaid(state);
+});
+
+test('native memory store withdrawal: unavailable dependencies remain late-bound and reusable without captured minimization', async t => {
+  for (const missing of ['reference', 'group']) {
+    const state = await nativeMemoryConsumerFixture(t), id = 'store-dynamic-' + missing;
+    const published = await nativeMemoryConsumerRequest(state, id);
+    assert.equal(published.status, 201, await published.clone().text());
+    const e = state.current(), before = nativeMemoryConsumerOrigins(state);
+    const identity = nativeMemoryWithdrawalIdentity(state, before.origins);
+    const { liveMemoryOriginWithdrawalStatements } = await import('../worker/memory-live-store.ts');
+    const trace = nativeMemoryWithdrawalTrace(state);
+    try {
+      const statements = await liveMemoryOriginWithdrawalStatements(state.env,
+        { enrollmentId: e.enrollment_id, currentRevision: e.revision, unavailableDependencies: true }, 'source-unavailable', new Date().toISOString());
+      assert.equal(trace.captures.length, 0); assert.deepEqual(trace.prepared, []);
+      await state.env.DB.batch(statements);
+      assert.deepEqual(nativeMemoryConsumerOrigins(state), before, 'Current sources are not selected merely by preparing maintenance');
+      const mutation = missing === 'reference'
+        ? state.env.DB.prepare('DELETE FROM memory_live_sources WHERE enrollment_id=? AND event_id=?').bind(e.enrollment_id, state.consumerSources[0].pointers.response)
+        : state.env.DB.prepare('DELETE FROM memory_live_conversation_segments WHERE enrollment_id=?').bind(e.enrollment_id);
+      await state.env.DB.batch([mutation, ...statements]);
+      const retired = nativeMemoryConsumerOrigins(state);
+      assert.ok(retired.origins.every(row => row.status === 'withdrawn')); assert.deepEqual(retired.dependencies, before.dependencies);
+      const body = state.sqlite.prepare('SELECT content,redacted_at FROM private_content WHERE content_id=?').get(retired.origins[0].answer_content_id);
+      assert.equal(body.content, ''); assert.ok(body.redacted_at);
+      await state.env.DB.batch(statements);
+      assert.deepEqual(nativeMemoryConsumerOrigins(state), retired, 'The exact late-bound array remains safely reusable');
+      assert.deepEqual(state.sqlite.prepare('SELECT content,redacted_at FROM private_content WHERE content_id=?').get(retired.origins[0].answer_content_id), body);
+      assert.deepEqual(nativeMemoryWithdrawalIdentity(state, retired.origins), identity);
+      assert.equal(state.current().revision, e.revision); assert.equal(trace.captures.length, 0);
+    } finally { trace.stop(); }
+    nativeMemoryUnpaid(state);
+  }
+});
+
+for (const operation of ['forget', 'preserving settings']) test('native memory consumer: real ' + operation + ' retires derived answers atomically without erasing their source conversation', async t => {
+  const state = await nativeMemoryConsumerFixture(t, { shared: true }), turnId = 'consumer-retire-' + operation.replaceAll(' ', '-');
+  const created = await nativeMemoryConsumerRequest(state, turnId), initial = await created.json();
+  assert.equal(created.status, 201, JSON.stringify(initial)); nativeMemoryConsumerTurn(initial, turnId);
+  const original = nativeMemoryConsumerOrigins(state), e = state.current();
+  const identity = nativeMemoryWithdrawalIdentity(state, original.origins), trace = nativeMemoryWithdrawalTrace(state);
+  const sources = state.consumerSources.map(source => state.sqlite.prepare('SELECT * FROM private_content WHERE content_id=?').get(source.pointers.answer));
+  let response;
+  try { response = operation === 'forget' ? await state.request('/api/memory/settings?id=' + encodeURIComponent(e.enrollment_id),
+    { ...json({ confirmation: 'FORGET_MY_MEMORY', revision: e.revision }, state.owner), method: 'DELETE' })
+    : await state.request('/api/memory/settings', { ...json({ ...state.preferences, revision: e.revision, learn: false, background: false }, state.owner), method: 'PUT' });
+  } finally { trace.stop(); }
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.equal(nativeMemoryWithdrawalBatch(trace, { enrollmentAfter: true }).succeeded, true);
+  assert.deepEqual(trace.captures[0].rows, original.origins.map(row => ({ ...row })),
+    'Compare every captured field after normalizing native SQLite row prototypes');
+  const origins = nativeMemoryConsumerOrigins(state);
+  assert.equal(origins.origins.length, 1); assert.equal(origins.origins[0].origin_id, original.origins[0].origin_id);
+  assert.equal(origins.origins[0].status, 'withdrawn'); assert.ok(origins.origins[0].withdrawn_at);
+  assert.ok(original.dependencies.length > 0); assert.deepEqual(origins.dependencies, [], 'Selected dependency residue is physically removed');
+  assert.deepEqual(nativeMemoryWithdrawalIdentity(state, origins.origins), identity, 'Immutable headers and canonical negative event identities remain exact');
+  const answer = state.sqlite.prepare('SELECT content,redacted_at FROM private_content WHERE content_id=?').get(origins.origins[0].answer_content_id);
+  assert.equal(answer.content, ''); assert.ok(answer.redacted_at);
+  assert.deepEqual(state.consumerSources.map(source => state.sqlite.prepare('SELECT * FROM private_content WHERE content_id=?').get(source.pointers.answer)), sources);
+  assert.equal(state.current().revision, e.revision + 1);
+  if (operation === 'forget') { assert.deepEqual(state.table('memory_live_sources'), []); assert.deepEqual(state.table('memory_live_conversation_segments'), []); }
+  else { assert.equal(state.table('memory_live_sources').length, 2); assert.ok(state.table('memory_live_conversation_segments').every(row => row.enrollment_revision === e.revision + 1)); }
+  const replay = await nativeMemoryConsumerRequest(state, turnId), denied = await replay.json(); assert.equal(replay.status, 409); assert.equal(denied.turn, undefined);
+  nativeMemoryUnpaid(state);
+});
+
+test('native memory consumer: stale forget revision cannot withdraw a current memory answer', async t => {
+  const state = await nativeMemoryConsumerFixture(t), turnId = 'consumer-stale-forget';
+  const updated = await state.request('/api/memory/settings', { ...json({ ...state.preferences, revision: state.current().revision }, state.owner), method: 'PUT' });
+  assert.equal(updated.status, 200, await updated.clone().text());
+  const response = await nativeMemoryConsumerRequest(state, turnId); assert.equal(response.status, 201, await response.clone().text());
+  const e = state.current(), before = { origins: nativeMemoryConsumerOrigins(state), memory: nativeMemoryApiSnapshot(state), saved: postContextSendFootprint(state, turnId) };
+  const denied = await state.request('/api/memory/settings?id=' + encodeURIComponent(e.enrollment_id),
+    { ...json({ confirmation: 'FORGET_MY_MEMORY', revision: e.revision - 1 }, state.owner), method: 'DELETE' });
+  assert.equal(denied.status, 409); assert.equal((await denied.json()).error, 'memory_revision_changed');
+  const { revokeLiveMemoryCounted } = await import('../worker/memory-live-store.ts');
+  assert.equal((await revokeLiveMemoryCounted(state.env, { ...e, revision: e.revision - 1 }, 'forgotten')).revoked, false);
+  assert.deepEqual({ origins: nativeMemoryConsumerOrigins(state), memory: nativeMemoryApiSnapshot(state), saved: postContextSendFootprint(state, turnId) }, before);
+  nativeMemoryUnpaid(state);
+});
+
+test('native memory consumer: same-clock reverse-lexical turn ids retain canonical feed order', async t => {
+  const state = await nativeMemoryConsumerFixture(t, { shared: true }), NativeDate = Date, fixed = Date.now() + 1_000, clock = consequentialDbClock(state);
+  clock.set(new NativeDate(fixed).toISOString());
+  const ids = ['zulu', 'yankee', 'xray', 'whiskey', 'victor', 'uniform', 'tango'].map(value => 'consumer-sequence-' + value);
+  globalThis.Date = class extends NativeDate { constructor(...args) { super(...(args.length ? args : [fixed])); } static now() { return fixed; } };
+  try {
+    for (const id of ids) {
+      const response = await nativeMemoryConsumerRequest(state, id), body = await response.json();
+      assert.equal(response.status, 201, JSON.stringify(body)); nativeMemoryConsumerTurn(body, id);
+    }
+    const rows = state.sqlite.prepare("SELECT created_at FROM assistant_turns WHERE turn_id LIKE 'consumer-sequence-%'").all();
+    assert.equal(new Set(rows.map(row => row.created_at)).size, 1, 'Exercise a genuinely tied created_at clock');
+    const response = await state.request(endpoint(), { headers: state.owner }), page = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(page)); assert.deepEqual(page.turns.map(turn => turn.id), ids.slice(-6));
+  } finally { globalThis.Date = NativeDate; await state.drainBackground(); clock.close(); }
+  nativeMemoryUnpaid(state);
+});
+
+test('native memory consumer: failed settings revision restores both origin and copied answer', async t => {
+  const state = await nativeMemoryConsumerFixture(t, { shared: true }), turnId = 'consumer-settings-rollback';
+  const created = await nativeMemoryConsumerRequest(state, turnId); assert.equal(created.status, 201, await created.clone().text());
+  const e = state.current(), before = { origins: nativeMemoryConsumerOrigins(state), memory: nativeMemoryApiSnapshot(state), saved: postContextSendFootprint(state, turnId) };
+  state.sqlite.exec("CREATE TEMP TRIGGER consumer_settings_failure BEFORE UPDATE OF revision ON memory_live_enrollments WHEN NEW.revision>OLD.revision BEGIN SELECT RAISE(ABORT,'fixture_consumer_settings_failure'); END");
+  const trace = nativeMemoryWithdrawalTrace(state); let failed;
+  try { failed = await state.request('/api/memory/settings', { ...json({ ...state.preferences, revision: e.revision, learn: false }, state.owner), method: 'PUT' }); }
+  finally { trace.stop(); }
+  assert.equal(failed.status, 409, await failed.clone().text()); assert.equal((await failed.json()).error, 'memory_authority_or_revision_changed');
+  assert.equal(nativeMemoryWithdrawalBatch(trace, { enrollmentAfter: true }).succeeded, false);
+  const removed = trace.executions.findIndex(entry => entry.sql.includes('DELETE FROM memory_native_answer_dependencies') && entry.succeeded && entry.changes > 0);
+  const rejected = trace.executions.findIndex(entry => entry.sql.startsWith('INSERT INTO memory_live_enrollments(') && !entry.succeeded);
+  assert.ok(removed >= 0 && rejected > removed, 'Actual dependency deletion precedes the later revision failure and is rolled back');
+  assert.deepEqual({ origins: nativeMemoryConsumerOrigins(state), memory: nativeMemoryApiSnapshot(state), saved: postContextSendFootprint(state, turnId) }, before);
+  nativeMemoryUnpaid(state);
+});
+
+function nativeMemoryConsumerMark(state, turn) {
+  const p = ordinaryFeedPointers(state, turn), e = state.current(), event = state.sqlite.prepare('SELECT sequence FROM events WHERE event_id=?').get(p.message);
+  const answer = state.sqlite.prepare('SELECT expires_at FROM private_content WHERE content_id=?').get(p.answer), hash = '0'.repeat(64);
+  // Adverse metadata arrival only: an uncertified, schema-valid origin is still
+  // a paid exclusion. Do not disable append-only event protections or pretend
+  // this fixture row is a successfully published native origin.
+  const row = { origin_id: crypto.randomUUID(), schema_version: 1, recipe_version: 'native-answer-origin-v1', actor_user_id: e.actor_user_id,
+    owner_user_id: e.owner_user_id, organization_id: e.organization_id, project_access_id: e.project_access_id, project_id: e.project_id,
+    document_id: e.document_id, scope_key: p.row.scope_key, turn_id: turn.id, user_event_id: p.message, user_content_id: p.authored,
+    user_source_sequence: event.sequence, user_sha256: hash, answer_event_id: p.response, answer_content_id: p.answer,
+    answer_source_sequence: event.sequence + 1, answer_sha256: hash, answer_expires_at: answer.expires_at, consumed_value_sha256: hash,
+    dependency_list_sha256: hash, enrollment_id: e.enrollment_id, enrollment_revision: e.revision, policy_version: e.policy_version,
+    permission_epoch: e.permission_epoch, enrolled_at: e.enrolled_at, enrollment_expires_at: e.expires_at, retention_days: e.retention_days,
+    selection_cursor: event.sequence - 1, source_retention_ceiling: answer.expires_at, dependency_count: 1, created_at: p.row.created_at,
+    status: 'active', withdrawn_at: null, withdrawal_reason: null };
+  const keys = Object.keys(row);
+  state.sqlite.prepare('INSERT INTO memory_native_answer_origins(' + keys.join(',') + ') VALUES(' + keys.map(() => '?').join(',') + ')').run(...Object.values(row));
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_native_answer_origins WHERE answer_content_id=?').get(p.answer).n, 1);
+}
+for (const mutation of ['memory target', 'retyped target', 'origin-only target', 'selected memory history', 'memory answer as user'])
+test('native memory consumer: paid quote explicitly rejects ' + mutation + ' before retaining a provider request', async t => {
+  const state = await nativeMemoryConsumerFixture(t, { shared: true }), id = 'consumer-paid-memory';
+  const created = await nativeMemoryConsumerRequest(state, id), body = await created.json();
+  assert.equal(created.status, 201, JSON.stringify(body)); const memory = nativeMemoryConsumerTurn(body, id), pointers = ordinaryFeedPointers(state, memory);
+  let target = id;
+  if (mutation === 'retyped target' || mutation === 'origin-only target') state.sqlite.prepare("UPDATE private_content SET kind='chat-assistant' WHERE content_id=?").run(pointers.answer);
+  if (mutation === 'origin-only target') {
+    state.sqlite.prepare('DELETE FROM assistant_turns WHERE turn_id=?').run(id);
+    const ordinary = await specialistFreeTurn(state, 'consumer-paid-origin-only', 'New independent question.');
+    nativeMemoryConsumerMark(state, ordinary); target = ordinary.id;
+    assert.equal(state.sqlite.prepare("SELECT json_type(payload,'$.memory_origin_version') AS marker FROM events WHERE event_id=?").get(ordinaryFeedPointers(state, ordinary).response).marker, null);
+  }
+  if (mutation === 'selected memory history' || mutation === 'memory answer as user') {
+    const next = await specialistFreeTurn(state, 'consumer-paid-next', 'What should I do next?'); target = next.id;
+    if (mutation === 'memory answer as user') {
+      state.sqlite.prepare('DELETE FROM assistant_turns WHERE turn_id=?').run(id);
+      state.sqlite.prepare("UPDATE private_content SET kind='chat-user' WHERE content_id=?").run(pointers.answer);
+      state.sqlite.prepare('UPDATE assistant_turns SET user_content_ref=? WHERE turn_id=?').run(pointers.answer, target);
+    }
+  }
+  const before = specialistFeedSnapshot(state), privateBefore = state.sqlite.prepare('SELECT * FROM private_content ORDER BY content_id').all();
+  const denied = await specialistProtocolRequest(state, { action: 'quote', turnId: target }), result = await denied.json();
+  assert.equal(denied.status, 409, JSON.stringify(result)); assert.equal(result.error, 'assistant_memory_paid_ancestry_unsupported');
+  assert.equal(result.quote, undefined); assert.equal(result.noAutomaticRetry, true);
+  assert.deepEqual(specialistFeedSnapshot(state), before); assert.deepEqual(state.sqlite.prepare('SELECT * FROM private_content ORDER BY content_id').all(), privateBefore);
+  nativeMemoryUnpaid(state);
+});
+
+for (const boundary of ['binding hash await', 'consent publication batch']) test('native memory consumer: paid quote ' + boundary + ' cannot retain newly marked input', async t => {
+  const state = await nativeMemoryConsumerFixture(t, { shared: true }), target = state.consumerSources.at(-1), before = specialistFeedSnapshot(state);
+  const privateBefore = state.sqlite.prepare('SELECT * FROM private_content ORDER BY content_id').all(); let fired = 0, restore;
+  if (boundary === 'binding hash await') {
+    const digest = crypto.subtle.digest;
+    crypto.subtle.digest = async function(algorithm, data) {
+      const result = await digest.call(this, algorithm, data); let value;
+      try { value = JSON.parse(new TextDecoder().decode(data)); } catch { /* Other request hashes are unrelated. */ }
+      if (!fired && value?.operation === 'assistant-specialist' && value?.request?.turnId === target.id) { fired++; nativeMemoryConsumerMark(state, target); }
+      return result;
+    };
+    restore = () => { crypto.subtle.digest = digest; };
+  } else restore = interceptConsequentialDb(state, 'batch', /INSERT INTO private_content\b/u, () => { fired++; nativeMemoryConsumerMark(state, target); });
+  let response, body;
+  try { response = await specialistProtocolRequest(state, { action: 'quote', turnId: target.id }); body = await response.json(); }
+  finally { restore(); }
+  assert.equal(fired, 1); assert.equal(response.status, 409, JSON.stringify(body)); assert.equal(body.quote, undefined);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_native_answer_origins WHERE turn_id=?').get(target.id).n, 1, 'The adverse origin arrival actually happened');
+  assert.deepEqual(specialistFeedSnapshot(state), before, 'No execution, step, task or reservation is published');
+  assert.deepEqual(state.sqlite.prepare('SELECT * FROM private_content ORDER BY content_id').all(), privateBefore, 'No retained consent contains the disallowed frozen provider request');
+  nativeMemoryUnpaid(state);
+});
+
+for (const boundary of ['retained request await', 'submission CAS', 'final dispatch read']) test('native memory consumer: paid ' + boundary + ' rejects adopted ancestry with zero provider calls', async t => {
+  const state = await nativeMemoryConsumerFixture(t, { shared: true }), target = state.consumerSources.at(-1);
+  state.env.OPENAI_API_KEY = 'fixture-provider-key'; state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS = state.current().actor_user_id;
+  const review = await specialistQuote(state, target.id), balance = consequentialBalances(state, state.current().actor_user_id); let fired = 0;
+  const kind = boundary === 'submission CAS' ? 'run' : 'first';
+  const pattern = boundary === 'retained request await' ? /^SELECT content FROM private_content WHERE content_id=\? AND owner_id=\? AND kind='execution-consent'/u
+    : boundary === 'submission CAS' ? /^\s*UPDATE consequential_execution_steps SET status='submitting'/u : /^\s*SELECT MIN\(execution\.expires_at,task\.lease_expires_at/u;
+  const restore = interceptConsequentialDb(state, kind, pattern, () => { fired++; nativeMemoryConsumerMark(state, target); }, boundary === 'retained request await' ? 'after' : 'before');
+  let response;
+  try { response = await specialistExecute(state, review); await state.drainBackground(); }
+  finally { restore(); }
+  assert.equal(fired, 1); assert.equal(state.calls.length, 0);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_native_answer_origins WHERE turn_id=?').get(target.id).n, 1, 'The adverse origin arrival actually happened');
+  if (boundary === 'retained request await') {
+    assert.equal(response.status, 409, await response.clone().text());
+    assert.equal((await response.json()).error, 'assistant_memory_paid_ancestry_unsupported');
+    assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM assistant_specialist_tasks').get().n, 0);
+  } else {
+    assert.equal(response.status, 202, await response.clone().text());
+    const receipt = consequentialReceipt(state, review.quote.executionId);
+    assert.equal(receipt.execution.result_ref, null); assert.equal(receipt.steps[0].status, 'not-submitted');
+    assert.ok(receipt.tokens.every(row => row.status === 'released' && row.used_tokens === 0));
+    assert.ok(receipt.cost.every(row => row.status === 'released' && row.used_microusd === 0));
+  }
+  assert.deepEqual(consequentialBalances(state, state.current().actor_user_id), balance);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM private_content WHERE kind IN('provider-response','context-proposal')").get().n, 0);
+});
+
+for (const ancestry of ['user role with origin', 'user role with withdrawn origin', 'user role with deleted origin', 'assistant role with origin', 'assistant role with deleted origin', 'user role without origin schema']) test('native memory consumer: recaptured ' + ancestry + ' cannot create a second memory lineage', async t => {
+  const state = await nativeMemoryConsumerFixture(t), firstId = 'consumer-ancestry-first';
+  const created = await nativeMemoryConsumerRequest(state, firstId), body = await created.json(); assert.equal(created.status, 201, JSON.stringify(body));
+  const first = nativeMemoryConsumerTurn(body, firstId), memoryPointers = ordinaryFeedPointers(state, first);
+  const next = await state.send('consumer-ancestry-source'), userRole = ancestry.startsWith('user role'), missingSchema = ancestry.endsWith('without origin schema');
+  if (ancestry.endsWith('deleted origin') || ancestry.endsWith('withdrawn origin')) {
+    state.sqlite.prepare("UPDATE memory_native_answer_origins SET status='withdrawn',withdrawn_at=?,withdrawal_reason='manual' WHERE turn_id=?").run(new Date().toISOString(), firstId);
+    if (ancestry.endsWith('deleted origin')) state.sqlite.prepare('DELETE FROM memory_native_answer_origins WHERE turn_id=?').run(firstId);
+  }
+  if (missingSchema) {
+    state.sqlite.exec('DROP TABLE memory_native_answer_dependencies; DROP TABLE memory_native_answer_origins');
+    const e = state.current();
+    for (const route of ['recall', 'export']) {
+      const response = await state.request('/api/memory/' + route + '?id=' + e.enrollment_id + '&revision=' + e.revision, { headers: state.owner });
+      const value = await response.json(); assert.equal(response.status, 200, JSON.stringify(value));
+      assert.deepEqual(value.sources.map(source => source.eventId), state.consumerSources.map(source => source.pointers.response), 'Missing optional origin schema preserves ordinary eligible ' + route);
+    }
+  }
+  state.sqlite.prepare('UPDATE private_content SET kind=? WHERE content_id=?').run(userRole ? 'chat-user' : 'chat-assistant', memoryPointers.answer);
+  state.sqlite.prepare('UPDATE assistant_turns SET ' + (userRole ? 'user_content_ref' : 'assistant_content_ref') + '=? WHERE turn_id=?').run(memoryPointers.answer, next.id);
+  const { makeEvent, eventWriteBindings, EVENT_WRITE_COLUMNS } = await import('../worker/runtime.ts'), e = state.current();
+  const stream = 'creative:' + e.owner_user_id, head = state.sqlite.prepare('SELECT MAX(sequence) AS head FROM events WHERE stream_id=?').get(stream).head;
+  const common = { project_id: e.project_id, document_id: e.document_id, actor_user_id: e.actor_user_id, turn_id: next.id, source_surface: 'assistant' };
+  const message = makeEvent(stream, head + 1, 'user:' + e.actor_user_id, 'web:assistant', e.actor_user_id + ':' + next.id, 'ChatMessageSent',
+    { ...common, content_ref: userRole ? memoryPointers.answer : next.pointers.authored });
+  const responseEvent = makeEvent(stream, head + 2, 'user:' + e.actor_user_id, 'web:assistant', message.correlationId, 'AssistantReasoned',
+    { ...common, operation: 'creative-chat', content_ref: userRole ? next.pointers.answer : memoryPointers.answer }, { causationId: message.eventId });
+  for (const event of [message, responseEvent]) { const values = eventWriteBindings(event); await state.DB.prepare('INSERT INTO event_write_stage(' + EVENT_WRITE_COLUMNS + ') VALUES(' + values.map(() => '?').join(',') + ')').bind(...values).run(); }
+  // Admit a second isolated review without waiting a wall-clock day. No real scheduler is registered.
+  state.sqlite.prepare("UPDATE memory_live_enrollments SET last_local_day=NULL,last_admitted_at=NULL,next_due_at='2000-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(e.enrollment_id);
+  const run = await state.run(); assert.equal(run.status, 'completed', state.controls.lastDatabaseError);
+  assert.ok(state.table('memory_live_sources').some(row => row.event_id === responseEvent.eventId), 'The native source adapter admitted the pair, so this exercises the origin capture boundary');
+  for (const route of ['recall', 'export']) {
+    const response = await state.request('/api/memory/' + route + '?id=' + e.enrollment_id + '&revision=' + e.revision, { headers: state.owner });
+    const publicValue = await response.json();
+    if (route === 'recall') {
+      assert.equal(response.status, 403, JSON.stringify(publicValue)); assert.equal(publicValue.error, 'memory_unavailable');
+    } else {
+      assert.equal(response.status, 200, JSON.stringify(publicValue));
+      assert.ok(publicValue.sources.every(source => source.eventId !== responseEvent.eventId), 'Public export excludes the derived source reference');
+    }
+    assert.equal(JSON.stringify(publicValue).includes(first.reply.text), false, 'Public ' + route + ' cannot return recaptured memory prose');
+    nativeMemoryApiNoProof(publicValue);
+  }
+  const before = missingSchema ? null : nativeMemoryConsumerOrigins(state), beforePrivate = nativeMemoryConsumerPrivateCount(state), id = 'consumer-ancestry-second';
+  const response = await nativeMemoryConsumerRequest(state, id), denied = await response.json();
+  nativeMemoryConsumerUnavailable(response, denied);
+  if (missingSchema) {
+    for (const rows of Object.values(postContextSendFootprint(state, id))) assert.deepEqual(rows, []);
+    assert.equal(nativeMemoryConsumerPrivateCount(state), beforePrivate); nativeMemoryUnpaid(state);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name IN('memory_native_answer_origins','memory_native_answer_dependencies')").get().n, 0, 'Requests do not recreate the absent schema');
+  } else { nativeMemoryConsumerNoSend(state, id, beforePrivate); assert.deepEqual(nativeMemoryConsumerOrigins(state), before); }
+});
+
+for (const [name, input] of [['null', null], ['array', []], ['string', 'recall'], ['boolean', false], ['number', 1]])
+test('native memory consumer: ' + name + ' request shape returns structured failure without writes', async t => {
+  const state = await nativeMemoryConsumerFixture(t), before = nativeMemoryConsumerPrivateCount(state), memory = nativeMemoryApiSnapshot(state), origins = nativeMemoryConsumerOrigins(state);
+  const response = await state.request(endpoint(), json(input, state.owner)), body = await response.json();
+  assert.equal(response.status, 400, JSON.stringify(body)); assert.equal(body.error, 'assistant_request_invalid');
+  assert.equal(body.turn, undefined); assert.equal(nativeMemoryConsumerPrivateCount(state), before);
+  assert.deepEqual(nativeMemoryApiSnapshot(state), memory); assert.deepEqual(nativeMemoryConsumerOrigins(state), origins); nativeMemoryUnpaid(state);
+});
+
+test('native memory consumer: original answer expiry cannot be extended by changing current content retention', async t => {
+  const state = await nativeMemoryConsumerFixture(t), id = 'consumer-immutable-answer-expiry';
+  state.env.FORMA_RETENTION_DAYS = '1';
+  const created = await nativeMemoryConsumerRequest(state, id), body = await created.json(); assert.equal(created.status, 201, JSON.stringify(body));
+  nativeMemoryConsumerTurn(body, id);
+  const header = nativeMemoryConsumerOrigins(state).origins[0], ceiling = header.source_retention_ceiling;
+  assert.ok(Date.parse(header.answer_expires_at) < Date.parse(ceiling), 'The original answer expires before its original source ceiling');
+  state.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id IN(?,?)').run(ceiling, header.user_content_id, header.answer_content_id);
+  const before = nativeMemoryConsumerOrigins(state), originalNow = Date.now, clock = consequentialDbClock(state);
+  const crossed = Date.parse(header.answer_expires_at) + 1; clock.set(new Date(crossed).toISOString()); Date.now = () => crossed;
+  try {
+    const replay = await nativeMemoryConsumerRequest(state, id), denied = await replay.json();
+    assert.equal(replay.status, 409, JSON.stringify(denied)); assert.equal(denied.error, 'assistant_turn_unavailable');
+    assert.equal(denied.noAutomaticRetry, true); assert.equal(denied.turn, undefined);
+    const feed = await state.request(endpoint(), { headers: state.owner }), page = await feed.json();
+    assert.equal(feed.status, 200, JSON.stringify(page)); assert.ok(page.turns.every(turn => turn.id !== id));
+    assert.ok(page.turns.some(turn => turn.id === state.consumerSources[0].id), 'Unexpired ordinary source conversation remains readable');
+    assert.deepEqual(nativeMemoryConsumerOrigins(state), before, 'Reads do not rewrite the immutable original expiry');
+  } finally { Date.now = originalNow; await state.drainBackground(); clock.close(); }
+  nativeMemoryUnpaid(state);
+});
+
+for (const method of ['GET', 'POST']) test('native memory consumer: ordinary ' + method + ' rejects public turn object mutation across final database await', async t => {
+  const state = await nativeMemoryConsumerFixture(t), id = method === 'GET' ? state.consumerSources[0].id : 'consumer-mutated-ordinary-post';
+  const originalSet = WeakMap.prototype.set, captured = new Set(); let mutations = 0;
+  WeakMap.prototype.set = function(key, value) {
+    if (key?.id === id && typeof value?.serialized === 'string' && value?.proof?.sql) captured.add(key);
+    return originalSet.call(this, key, value);
+  };
+  const restore = interceptConsequentialDb(state, 'batch', method === 'GET' ? /AS feed_authorized/u : /AS response_authorized/u, () => {
+    for (const turn of captured) { turn.user = 'MUTATED_PUBLIC_USER_MUST_NOT_DELIVER'; turn.reply.text = 'MUTATED_PUBLIC_REPLY_MUST_NOT_DELIVER'; mutations++; }
+  }, 'after');
+  let response, body;
+  try {
+    response = method === 'GET' ? await state.request(endpoint(), { headers: state.owner }) : await postContextRequest(state, id);
+    body = await response.json();
+  } finally { restore(); WeakMap.prototype.set = originalSet; }
+  assert.ok(captured.size > 0); assert.ok(mutations > 0, 'A source-certified public turn was actually mutated after the final DB result');
+  assert.doesNotMatch(JSON.stringify(body), /MUTATED_PUBLIC_(?:USER|REPLY)_MUST_NOT_DELIVER/u);
+  if (method === 'GET') {
+    assert.equal(response.status, 200, JSON.stringify(body)); assert.ok(body.turns.every(turn => turn.id !== id));
+    assert.ok(body.context.recentTurns.every(turn => !turn.id.startsWith(id + ':')));
+    assert.ok(body.turns.some(turn => turn.id === state.consumerSources[1].id));
+  } else {
+    assert.equal(response.status, 409, JSON.stringify(body)); assert.equal(body.error, 'assistant_turn_unavailable');
+    assert.equal(body.noAutomaticRetry, true); assert.equal(body.turn, undefined);
+    assert.equal(postContextSendFootprint(state, id).turns.length, 1, 'Delivery rejection does not pretend the committed message was unsaved');
+  }
+  nativeMemoryUnpaid(state);
+});
+
+for (const lane of ['GET', 'required POST', 'ordinary POST']) test('native memory consumer: ' + lane + ' rechecks memory deadline after final payload serialization', async t => {
+  const state = await nativeMemoryConsumerFixture(t), memoryId = 'consumer-serialization-memory';
+  const expires = new Date(Date.now() + 30_000).toISOString();
+  state.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run(expires, state.consumerSources[0].pointers.answer);
+  const created = await nativeMemoryConsumerRequest(state, memoryId), initial = await created.json(); assert.equal(created.status, 201, JSON.stringify(initial));
+  const memory = nativeMemoryConsumerTurn(initial, memoryId), originalNow = Date.now, originalStringify = JSON.stringify, clock = consequentialDbClock(state);
+  const crossed = Date.parse(memory.memory.validUntil) + 1; let armed = false, fired = 0;
+  const restore = interceptConsequentialDb(state, 'batch', lane === 'GET' ? /AS feed_authorized/u : /AS response_authorized/u, () => { armed = true; }, 'after');
+  JSON.stringify = function(value, ...args) {
+    const encoded = originalStringify.call(this, value, ...args);
+    const finalPayload = lane === 'GET' ? Array.isArray(value?.turns) && value?.context && Array.isArray(value?.tasks)
+      : value?.turn && value?.context && Array.isArray(value?.retiredTurnIds);
+    if (armed && !fired && finalPayload) { fired++; clock.set(new Date(crossed).toISOString()); Date.now = () => crossed; }
+    return encoded;
+  };
+  let response;
+  try {
+    response = lane === 'GET' ? await state.request(endpoint(), { headers: state.owner })
+      : lane === 'required POST' ? await nativeMemoryConsumerRequest(state, memoryId)
+      : await postContextRequest(state, 'consumer-serialization-ordinary');
+  } finally { restore(); JSON.stringify = originalStringify; Date.now = originalNow; await state.drainBackground(); clock.close(); }
+  const body = await response.json(); assert.equal(fired, 1, 'The deadline crosses after actual final payload serialization, not before initial proof checks');
+  if (lane === 'required POST') {
+    assert.equal(response.status, 409, JSON.stringify(body)); assert.equal(body.error, 'assistant_turn_unavailable');
+    assert.equal(body.noAutomaticRetry, true); assert.equal(body.turn, undefined);
+  } else {
+    assert.equal(response.status, lane === 'GET' ? 200 : 201, JSON.stringify(body));
+    assert.ok(body.context.recentTurns.every(turn => !turn.id.startsWith(memoryId + ':')));
+    if (lane === 'GET') {
+      assert.ok(body.turns.every(turn => turn.id !== memoryId));
+      assert.ok(body.turns.some(turn => turn.id === state.consumerSources[1].id), 'Later synchronous memory expiry does not drop an unrelated ordinary turn');
+    } else {
+      assert.equal(body.turn.id, 'consumer-serialization-ordinary'); assert.equal(body.turn.memory, undefined);
+      assert.ok(body.retiredTurnIds.includes(memoryId));
+    }
+  }
+  nativeMemoryConsumerNoProof(body); nativeMemoryUnpaid(state);
+});
+
+for (const [shared, field, missing] of [[false, 'organization_id', true], [false, 'project_access_id', true], [false, 'owner_user_id', false],
+  [true, 'organization_id', false], [true, 'project_access_id', false], [true, 'owner_user_id', true]])
+test('native memory consumer: ' + (shared ? 'shared' : 'personal') + ' publication rejects ' + (missing ? 'missing ' : 'foreign ') + field + ' marker custody', async t => {
+  const state = await nativeMemoryConsumerFixture(t, { shared }), id = 'consumer-malformed-marker-' + field;
+  const { EVENT_WRITE_COLUMNS } = await import('../worker/runtime.ts'), columns = EVENT_WRITE_COLUMNS.split(',').map(value => value.trim());
+  const payloadAt = columns.indexOf('payload'), typeAt = columns.indexOf('type'); assert.ok(payloadAt >= 0 && typeAt >= 0);
+  const before = nativeMemoryConsumerPrivateCount(state), origins = nativeMemoryConsumerOrigins(state); let fired = 0;
+  const restore = interceptConsequentialDb(state, 'batch', /INSERT INTO assistant_turns\b/u, statements => {
+    const index = statements.findIndex(statement => /^\s*INSERT INTO event_write_stage/u.test(statement.sql) && statement.values[typeAt] === 'AssistantReasoned');
+    assert.ok(index >= 0); const statement = statements[index], values = [...statement.values], payload = JSON.parse(values[payloadAt]);
+    assert.equal(payload.memory_origin_version, 1); assert.equal(payload[field], state.current()[field]);
+    if (missing) delete payload[field]; else payload[field] = 'foreign-marker-custody';
+    values[payloadAt] = JSON.stringify(payload); statements[index] = state.DB.prepare(statement.sql).bind(...values); fired++;
+  });
+  let response, body;
+  try { response = await nativeMemoryConsumerRequest(state, id); body = await response.json(); } finally { restore(); }
+  assert.equal(fired, 1, 'The actual prepared public marker changed before atomic publication; immutable events were not rewritten');
+  assert.equal(response.status, 503, JSON.stringify(body)); assert.equal(body.error, 'assistant_persistence_failed'); assert.equal(body.turn, undefined);
+  nativeMemoryConsumerNoSend(state, id, before); assert.deepEqual(nativeMemoryConsumerOrigins(state), origins);
+});
+
+// Ordinary HTTP outcome integration: the actor explicitly accepts/rejects a
+// free assistant proposal before the existing isolated job admits its events.
+async function nativeMemoryOutcomeFixture(t, { shared = false } = {}) {
+  const state = await nativeMemoryApiFixture(t, { shared }), actor = state.current().actor_user_id;
+  state.env.FORMA_ASSISTANT_ACTION_USER_IDS = actor;
+  const decide = async operation => {
+    const turnId = 'outcome-' + operation + '-' + crypto.randomUUID();
+    const response = await state.request(endpoint(), json({ turnId, message: 'Update ' + state.postSource.blockId + ' to PRIVATE_OUTCOME_' + operation.toUpperCase() }, state.owner));
+    const body = await response.json(); assert.equal(response.status, 201, JSON.stringify(body));
+    const proposal = body.turn.proposal; assert.equal(proposal?.kind, 'context.edit', JSON.stringify(body));
+    const result = await state.request(proposalEndpoint(proposal.id, operation), { method: 'POST', headers: state.owner });
+    assert.equal(result.status, 200, await result.clone().text());
+    const status = operation === 'accept' ? 'accepted' : 'rejected', correlation = 'assistant-' + status + ':' + actor + ':' + proposal.id;
+    const events = state.sqlite.prepare('SELECT * FROM events WHERE correlation_id=? ORDER BY sequence').all(correlation);
+    assert.deepEqual(events.map(event => event.type), status === 'accepted' ? ['ProposalAccepted', 'BlockPropertyEdited'] : ['ProposalRejected']);
+    assert.equal(state.sqlite.prepare('SELECT verified FROM assistant_action_commits WHERE commit_id=?').get(proposal.id + ':' + status)?.verified, 1);
+    const retained = state.sqlite.prepare('SELECT * FROM assistant_action_proposals WHERE proposal_id=?').get(proposal.id);
+    return { proposal, turnId, status, correlation, events, retained };
+  };
+  const accepted = await decide('accept'), rejected = await decide('reject');
+  if (shared) {
+    const e = state.current();
+    for (const event of [...accepted.events, ...rejected.events]) {
+      const scopes = state.sqlite.prepare('SELECT * FROM project_event_scopes WHERE event_id=?').all(event.event_id);
+      assert.equal(scopes.length, 1, 'Shared decisions have immediate custody, before any repairing read');
+      assert.deepEqual([scopes[0].organization_id, scopes[0].project_access_id, scopes[0].project_id, scopes[0].owner_user_id, scopes[0].actor_user_id, scopes[0].source_stream_id, scopes[0].source_sequence],
+        [e.organization_id, e.project_access_id, e.project_id, e.owner_user_id, e.actor_user_id, event.stream_id, event.sequence]);
+    }
+    assert.equal(state.sqlite.prepare('SELECT last_owner_sequence FROM project_migration_states WHERE project_access_id=?').get(e.project_access_id).last_owner_sequence, rejected.events[0].sequence);
+  }
+  const review = await state.run(); assert.equal(review.status, 'completed', state.controls.lastDatabaseError);
+  for (const event of [...accepted.events, ...rejected.events])
+    assert.ok(state.table('memory_live_sources').some(source => source.event_id === event.event_id), 'Actual job directly admits ' + event.type + ' without a repairing feed GET');
+  const item = await state.selected();
+  return Object.assign(state, { accepted, rejected, outcomeEnrollment: item });
+}
+function nativeMemoryOutcomeNoPaid(state) {
+  assert.equal(state.calls.length, 0); assert.equal(state.env.OPENAI_API_KEY, undefined); assert.equal(state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS, undefined);
+  const current = specialistFeedSnapshot(state);
+  for (const key of ['financial', 'executions', 'steps', 'tasks']) assert.deepEqual(current[key], state.postPaid[key], key);
+}
+function nativeMemoryOutcomeSnapshot(state) {
+  return { memory: nativeMemoryApiSnapshot(state), commits: state.sqlite.prepare('SELECT * FROM assistant_action_commits ORDER BY commit_id').all(),
+    proposals: state.sqlite.prepare('SELECT * FROM assistant_action_proposals ORDER BY proposal_id').all(),
+    scopes: state.sqlite.prepare('SELECT * FROM project_event_scopes ORDER BY event_id').all(),
+    migrations: state.sqlite.prepare('SELECT * FROM project_migration_states ORDER BY project_access_id').all(),
+    private: state.sqlite.prepare('SELECT * FROM private_content ORDER BY content_id').all() };
+}
+function nativeMemoryOutcomeValue(value, expected = 2) {
+  const outcomes = value.assistedOutcomes; assert.ok(outcomes, JSON.stringify(value));
+  assert.equal(outcomes.version, 'native-assisted-outcomes-v1'); assert.equal(outcomes.treatment, 'descriptive-assisted-decisions');
+  assert.equal(outcomes.exposure, 'not-measured'); assert.equal(outcomes.inferredPreferences, false);
+  assert.equal(outcomes.coverage.selectedSourceCount, value.sources.length); assert.equal(outcomes.coverage.certifiedOutcomeCount, expected);
+  assert.equal(outcomes.coverage.selectedDecisionCount, value.sources.filter(source => ['ProposalAccepted', 'ProposalRejected'].includes(source.type)).length);
+  assert.equal(outcomes.coverage.freeAssistantOnly, true); assert.equal(outcomes.coverage.completeHistory, false); assert.equal(outcomes.coverage.bounded, true);
+  assert.equal(outcomes.outcomes.length, expected); assertPostContextNoWitness(value);
+  assert.doesNotMatch(JSON.stringify(outcomes), /PRIVATE_OUTCOME|private_json|content_ref|source_versions_json|sql|bindings|"(?:preference|exposureCount|independentSignal)"/u);
+  return outcomes;
+}
+for (const shared of [false, true]) test('native memory API integration: assisted outcomes coalesce actual ' + (shared ? 'shared' : 'personal') + ' free accept and reject without replay double-counting', async t => {
+  const state = await nativeMemoryOutcomeFixture(t, { shared }), before = nativeMemoryOutcomeSnapshot(state);
+  const lease = await state.client.recall(state.outcomeEnrollment), value = lease.value, block = nativeMemoryOutcomeValue(value);
+  assert.deepEqual(block.outcomes.map(outcome => outcome.status), ['accepted', 'rejected']);
+  for (const [index, decision] of [state.accepted, state.rejected].entries()) {
+    const outcome = block.outcomes[index]; assert.equal(outcome.proposalId, decision.proposal.id); assert.equal(outcome.turnId, decision.turnId);
+    assert.equal(outcome.actionKind, 'context.edit'); assert.equal(outcome.origin, 'assistant-assisted'); assert.equal(outcome.independentEvidence, false);
+    assert.equal(value.sources[outcome.decision.sourceIndex].eventId, decision.events[0].event_id);
+    if (index === 0) {
+      assert.equal(value.sources[outcome.mutation.sourceIndex].eventId, decision.events[1].event_id);
+      assert.equal(outcome.mutation.type, 'BlockPropertyEdited'); assert.deepEqual(outcome.mutation.blockIds, [state.postSource.blockId]); assert.equal(outcome.mutation.relationId, null);
+    } else assert.equal(outcome.mutation, null);
+    const repeat = await state.request(proposalEndpoint(decision.proposal.id, index === 0 ? 'accept' : 'reject'), { method: 'POST', headers: state.owner });
+    assert.equal(repeat.status, 200, await repeat.clone().text()); assert.equal((await repeat.json()).idempotent, true);
+  }
+  const repeated = await state.client.recall(state.outcomeEnrollment); assert.deepEqual(repeated.value.assistedOutcomes, block);
+  await state.drainBackground(); assert.deepEqual(nativeMemoryOutcomeSnapshot(state), before);
+  lease.retire(); repeated.retire(); nativeMemoryOutcomeNoPaid(state);
+});
+
+for (const missing of ['verified commit', 'issuance receipt', 'decision receipt', 'mutation receipt', 'mutation reference', 'proposal scope', 'private action', 'action retention', 'current target'])
+test('native memory API integration: assisted outcomes omit a personal decision with missing ' + missing + ' evidence', async t => {
+  const state = await nativeMemoryOutcomeFixture(t), accepted = state.accepted, e = state.current();
+  if (missing === 'verified commit') state.sqlite.prepare('DELETE FROM assistant_action_commits WHERE commit_id=?').run(accepted.proposal.id + ':accepted');
+  else if (missing === 'issuance receipt') state.sqlite.prepare("DELETE FROM event_client_receipts WHERE event_id IN(SELECT event_id FROM events WHERE type='MutationProposed' AND json_extract(payload,'$.proposal_id')=?)").run(accepted.proposal.id);
+  else if (missing === 'decision receipt' || missing === 'mutation receipt') state.sqlite.prepare('DELETE FROM event_client_receipts WHERE event_id=?').run(accepted.events[missing === 'decision receipt' ? 0 : 1].event_id);
+  else if (missing === 'mutation reference') state.sqlite.prepare('DELETE FROM memory_live_sources WHERE enrollment_id=? AND event_id=?').run(e.enrollment_id, accepted.events[1].event_id);
+  else if (missing === 'proposal scope') state.sqlite.prepare("UPDATE assistant_action_proposals SET project_id='foreign-outcome-project' WHERE proposal_id=?").run(accepted.proposal.id);
+  else if (missing === 'private action') state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(), accepted.retained.action_content_ref);
+  else if (missing === 'action retention') state.sqlite.prepare("UPDATE private_content SET expires_at='2000-01-01T00:00:00.000Z' WHERE content_id=?").run(accepted.retained.action_content_ref);
+  else {
+    const removed = await state.request('/api/events', json({ action: 'append', event: { type: 'BlockRemoved', payload: {
+      project_id: e.project_id, document_id: e.document_id, block_id: state.postSource.blockId } } }, state.owner));
+    assert.equal(removed.status, 200, await removed.clone().text());
+  }
+  const before = nativeMemoryOutcomeSnapshot(state), lease = await state.client.recall(state.outcomeEnrollment);
+  const block = nativeMemoryOutcomeValue(lease.value, missing === 'current target' ? 0 : 1);
+  assert.ok(block.outcomes.every(outcome => outcome.proposalId !== accepted.proposal.id));
+  if (missing !== 'current target') assert.equal(block.outcomes[0].proposalId, state.rejected.proposal.id);
+  assert.deepEqual(nativeMemoryOutcomeSnapshot(state), before, 'Omitted outcome evidence is not repaired or persisted by recall');
+  assert.equal(state.calls.length, 0); assert.deepEqual(specialistFeedSnapshot(state).financial, state.postPaid.financial); lease.retire();
+});
+
+test('native memory API integration: assisted outcomes do not treat an admitted forged decision as a verified result', async t => {
+  const state = await nativeMemoryOutcomeFixture(t), e = state.current(), { makeEvent, eventWriteBindings, EVENT_WRITE_COLUMNS } = await import('../worker/runtime.ts');
+  const fake = 'forged-proposal-' + crypto.randomUUID(), stream = 'creative:' + e.owner_user_id;
+  const head = state.sqlite.prepare('SELECT MAX(sequence) AS head FROM events WHERE stream_id=?').get(stream).head;
+  const event = makeEvent(stream, head + 1, 'user:' + e.actor_user_id, 'web:assistant', 'assistant-accepted:' + e.actor_user_id + ':' + fake, 'ProposalAccepted', {
+    actor_user_id: e.actor_user_id, project_id: e.project_id, document_id: e.document_id, proposal_id: fake, turn_id: state.accepted.turnId,
+  });
+  const bindings = eventWriteBindings(event);
+  await state.DB.prepare('INSERT INTO event_write_stage(' + EVENT_WRITE_COLUMNS + ') VALUES(' + bindings.map(() => '?').join(',') + ')').bind(...bindings).run();
+  state.sqlite.prepare("UPDATE memory_live_enrollments SET last_local_day=NULL,last_admitted_at=NULL,next_due_at='2000-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(e.enrollment_id);
+  assert.equal((await state.run()).status, 'completed'); assert.ok(state.table('memory_live_sources').some(source => source.event_id === event.eventId));
+  const lease = await state.client.recall(state.outcomeEnrollment), block = nativeMemoryOutcomeValue(lease.value);
+  assert.equal(block.coverage.selectedDecisionCount, 3); assert.ok(block.outcomes.every(outcome => outcome.proposalId !== fake));
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM assistant_action_commits WHERE commit_id LIKE ?').get(fake + ':%').n, 0);
+  nativeMemoryOutcomeNoPaid(state); lease.retire();
+});
+
+for (const shared of [false, true]) test('native memory API integration: assisted outcomes retain the ' + (shared ? 'assigned shared' : 'personal source action') + ' absolute expiry', async t => {
+  const state = await nativeMemoryOutcomeFixture(t, { shared }), expires = new Date(Date.now() + 30_000).toISOString();
+  if (shared) state.sqlite.prepare('UPDATE private_content_retention_scopes SET assigned_expires_at=? WHERE content_id=?').run(expires, state.accepted.retained.action_content_ref);
+  else state.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run(expires, state.accepted.retained.action_content_ref);
+  const lease = await state.client.recall(state.outcomeEnrollment); nativeMemoryOutcomeValue(lease.value);
+  assert.equal(lease.value.lifetime.validUntil, expires, 'The outcome evidence shortens, never refreshes, the containing recall lease');
+  assert.ok(lease.remaining() > 0 && lease.remaining() <= 30_000); lease.retire(); nativeMemoryOutcomeNoPaid(state);
+});
+
+for (const boundary of ['commit changed before final read', 'action expired after final read', 'assigned retention expired after final read'])
+test('native memory API integration: assisted outcomes withhold response when ' + boundary, async t => {
+  const shared = boundary.startsWith('assigned'), state = await nativeMemoryOutcomeFixture(t, { shared });
+  const expires = new Date(Date.now() + 30_000).toISOString(), originalNow = Date.now, clock = consequentialDbClock(state);
+  if (boundary.startsWith('action')) state.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run(expires, state.accepted.retained.action_content_ref);
+  if (shared) state.sqlite.prepare('UPDATE private_content_retention_scopes SET assigned_expires_at=? WHERE content_id=?').run(expires, state.accepted.retained.action_content_ref);
+  const hook = nativeMemoryApiFinalHook(state, () => {
+    if (boundary.startsWith('commit')) state.sqlite.prepare('DELETE FROM assistant_action_commits WHERE commit_id=?').run(state.accepted.proposal.id + ':accepted');
+    else { clock.set(expires); Date.now = () => Date.parse(expires); }
+  }, !boundary.startsWith('commit'));
+  try {
+    await nativeMemoryApiDenied(state, state.client.recall(state.outcomeEnrollment), 403, 'memory_unavailable');
+    assert.equal(hook.fired, 1, 'The actual final native witness replay boundary was crossed');
+  } finally { hook.restore(); Date.now = originalNow; await state.drainBackground(); clock.close(); }
+  assert.equal(state.calls.length, 0); assert.deepEqual(specialistFeedSnapshot(state).financial, state.postPaid.financial);
+});
+
+for (const fault of ['skipped scope', 'skipped migration', 'skipped receipt', 'revoked actor', 'revoked membership', 'revoked grant', 'migration race'])
+test('native memory API integration: assisted outcomes shared rejection rolls back ' + fault + ' without repairing reads', async t => {
+  const grantId = 'outcome-reject-original-grant';
+  const state = await nativeMemoryApiFixture(t, { shared: true, beforeEnrollment(state) {
+    if (fault !== 'revoked grant') return;
+    const now = new Date().toISOString(), actor = state.postSource.owner;
+    state.sqlite.prepare("INSERT INTO capability_grants(grant_id,user_id,capability,scope_type,status,granted_by_user_id,created_at,updated_at,expires_at) VALUES(?,?,'project.read','self','active',?,?,?,NULL)")
+      .run(grantId, actor, actor, now, now);
+  } }), e = state.current();
+  state.env.FORMA_ASSISTANT_ACTION_USER_IDS = e.actor_user_id;
+  const turnId = 'outcome-reject-rollback-' + crypto.randomUUID();
+  const response = await state.request(endpoint(), json({ turnId, message: 'Update ' + state.postSource.blockId + ' to PRIVATE_OUTCOME_REJECT_ROLLBACK' }, state.owner));
+  const body = await response.json(); assert.equal(response.status, 201, JSON.stringify(body));
+  const proposal = body.turn.proposal; assert.equal(proposal?.kind, 'context.edit');
+  const correlation = 'assistant-rejected:' + e.actor_user_id + ':' + proposal.id;
+  const baseline = nativeMemoryOutcomeSnapshot(state); let expected = baseline, fired = 0, restore = () => {};
+  if (fault === 'skipped scope') state.sqlite.exec("CREATE TEMP TRIGGER outcome_skip_reject_scope BEFORE INSERT ON project_event_scopes WHEN EXISTS(SELECT 1 FROM events WHERE event_id=NEW.event_id AND type='ProposalRejected') BEGIN SELECT RAISE(IGNORE); END");
+  else if (fault === 'skipped migration') state.sqlite.exec("CREATE TEMP TRIGGER outcome_skip_reject_migration BEFORE UPDATE OF last_owner_sequence ON project_migration_states WHEN EXISTS(SELECT 1 FROM events WHERE correlation_id='" + correlation + "') BEGIN SELECT RAISE(IGNORE); END");
+  else if (fault === 'skipped receipt') state.sqlite.exec("CREATE TEMP TRIGGER outcome_skip_reject_receipt BEFORE INSERT ON event_client_receipts WHEN EXISTS(SELECT 1 FROM events WHERE event_id=NEW.event_id AND type='ProposalRejected') BEGIN SELECT RAISE(IGNORE); END");
+  else restore = interceptConsequentialDb(state, 'batch', /INSERT INTO assistant_action_commits\b/u, () => {
+    fired++;
+    if (fault === 'revoked actor') state.sqlite.prepare('UPDATE users SET consent_version=NULL WHERE user_id=?').run(e.actor_user_id);
+    else if (fault === 'revoked membership') state.sqlite.prepare("UPDATE organization_memberships SET status='revoked',revoked_at=? WHERE organization_id=? AND user_id=?").run(new Date().toISOString(), e.organization_id, e.actor_user_id);
+    else if (fault === 'revoked grant') state.sqlite.prepare("UPDATE capability_grants SET status='revoked',revoked_at=? WHERE grant_id=?").run(new Date().toISOString(), grantId);
+    else state.sqlite.prepare('UPDATE project_migration_states SET last_owner_sequence=last_owner_sequence+7 WHERE project_access_id=?').run(e.project_access_id);
+    expected = nativeMemoryOutcomeSnapshot(state);
+  });
+  let denied;
+  try { denied = await state.request(proposalEndpoint(proposal.id, 'reject'), { method: 'POST', headers: state.owner }); }
+  finally { restore(); }
+  const failure = await denied.json(); assert.equal(denied.status, 409, JSON.stringify(failure)); assert.equal(failure.error, 'assistant_proposal_stale');
+  assert.deepEqual(nativeMemoryOutcomeSnapshot(state), expected);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM events WHERE correlation_id=?').get(correlation).n, 0);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM event_client_receipts WHERE client_event_id LIKE ?').get(correlation + ':%').n, 0);
+  assert.equal(state.sqlite.prepare('SELECT status FROM assistant_action_proposals WHERE proposal_id=?').get(proposal.id).status, 'pending');
+  if (fault === 'skipped scope') state.sqlite.exec('DROP TRIGGER outcome_skip_reject_scope');
+  else if (fault === 'skipped migration') state.sqlite.exec('DROP TRIGGER outcome_skip_reject_migration');
+  else if (fault === 'skipped receipt') state.sqlite.exec('DROP TRIGGER outcome_skip_reject_receipt');
+  else {
+    assert.equal(fired, 1);
+    if (fault === 'revoked actor') state.sqlite.prepare("UPDATE users SET consent_version='pilot-2026-08-10' WHERE user_id=?").run(e.actor_user_id);
+    else if (fault === 'revoked membership') state.sqlite.prepare("UPDATE organization_memberships SET status='active',revoked_at=NULL WHERE organization_id=? AND user_id=?").run(e.organization_id, e.actor_user_id);
+    else if (fault === 'revoked grant') state.sqlite.prepare("UPDATE capability_grants SET status='active',revoked_at=NULL WHERE grant_id=?").run(grantId);
+    else state.sqlite.prepare('UPDATE project_migration_states SET last_owner_sequence=? WHERE project_access_id=?').run(baseline.migrations.find(row => row.project_access_id === e.project_access_id).last_owner_sequence, e.project_access_id);
+  }
+  const retry = await state.request(proposalEndpoint(proposal.id, 'reject'), { method: 'POST', headers: state.owner });
+  assert.equal(retry.status, 200, await retry.clone().text());
+  const event = state.sqlite.prepare('SELECT * FROM events WHERE correlation_id=?').get(correlation);
+  assert.equal(event.type, 'ProposalRejected');
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM project_event_scopes WHERE event_id=? AND project_access_id=? AND actor_user_id=?').get(event.event_id, e.project_access_id, e.actor_user_id).n, 1);
+  assert.equal(state.sqlite.prepare('SELECT last_owner_sequence FROM project_migration_states WHERE project_access_id=?').get(e.project_access_id).last_owner_sequence, event.sequence);
+  assert.equal((await state.run()).status, 'completed'); assert.ok(state.table('memory_live_sources').some(source => source.event_id === event.event_id));
+  nativeMemoryOutcomeNoPaid(state);
+});
+
+test('native memory API integration: assisted outcomes omit a proposal with paid task ancestry without dispatch', async t => {
+  const state = await nativeMemoryOutcomeFixture(t), e = state.current(), id = 'outcome-paid-metadata-' + crypto.randomUUID(), now = new Date().toISOString();
+  // Adverse task metadata is not a paid execution or provider response. Its
+  // presence alone must exclude this otherwise verified free outcome.
+  state.sqlite.prepare(`INSERT INTO assistant_specialist_tasks(task_id,actor_user_id,scope_key,turn_id,organization_id,project_access_id,project_id,document_id,
+    route_family,task_kind,selected_model,token_reservation_id,cost_reservation_id,estimated_microusd,maximum_input_tokens,maximum_output_tokens,
+    locale,permission_epoch,status,created_at,updated_at,provider_submitted)
+    SELECT ?,actor_user_id,scope_key,turn_id,organization_id,project_access_id,project_id,document_id,route_family,'page-guidance','gpt-5.6-luna',?,?,4000,10400,1600,
+      'en',permission_epoch,'needs-review',?,?,0 FROM assistant_turns WHERE turn_id=? AND actor_user_id=?`)
+    .run(id, id + '-tokens-unreserved', id + '-cost-unreserved', now, now, state.accepted.turnId, e.actor_user_id);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM assistant_specialist_tasks WHERE task_id=?').get(id).n, 1);
+  const before = nativeMemoryOutcomeSnapshot(state), lease = await state.client.recall(state.outcomeEnrollment);
+  const block = nativeMemoryOutcomeValue(lease.value, 1); assert.equal(block.outcomes[0].proposalId, state.rejected.proposal.id);
+  assert.ok(block.outcomes.every(outcome => outcome.proposalId !== state.accepted.proposal.id));
+  assert.deepEqual(nativeMemoryOutcomeSnapshot(state), before); assert.equal(state.calls.length, 0);
+  const paid = specialistFeedSnapshot(state); for (const key of ['financial', 'executions', 'steps']) assert.deepEqual(paid[key], state.postPaid[key]); lease.retire();
+});
+
+test('native memory API integration: assisted outcomes legacy GET preserves its old shape and does not query optional evidence', async t => {
+  const state = await nativeMemoryOutcomeFixture(t), original = state.DB.prepare; let outcomeReads = 0;
+  state.DB.prepare = function(sql) { if (sql.includes('AS decision_json')) outcomeReads++; return original.call(this, sql); };
+  let response, value;
+  try { response = await state.request('/api/memory/recall?id=' + state.current().enrollment_id, { headers: state.owner }); value = await response.json(); }
+  finally { state.DB.prepare = original; }
+  assert.equal(response.status, 200, JSON.stringify(value)); assert.equal(Object.hasOwn(value, 'assistedOutcomes'), false); assert.equal(outcomeReads, 0);
+  const lease = await state.client.recall(state.outcomeEnrollment); nativeMemoryOutcomeValue(lease.value);
+  assert.ok(state.apiResponses.at(-1).path.includes('&outcomes=native-assisted-outcomes-v1'), 'Only the capable client asks for the additive field');
+  nativeMemoryOutcomeNoPaid(state); lease.retire();
+});
+
+for (const version of ['', 'future-outcomes-v999']) test('native memory API integration: assisted outcomes reject unsupported capability ' + (version || 'empty') + ' before outcome reads', async t => {
+  const state = await nativeMemoryOutcomeFixture(t), before = nativeMemoryOutcomeSnapshot(state), original = state.DB.prepare; let outcomeReads = 0;
+  state.DB.prepare = function(sql) { if (sql.includes('AS decision_json')) outcomeReads++; return original.call(this, sql); };
+  let response, value;
+  try { response = await state.request('/api/memory/recall?id=' + state.current().enrollment_id + '&outcomes=' + version, { headers: state.owner }); value = await response.json(); }
+  finally { state.DB.prepare = original; }
+  assert.equal(response.status, 400, JSON.stringify(value)); assert.deepEqual(value, { error: 'memory_outcomes_version_unsupported' }); assert.equal(outcomeReads, 0);
+  assert.deepEqual(nativeMemoryOutcomeSnapshot(state), before); nativeMemoryOutcomeNoPaid(state);
+});
+
+for (const part of ['decision', 'mutation']) test('native memory API integration: assisted outcomes retain the admitted ' + part + ' source deadline', async t => {
+  const state = await nativeMemoryOutcomeFixture(t), expires = new Date(Date.now() + 30_000).toISOString();
+  const event = state.accepted.events[part === 'decision' ? 0 : 1];
+  state.sqlite.prepare('UPDATE memory_live_sources SET expires_at=? WHERE enrollment_id=? AND event_id=?').run(expires, state.current().enrollment_id, event.event_id);
+  const lease = await state.client.recall(state.outcomeEnrollment); nativeMemoryOutcomeValue(lease.value);
+  assert.equal(lease.value.lifetime.validUntil, expires); assert.equal(lease.value.sources.find(source => source.eventId === event.event_id).validUntil, expires);
+  lease.retire(); nativeMemoryOutcomeNoPaid(state);
+});
+
+test('native memory API integration: assisted outcomes wire bytes cannot be changed through public object mutation after the final await', async t => {
+  const state = await nativeMemoryOutcomeFixture(t), original = JSON.stringify, captured = new Set(); let mutated = 0;
+  JSON.stringify = function(value, ...args) {
+    if (value?.mode === 'live-reference-memory' && value?.assistedOutcomes?.outcomes?.length) captured.add(value);
+    return original.call(this, value, ...args);
+  };
+  const hook = nativeMemoryApiFinalHook(state, () => {
+    for (const value of captured) { value.assistedOutcomes.outcomes[0].status = 'FORGED_AFTER_FINAL_AWAIT'; mutated++; }
+  }, true);
+  let lease;
+  try { lease = await state.client.recall(state.outcomeEnrollment); }
+  finally { hook.restore(); JSON.stringify = original; }
+  assert.equal(hook.fired, 1); assert.ok(mutated > 0, 'Actual public projection objects were mutated after final DB delivery');
+  const block = nativeMemoryOutcomeValue(lease.value); assert.equal(block.outcomes[0].status, 'accepted');
+  assert.doesNotMatch(JSON.stringify(lease.value), /FORGED_AFTER_FINAL_AWAIT/u); nativeMemoryOutcomeNoPaid(state); lease.retire();
+});
+
+test('native memory API integration: assisted outcomes do not widen the bounded source window to recover an omitted decision', async t => {
+  const state = await nativeMemoryOutcomeFixture(t), e = state.current();
+  const response = await state.request('/api/events', json({ action: 'batch', clientId: 'outcome-bounded-later-events', events: Array.from({ length: 60 }, () => ({
+    type: 'DocumentOpened', payload: { project_id: e.project_id, document_id: e.document_id },
+  })) }, state.owner));
+  assert.equal(response.status, 200, await response.clone().text()); assert.equal((await response.json()).appended.length, 60);
+  state.sqlite.prepare("UPDATE memory_live_enrollments SET last_local_day=NULL,last_admitted_at=NULL,next_due_at='2000-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(e.enrollment_id);
+  assert.equal((await state.run()).status, 'completed');
+  const lease = await state.client.recall(state.outcomeEnrollment), value = lease.value, block = nativeMemoryOutcomeValue(value, 1);
+  assert.equal(value.sources.length, 64); assert.ok(value.sources.some(source => source.eventId === state.accepted.events[1].event_id), 'The accepted mutation remains in the actual capped window');
+  assert.ok(value.sources.every(source => source.eventId !== state.accepted.events[0].event_id), 'The older accepted decision is outside that exact window');
+  assert.equal(block.outcomes[0].proposalId, state.rejected.proposal.id); assert.ok(block.outcomes.every(outcome => outcome.proposalId !== state.accepted.proposal.id));
+  nativeMemoryOutcomeNoPaid(state); lease.retire();
+});
+
+// Seeded native descriptor fixtures qualify only the memory reader. These rows
+// are not claims of native generation, provider execution, storage publication,
+// or paid authorization qualification. Save/pin/export, review and recall below
+// traverse the actual ordinary Worker routes and the actual memory kernel.
+async function nativeMemorySavedDescriptorFixture(t, { shared = false, state: existing } = {}) {
+  const state = existing ?? await nativeMemoryApiFixture(t, { shared }), e = state.current();
+  const { OUTPUT_REQUIREMENTS_SCHEMA } = await import('../worker/output-requirements-schema.ts');
+  for (const sql of OUTPUT_REQUIREMENTS_SCHEMA) state.sqlite.exec(sql);
+  const { makeEvent, eventWriteBindings, EVENT_WRITE_COLUMNS } = await import('../worker/runtime.ts');
+  const id = 'seeded-native-' + crypto.randomUUID(), stream = 'creative:' + e.owner_user_id;
+  const scope = shared ? 'project:' + e.organization_id + ':' + e.project_access_id : 'personal:' + e.owner_user_id + ':' + e.project_id;
+  const now = new Date().toISOString(), expires = new Date(Date.now() + 86_400_000).toISOString();
+  const names = Object.fromEntries(['job','slot','grant','plan','preflight','target','generation','object','output','prompt'].map(key => [key, id + '-' + key]));
+  const storage = 'media/' + e.owner_user_id + '/' + id + '.png', hash = 'a'.repeat(64), contract = 'seeded-contract', digest = 'seeded-source-digest', route = 'seeded-route';
+  const insert = (table, row) => state.sqlite.prepare('INSERT INTO ' + table + '(' + Object.keys(row).join(',') + ') VALUES(' + Object.keys(row).map(() => '?').join(',') + ')').run(...Object.values(row));
+  let sequence = state.sqlite.prepare('SELECT MAX(sequence) AS head FROM events WHERE stream_id=?').get(stream).head;
+  const common = { project_id: e.project_id, document_id: e.document_id, actor_user_id: e.actor_user_id }, events = {};
+  const add = async (key, type, payload, { actor = 'user:' + e.actor_user_id, client = 'server:output-requirements', correlation = id + '-command', causationId } = {}) => {
+    const event = makeEvent(stream, ++sequence, actor, client, correlation, type, payload, { causationId });
+    const values = eventWriteBindings(event);
+    await state.DB.prepare('INSERT INTO event_write_stage(' + EVENT_WRITE_COLUMNS + ') VALUES(' + values.map(() => '?').join(',') + ')').bind(...values).run();
+    if (shared) insert('project_event_scopes', { event_id: event.eventId, project_access_id: e.project_access_id, organization_id: e.organization_id,
+      project_id: e.project_id, owner_user_id: e.owner_user_id, source_stream_id: stream, source_sequence: event.sequence,
+      project_sequence: event.sequence, actor_user_id: e.actor_user_id, created_at: event.recordedAt });
+    events[key] = event; return event;
+  };
+  await add('confirmed', 'OutputPlanConfirmed', { ...common, plan_revision_id: names.plan });
+  await add('preflight', 'OutputPlanPreflighted', { ...common, plan_revision_id: names.plan, preflight_id: names.preflight });
+  await add('queued', shared ? 'ProjectDocumentJobQueued' : 'OutputOperationJobQueued', { ...common, job_id: names.job, kind: 'generate', output_slot_id: names.slot, output_grant_id: names.grant });
+  await add('authorized', 'OutputExecutionAuthorized', { ...common, grant_id: names.grant, plan_revision_id: names.plan, source_digest: digest,
+    authorized_targets: [{ job_id: names.job, operation_slot_id: names.slot, target_id: names.target, route_digest: route }] });
+  const generated = { generation_id: names.generation, document_id: e.document_id, quality: 'high', purpose: 'final' };
+  const jobOptions = { client: 'server:document-job:generate', correlation: names.job + ':attempt:1' };
+  await add('requested', 'GenerationRequested', generated, { ...jobOptions, actor: shared ? 'user:' + e.actor_user_id : 'user' });
+  await add('compiled', 'ContextCompiled', { ...generated, project_id: e.project_id, context_hash: 'seeded-context-hash',
+    compiled_snapshot: { document: { id: e.document_id }, privateText: 'PRIVATE_SEEDED_COMPILED_TEXT' } },
+    { ...jobOptions, actor: 'worker:compiler', causationId: events.requested.eventId });
+  await add('completed', 'GenerationCompleted', { ...generated, object_id: names.object, object_ids: [names.object], simulation: false,
+    prompt_ref: names.prompt, output_ref: names.output, content_expires_at: expires, media_url: '/api/media/' + encodeURIComponent(storage),
+    source_content_hash: hash, context_hash: 'seeded-context-hash', media_type: 'image/png', title: 'PRIVATE_SEEDED_GENERATED_TITLE' },
+    { ...jobOptions, actor: 'worker:generator', causationId: events.compiled.eventId });
+  insert('output_plan_revisions', { scope_key: scope, scope_kind: shared ? 'project' : 'personal', owner_user_id: e.owner_user_id,
+    project_id: e.project_id, document_id: e.document_id, organization_id: e.organization_id, project_access_id: e.project_access_id,
+    plan_revision_id: names.plan, plan_id: id + '-plan-id', revision: 1, confirmed_event_id: events.confirmed.eventId,
+    requirements_digest: 'seeded-requirements', source_digest: digest, resolver_version: 'seeded-descriptor-v1', source_head: events.confirmed.sequence - 1, target_count: 1, created_at: now });
+  insert('output_plan_targets', { scope_key: scope, plan_revision_id: names.plan, target_id: names.target, target_contract_digest: contract,
+    media_kind: 'image', required: 1, selected: 1, ordinal: 0 });
+  insert('output_preflights', { scope_key: scope, preflight_id: names.preflight, plan_revision_id: names.plan, actor_user_id: e.actor_user_id,
+    terms_digest: 'seeded-terms', event_id: events.preflight.eventId, expires_at: expires, created_at: now });
+  insert('output_execution_grants', { scope_key: scope, grant_id: names.grant, plan_revision_id: names.plan, actor_user_id: e.actor_user_id,
+    payer_user_id: e.actor_user_id, context_id: null, preflight_id: names.preflight, authorization_event_id: events.authorized.eventId,
+    maximum_microusd: 1, maximum_calls: 1, status: 'completed', expires_at: expires, created_at: now });
+  insert('document_jobs', { job_id: names.job, owner_id: e.actor_user_id, stream_id: stream, document_id: e.document_id,
+    kind: 'generate', status: 'completed', source_surface: 'document', correlation_id: names.job + ':attempt:1', requested_sequence: events.queued.sequence,
+    request_json: '{}', result_json: '{}', attempt_count: 1, requested_at: now, started_at: now, completed_at: now, expires_at: expires, updated_at: now });
+  insert('output_operation_slots', { scope_key: scope, slot_id: names.slot, grant_id: names.grant, plan_revision_id: names.plan,
+    target_id: names.target, target_contract_digest: contract, source_digest: digest, provider: 'openai', model: 'gpt-image-2', route_digest: route,
+    job_id: names.job, cost_reservation_id: id + '-unexecuted-cost', token_reservation_id: id + '-unexecuted-token', maximum_microusd: 1,
+    maximum_calls: 1, maximum_tokens: 1, status: 'succeeded', outcome_event_id: events.completed.eventId, created_at: now, updated_at: now });
+  insert('output_native_storage_writes', { scope_key: scope, slot_id: names.slot, storage_key: storage, content_sha256: hash,
+    status: 'written', write_acknowledged: 1, publication_event_id: events.completed.eventId, created_at: now, updated_at: now });
+  const resource = (kind, key, eventId, visibility = 'collaborative_output') => insert('project_resource_scopes', {
+    project_access_id: e.project_access_id, resource_kind: kind, resource_id: key, organization_id: e.organization_id,
+    project_id: e.project_id, owner_user_id: e.owner_user_id, visibility, source_event_id: eventId, actor_user_id: e.actor_user_id, created_at: now });
+  for (const [key, kind] of [['output', 'provider-output'], ['prompt', 'prompt']]) {
+    insert('private_content', { content_id: names[key], owner_id: e.actor_user_id, kind, content: 'PRIVATE_SEEDED_' + key, created_at: now, expires_at: expires });
+    if (shared) {
+      resource('content', names[key], events.completed.eventId, 'actor_private');
+      insert('private_content_retention_scopes', { content_id: names[key], organization_id: e.organization_id, project_access_id: e.project_access_id,
+        project_id: e.project_id, actor_user_id: e.actor_user_id, classification: 'ephemeral', policy_version: 1, assigned_expires_at: expires, created_at: now });
+    }
+  }
+  if (shared) {
+    resource('job', names.job, events.queued.eventId, 'actor_private'); resource('output', names.object, events.completed.eventId); resource('media', storage, events.completed.eventId);
+    state.sqlite.prepare('UPDATE project_migration_states SET last_owner_sequence=? WHERE project_access_id=?').run(sequence, e.project_access_id);
+  }
+  const actions = [];
+  for (const type of ['ObjectSaved', 'ObjectPinned', 'ObjectExported']) {
+    const response = await state.request('/api/events', json({ action: 'append', event: { type, payload: { project_id: e.project_id, document_id: e.document_id, object_id: names.object,
+      ...(type === 'ObjectPinned' ? { scope: 'project' } : type === 'ObjectExported' ? { destination_class: 'download', format: 'image/png' } : {}) } } }, state.owner));
+    const body = await response.json(); assert.equal(response.status, 200, JSON.stringify(body) + ' SQL:' + state.controls.lastDatabaseError);
+    const event = state.sqlite.prepare('SELECT * FROM events WHERE stream_id=? AND type=? AND json_extract(payload,\'$.object_id\')=? ORDER BY sequence DESC LIMIT 1').get(stream, type, names.object);
+    assert.ok(event); actions.push(event);
+  }
+  state.sqlite.prepare("UPDATE memory_live_enrollments SET last_local_day=NULL,last_admitted_at=NULL,next_due_at='2000-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(e.enrollment_id);
+  assert.equal((await state.run()).status, 'completed', state.controls.lastDatabaseError);
+  assert.ok(actions.every(event => state.table('memory_live_sources').some(source => source.event_id === event.event_id)), 'Actual review admits the real retention actions');
+  return Object.assign(state, { savedDescriptor: { names, scope, storage, events, actions, expires }, savedEnrollment: await state.selected() });
+}
+function nativeMemorySavedValue(value, { count = 1, actions = 3 } = {}) {
+  const saved = value.savedOutputs; assert.ok(saved, 'The requested seeded descriptor projection is available');
+  assert.equal(saved.version, 'native-saved-outputs-v1'); assert.equal(saved.treatment, 'descriptive-output-retention'); assert.equal(saved.inferredPreferences, false);
+  assert.deepEqual(saved.coverage, { selectedSourceCount: value.sources.length, selectedRetentionActionCount: actions, certifiedOutputCount: count,
+    completeHistory: false, bounded: true, nativeImageJobsOnly: true });
+  assert.equal(saved.outputs.length, count);
+  for (const output of saved.outputs) {
+    assert.deepEqual(Object.keys(output).sort(), ['sourceIndexes','origin','independentEvidence','generatedAt'].sort());
+    assert.equal(output.origin, 'native-generated-output'); assert.equal(output.independentEvidence, false);
+    assert.ok(output.sourceIndexes.every(index => ['ObjectSaved','ObjectPinned','ObjectExported'].includes(value.sources[index].type)));
+  }
+  assert.doesNotMatch(JSON.stringify(value), /PRIVATE_SEEDED|seeded-context-hash|seeded-source-digest|unexecuted-cost|unexecuted-token/u);
+  return saved;
+}
+for (const shared of [false, true]) test('native memory API integration: saved outputs seeded ' + (shared ? 'shared' : 'personal') + ' descriptor coalesces real save pin export through jobs and strict recall', async t => {
+  const state = await nativeMemorySavedDescriptorFixture(t, { shared }), before = nativeMemoryOutcomeSnapshot(state);
+  const lease = await state.client.recall(state.savedEnrollment), saved = nativeMemorySavedValue(lease.value);
+  assert.deepEqual(saved.outputs[0].sourceIndexes.map(index => lease.value.sources[index].eventId), state.savedDescriptor.actions.map(event => event.event_id));
+  assert.equal(saved.outputs[0].generatedAt, state.savedDescriptor.events.completed.recordedAt);
+  assert.ok(state.apiResponses.at(-1).path.includes('&savedOutputs=native-saved-outputs-v1'));
+  const again = await state.client.recall(state.savedEnrollment); assert.deepEqual(again.value.savedOutputs, saved);
+  assert.deepEqual(nativeMemoryOutcomeSnapshot(state), before); nativeMemoryOutcomeNoPaid(state); lease.retire(); again.retire();
+});
+for (const missing of ['attempt zero','attempt mismatch','native slot','revoked grant','wrong target','storage acknowledgement','completion private envelope','prompt retention','foreign job owner','completion custody','output custody','assigned retention','discarded output'])
+test('native memory API integration: saved outputs seeded descriptor omits ' + missing + ' without repairing evidence', async t => {
+  const shared = ['completion custody','output custody','assigned retention'].includes(missing);
+  const state = await nativeMemorySavedDescriptorFixture(t, { shared }), d = state.savedDescriptor;
+  if (missing === 'attempt zero') state.sqlite.prepare('UPDATE document_jobs SET attempt_count=0 WHERE job_id=?').run(d.names.job);
+  else if (missing === 'attempt mismatch') state.sqlite.prepare('UPDATE document_jobs SET attempt_count=2 WHERE job_id=?').run(d.names.job);
+  else if (missing === 'native slot') state.sqlite.prepare("UPDATE output_operation_slots SET status='failed' WHERE slot_id=?").run(d.names.slot);
+  else if (missing === 'revoked grant') state.sqlite.prepare("UPDATE output_execution_grants SET status='revoked' WHERE grant_id=?").run(d.names.grant);
+  else if (missing === 'wrong target') state.sqlite.prepare('UPDATE output_plan_targets SET selected=0 WHERE target_id=?').run(d.names.target);
+  else if (missing === 'storage acknowledgement') state.sqlite.prepare('UPDATE output_native_storage_writes SET write_acknowledged=0 WHERE slot_id=?').run(d.names.slot);
+  else if (missing === 'completion private envelope') state.sqlite.prepare("UPDATE event_private_payloads SET private_json='{}',redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(), d.events.completed.eventId);
+  else if (missing === 'prompt retention') state.sqlite.prepare("UPDATE private_content SET expires_at='2000-01-01T00:00:00.000Z' WHERE content_id=?").run(d.names.prompt);
+  else if (missing === 'foreign job owner') state.sqlite.prepare("UPDATE document_jobs SET owner_id='foreign-owner' WHERE job_id=?").run(d.names.job);
+  else if (missing === 'completion custody') state.sqlite.prepare('DELETE FROM project_event_scopes WHERE event_id=?').run(d.events.completed.eventId);
+  else if (missing === 'output custody') state.sqlite.prepare('DELETE FROM project_resource_scopes WHERE resource_kind=\'output\' AND resource_id=?').run(d.names.object);
+  else if (missing === 'assigned retention') state.sqlite.prepare('DELETE FROM private_content_retention_scopes WHERE content_id=?').run(d.names.output);
+  else {
+    const e = state.current(), response = await state.request('/api/events', json({ action: 'append', event: { type: 'ObjectDiscarded', payload: {
+      project_id: e.project_id, document_id: e.document_id, object_id: d.names.object } } }, state.owner));
+    assert.equal(response.status, 200, await response.clone().text());
+  }
+  const before = nativeMemoryOutcomeSnapshot(state), lease = await state.client.recall(state.savedEnrollment);
+  assert.equal(lease.value.savedOutputs, undefined, 'Selected retention with uncertifiable lineage is unavailable, never a false zero');
+  assert.equal(lease.value.sources.filter(source => ['ObjectSaved','ObjectPinned','ObjectExported'].includes(source.type)).length, 3);
+  assert.deepEqual(nativeMemoryOutcomeSnapshot(state), before); nativeMemoryOutcomeNoPaid(state); lease.retire();
+});
+
+for (const dependency of ['job','output','prompt','assigned output','retention action']) test('native memory API integration: saved outputs seeded ' + dependency + ' expiry shortens the strict lease', async t => {
+  const shared = dependency.startsWith('assigned'), state = await nativeMemorySavedDescriptorFixture(t, { shared });
+  const d = state.savedDescriptor, expires = new Date(Date.now() + 30_000).toISOString();
+  if (dependency === 'job') state.sqlite.prepare('UPDATE document_jobs SET expires_at=? WHERE job_id=?').run(expires, d.names.job);
+  else if (shared) state.sqlite.prepare('UPDATE private_content_retention_scopes SET assigned_expires_at=? WHERE content_id=?').run(expires, d.names.output);
+  else if (dependency === 'retention action') state.sqlite.prepare('UPDATE memory_live_sources SET expires_at=? WHERE event_id=?').run(expires, d.actions[0].event_id);
+  else state.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run(expires, d.names[dependency]);
+  const lease = await state.client.recall(state.savedEnrollment); nativeMemorySavedValue(lease.value);
+  assert.equal(lease.value.lifetime.validUntil, expires); nativeMemoryOutcomeNoPaid(state); lease.retire();
+});
+
+for (const boundary of ['revoked grant before final read','mutated compile envelope before final read','job expiry after final read','assigned retention expiry after final read'])
+test('native memory API integration: saved outputs seeded dependency blocks ' + boundary, async t => {
+  const shared = boundary.startsWith('assigned'), state = await nativeMemorySavedDescriptorFixture(t, { shared }), d = state.savedDescriptor;
+  const expires = new Date(Date.now() + 30_000).toISOString(), originalNow = Date.now, clock = consequentialDbClock(state);
+  if (boundary.startsWith('job')) state.sqlite.prepare('UPDATE document_jobs SET expires_at=? WHERE job_id=?').run(expires, d.names.job);
+  if (shared) state.sqlite.prepare('UPDATE private_content_retention_scopes SET assigned_expires_at=? WHERE content_id=?').run(expires, d.names.output);
+  const hook = nativeMemoryApiFinalHook(state, () => {
+    if (boundary.startsWith('revoked')) state.sqlite.prepare("UPDATE output_execution_grants SET status='revoked' WHERE grant_id=?").run(d.names.grant);
+    else if (boundary.startsWith('mutated')) state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.context_hash','changed') WHERE private_event_id=?").run(d.events.compiled.eventId);
+    else { clock.set(expires); Date.now = () => Date.parse(expires); }
+  }, boundary.includes('after'));
+  try { await nativeMemoryApiDenied(state, state.client.recall(state.savedEnrollment), 403, 'memory_unavailable'); assert.equal(hook.fired, 1); }
+  finally { hook.restore(); Date.now = originalNow; await state.drainBackground(); clock.close(); }
+  nativeMemoryOutcomeNoPaid(state);
+});
+
+test('native memory API integration: saved outputs seeded legacy GET omits both optional projections and their queries', async t => {
+  const state = await nativeMemorySavedDescriptorFixture(t), original = state.DB.prepare; let optionalReads = 0;
+  state.DB.prepare = function(sql) { if (sql.includes('AS decision_json') || sql.includes('AS completion_id')) optionalReads++; return original.call(this, sql); };
+  let response, value;
+  try { response = await state.request('/api/memory/recall?id=' + state.current().enrollment_id, { headers: state.owner }); value = await response.json(); }
+  finally { state.DB.prepare = original; }
+  assert.equal(response.status, 200, JSON.stringify(value)); assert.equal(value.savedOutputs, undefined); assert.equal(value.assistedOutcomes, undefined);
+  assert.equal(optionalReads, 0); nativeMemoryOutcomeNoPaid(state);
+});
+for (const version of ['', 'native-saved-outputs-v999']) test('native memory API integration: saved outputs reject unsupported capability ' + (version || 'empty') + ' before native queries', async t => {
+  const state = await nativeMemoryApiFixture(t), original = state.DB.prepare; let optionalReads = 0;
+  state.DB.prepare = function(sql) { if (sql.includes('AS completion_id')) optionalReads++; return original.call(this, sql); };
+  let response, value;
+  try { response = await state.request('/api/memory/recall?id=' + state.current().enrollment_id + '&savedOutputs=' + version, { headers: state.owner }); value = await response.json(); }
+  finally { state.DB.prepare = original; }
+  assert.equal(response.status, 400); assert.deepEqual(value, { error: 'memory_saved_outputs_version_unsupported' }); assert.equal(optionalReads, 0); nativeMemoryOutcomeNoPaid(state);
+});
+test('native memory API integration: saved outputs seeded schema absence remains legacy compatible without runtime DDL', async t => {
+  const state = await nativeMemorySavedDescriptorFixture(t); state.sqlite.exec('DROP TABLE output_native_storage_writes');
+  const original = state.DB.prepare; let ddl = 0;
+  state.DB.prepare = function(sql) { if (/\b(?:CREATE|ALTER|DROP)\s+(?:TABLE|INDEX|TRIGGER)/iu.test(sql)) ddl++; return original.call(this, sql); };
+  let lease;
+  try { lease = await state.client.recall(state.savedEnrollment); } finally { state.DB.prepare = original; }
+  assert.equal(lease.value.savedOutputs, undefined); assert.equal(ddl, 0); lease.retire(); nativeMemoryOutcomeNoPaid(state);
+});
+test('native memory API integration: saved outputs empty selected retention has a bounded zero rather than unavailable', async t => {
+  const state = await nativeMemoryApiFixture(t); await state.send('saved-zero-source'); assert.equal((await state.run()).status, 'completed');
+  const lease = await state.client.recall(await state.selected()); nativeMemorySavedValue(lease.value, { count: 0, actions: 0 }); nativeMemoryOutcomeNoPaid(state); lease.retire();
+});
+test('native memory API integration: saved outputs seeded coalescing never widens the exact sixty-four source window', async t => {
+  const state = await nativeMemorySavedDescriptorFixture(t), e = state.current(), response = await state.request('/api/events', json({ action: 'batch',
+    clientId: 'saved-output-window', events: Array.from({ length: 62 }, () => ({ type: 'DocumentOpened', payload: { project_id: e.project_id, document_id: e.document_id } })) }, state.owner));
+  assert.equal(response.status, 200, await response.clone().text());
+  state.sqlite.prepare("UPDATE memory_live_enrollments SET last_local_day=NULL,last_admitted_at=NULL,next_due_at='2000-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(e.enrollment_id);
+  assert.equal((await state.run()).status, 'completed'); const lease = await state.client.recall(state.savedEnrollment);
+  assert.equal(lease.value.sources.length, 64); const saved = nativeMemorySavedValue(lease.value, { actions: 2 });
+  assert.deepEqual(saved.outputs[0].sourceIndexes.map(index => lease.value.sources[index].eventId), state.savedDescriptor.actions.slice(1).map(event => event.event_id));
+  lease.retire(); nativeMemoryOutcomeNoPaid(state);
+});
+test('native memory API integration: saved outputs seeded projection and actual assisted outcomes share one final strict response', async t => {
+  const state = await nativeMemoryOutcomeFixture(t); await nativeMemorySavedDescriptorFixture(t, { state });
+  const lease = await state.client.recall(state.savedEnrollment); nativeMemorySavedValue(lease.value); nativeMemoryOutcomeValue(lease.value);
+  nativeMemoryOutcomeNoPaid(state); lease.retire();
+});
+test('native memory API integration: saved outputs seeded wire bytes resist mutation after final await', async t => {
+  const state = await nativeMemorySavedDescriptorFixture(t), stringify = JSON.stringify, captured = new Set(); let mutations = 0;
+  JSON.stringify = function(value, ...args) { if (value?.mode === 'live-reference-memory' && value.savedOutputs?.outputs?.length) captured.add(value); return stringify.call(this, value, ...args); };
+  const hook = nativeMemoryApiFinalHook(state, () => { for (const value of captured) { value.savedOutputs.outputs[0].origin = 'FORGED_AFTER_FINAL_AWAIT'; mutations++; } }, true);
+  let lease;
+  try { lease = await state.client.recall(state.savedEnrollment); } finally { hook.restore(); JSON.stringify = stringify; }
+  assert.equal(hook.fired, 1); assert.ok(mutations); nativeMemorySavedValue(lease.value); assert.doesNotMatch(JSON.stringify(lease.value), /FORGED_AFTER_FINAL_AWAIT/u);
+  nativeMemoryOutcomeNoPaid(state); lease.retire();
+});
+
+async function nativeMemoryDocumentProfileFixture(t, { shared = false, enabled = true, grant = true } = {}) {
+  const state = await nativeMemoryApiFixture(t, { shared }), e = state.current();
+  const { readFile } = await import('node:fs/promises');
+  state.sqlite.exec(await readFile(new URL('../drizzle/0028_memory_document_profile.sql', import.meta.url), 'utf8'));
+  if (enabled) { state.env.FORMA_MEMORY_PROFILE_ENABLED = 'true'; state.env.FORMA_MEMORY_PROFILE_USER_IDS = e.actor_user_id; }
+  const { createDocumentProfileClient } = await import('../src/state/document-profile-client.ts');
+  const responses = [], profile = createDocumentProfileClient(async (path, init) => {
+    const headers = new Headers(init?.headers); for (const [name, value] of Object.entries(state.owner)) headers.set(name, value);
+    const response = await state.request(String(path), { ...init, headers }); responses.push({ path, response: response.clone() }); return response;
+  });
+  const enable = { version: 'document-profile-control-v1', policyVersion: 'document-profile-v1', recipeVersion: 'native-document-palette-choice-v1',
+    projectId: e.project_id, documentId: e.document_id, enrollmentId: e.enrollment_id, enrollmentRevision: e.revision, revision: 0,
+    expectedCustody: state.preferences.expectedCustody, infer: true, inspect: true, background: false, retentionDays: e.retention_days,
+    expiresAt: e.expires_at, confirmation: 'ENABLE_DOCUMENT_PALETTE_PROFILE' };
+  const scope = { projectId: e.project_id, documentId: e.document_id, expectedCustody: state.preferences.expectedCustody };
+  const appendPalette = async (name, intent = 'prefer') => {
+    const blockId = 'actual-profile-palette-' + name;
+    const response = await state.request('/api/events', json({ action: 'append', clientId: 'memory-profile-http-' + name, event: { type: 'BlockCreated',
+      payload: { project_id: e.project_id, document_id: e.document_id, block_id: blockId, type: 'palette', handle: 'Profile palette', position: 0,
+        properties: { colors: ['#AABBCC', '#001122'], intent, weight: 1, active: true } } } }, state.owner));
+    const body = await response.json(); assert.equal(response.status, 200, JSON.stringify(body));
+    const event = state.sqlite.prepare("SELECT * FROM events WHERE stream_id=? AND type='BlockCreated' AND json_extract(payload,'$.block_id')=? ORDER BY sequence DESC LIMIT 1").get('creative:' + e.owner_user_id, blockId);
+    assert.ok(event); return { blockId, event };
+  };
+  const review = async () => {
+    state.sqlite.prepare("UPDATE memory_live_enrollments SET last_local_day=NULL,last_admitted_at=NULL,next_due_at='2000-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(e.enrollment_id);
+    assert.equal((await state.run()).status, 'completed', state.controls.lastDatabaseError);
+  };
+  const result = grant ? await profile.enable(enable) : null;
+  return Object.assign(state, { profile, profileResponses: responses, profileEnable: enable, profileScope: scope,
+    profileGrant: result?.grant, profileCutoff: result?.historyStartsAfterSequence, appendPalette, review });
+}
+for (const shared of [false, true]) test('native memory API integration: document profile real ' + (shared ? 'shared' : 'personal') + ' grant palette events and review traverse the kernel and strict client', async t => {
+  const state = await nativeMemoryDocumentProfileFixture(t, { shared }), created = await state.appendPalette('post-consent');
+  assert.ok(created.event.sequence > state.profileCutoff); await state.review();
+  assert.ok(state.table('memory_live_sources').some(source => source.event_id === created.event.event_id));
+  const before = nativeMemoryOutcomeSnapshot(state), lease = await state.profile.inspect(state.profileGrant), value = lease.value;
+  assert.equal(value.version, 'native-document-palette-choice-v1'); assert.equal(value.treatment, 'document-authored-palette-choices');
+  assert.equal(value.inferredPreferences, false); assert.equal(value.independentEvidence, false); assert.equal(value.choices.length, 1);
+  const choice = value.choices[0]; assert.deepEqual(choice.colors, ['#aabbcc', '#001122']); assert.equal(choice.status, 'supported');
+  assert.equal(choice.supports.length, 1); assert.equal(choice.supports[0].blockId, created.blockId); assert.equal(choice.supports[0].independentEvidence, false);
+  assert.deepEqual(choice.supports[0].sources.map(source => source.eventId), [created.event.event_id]);
+  assert.deepEqual(value.scope, { projectId: state.current().project_id, documentId: state.current().document_id,
+    organizationId: state.current().organization_id, projectAccessId: state.current().project_access_id });
+  assert.deepEqual(nativeMemoryOutcomeSnapshot(state), before); assert.equal(state.profileResponses.at(-1).response.status, 200);
+  nativeMemoryOutcomeNoPaid(state); lease.retire();
+});
+test('native memory API integration: document profile default off rejects actual grant PUT without enrollment or schema mutation', async t => {
+  const state = await nativeMemoryDocumentProfileFixture(t, { enabled: false, grant: false }), before = nativeMemoryOutcomeSnapshot(state);
+  await assert.rejects(state.profile.enable(state.profileEnable), error => error.name === 'DocumentProfileClientError' && error.status === 503 && error.code === 'document_profile_disabled');
+  assert.deepEqual(nativeMemoryOutcomeSnapshot(state), before);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_profile_grants').get().n, 0);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_profile_suppressions').get().n, 0); nativeMemoryOutcomeNoPaid(state);
+});
+test('native memory API integration: document profile actual grant excludes pre-consent palette history and preserves explicit conflict', async t => {
+  const state = await nativeMemoryDocumentProfileFixture(t, { grant: false }), older = await state.appendPalette('before-grant');
+  const result = await state.profile.enable(state.profileEnable); state.profileGrant = result.grant;
+  assert.ok(older.event.sequence <= result.historyStartsAfterSequence);
+  const support = await state.appendPalette('support'), opposition = await state.appendPalette('opposition', 'avoid'); await state.review();
+  const lease = await state.profile.inspect(state.profileGrant), choice = lease.value.choices[0]; assert.equal(lease.value.choices.length, 1);
+  assert.equal(choice.status, 'conflicted'); assert.deepEqual(choice.supports.map(row => row.blockId), [support.blockId]);
+  assert.deepEqual(choice.counterevidence.map(row => row.blockId), [opposition.blockId]);
+  assert.doesNotMatch(JSON.stringify(lease.value), new RegExp(older.blockId)); assert.equal(lease.value.inferredPreferences, false);
+  nativeMemoryOutcomeNoPaid(state); lease.retire();
+});
+for (const withdrawal of ['parent forget','preserving parent settings']) test('native memory API integration: document profile real suppression retires on ' + withdrawal, async t => {
+  const state = await nativeMemoryDocumentProfileFixture(t); await state.appendPalette('withdrawal'); await state.review();
+  const lease = await state.profile.inspect(state.profileGrant), claim = lease.value.choices[0].claimKey;
+  await state.profile.suppress(state.profileGrant, claim, 0);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_profile_suppressions WHERE claim_key=?').get(claim).n, 1);
+  const hidden = await state.profile.inspect(state.profileGrant); assert.deepEqual(hidden.value.choices, []); hidden.retire();
+  if (withdrawal === 'parent forget') await state.client.forget(await state.selected());
+  else await state.client.save({ ...state.preferences, revision: state.current().revision });
+  const row = state.sqlite.prepare('SELECT * FROM memory_document_profile_grants WHERE grant_id=?').get(state.profileGrant.grantId);
+  assert.equal(row.revision, state.profileGrant.revision + 1); assert.deepEqual([row.infer_enabled,row.inspect_enabled,row.background_enabled], [0,0,0]);
+  assert.ok(row.revoked_at); assert.ok(Date.parse(row.expires_at) <= Date.now());
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_profile_suppressions').get().n, 0);
+  await assert.rejects(state.profile.inspect(state.profileGrant), error => error.name === 'DocumentProfileClientError' && error.status === 403 && error.code === 'document_profile_unavailable');
+  const settings = await state.profile.settings(state.profileScope); assert.equal(settings.grantCurrent, false);
+  nativeMemoryOutcomeNoPaid(state); lease.retire();
+});
+
+test('native memory consumer: real earlier-six quotations and exact recent tail retire when an earlier quoted source is withdrawn', async t => {
+  const messages = Array.from({ length: 8 }, (_, index) => 'Keep the distinct historical choice number ' + index + ' in its original context.');
+  const state = await nativeMemoryConsumerFixture(t, { sourceCount: 8, sourceMessages: messages }), turnId = 'consumer-quoted-prefix-withdrawal';
+  const response = await nativeMemoryConsumerRequest(state, turnId), body = await response.json();
+  assert.equal(response.status, 201, JSON.stringify(body)); const turn = nativeMemoryConsumerTurn(body, turnId);
+  for (const message of messages) assert.ok(turn.reply.text.includes(message), message);
+  const earlierEnd = turn.reply.text.indexOf('Recent conversation — excerpts:');
+  assert.ok(earlierEnd > 0); for (const message of messages.slice(0, 6)) assert.ok(turn.reply.text.indexOf(message) < earlierEnd);
+  for (const source of state.consumerSources.slice(-2)) assert.ok(turn.reply.text.includes('You: ' + source.user), 'The recent user clips remain exact');
+  assert.ok(Buffer.byteLength(turn.reply.text, 'utf8') <= 8192);
+  const before = nativeMemoryConsumerOrigins(state), dependency = before.dependencies.find(row => row.turn_id === state.consumerSources[0].id);
+  assert.equal(dependency.consumed, 1, 'The earlier quoted source belongs to the immutable consumed window');
+  state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(), dependency.assistant_content_id);
+  const feed = await state.request(endpoint(), { headers: state.owner }), page = await feed.json();
+  assert.equal(feed.status, 200); assert.ok(page.turns.every(item => item.id !== turnId));
+  const replay = await nativeMemoryConsumerRequest(state, turnId), denied = await replay.json();
+  assert.equal(replay.status, 409); assert.equal(denied.noAutomaticRetry, true); assert.equal(denied.turn, undefined);
+  assert.deepEqual(nativeMemoryConsumerOrigins(state), before, 'No smaller substitute summary or lineage is persisted'); nativeMemoryUnpaid(state);
+});
+
+// Phase 4 additive caller source. The accepted R11 fixtures above remain intact.
+// These cases use the actual free consumer, enrollment and scheduled-job paths;
+// only the existing in-memory DB seams inject races/failures. Not yet executed.
+async function nativeCertifiedRetirementFixture(t, { shared = false, answers = 1, profile = false, unrelated = false } = {}) {
+  let state;
+  if (profile) {
+    state = await nativeMemoryDocumentProfileFixture(t, { shared });
+    const { readFile } = await import('node:fs/promises');
+    state.sqlite.exec(await readFile(new URL('../drizzle/0027_memory_native_origins.sql', import.meta.url), 'utf8'));
+    await state.send('certified-retirement-profile-source');
+    await state.appendPalette('certified-retirement'); await state.review();
+    const lease = await state.profile.inspect(state.profileGrant);
+    try {
+      assert.equal(lease.value.choices.length, 1);
+      await state.profile.suppress(state.profileGrant, lease.value.choices[0].claimKey, 0);
+    } finally { lease.retire(); }
+    assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_profile_suppressions').get().n, 1);
+  } else state = await nativeMemoryConsumerFixture(t, { shared, sourceCount: 2 });
+  for (let index = 0; index < answers; index++) {
+    const id = 'certified-retirement-answer-' + index;
+    const response = await nativeMemoryConsumerRequest(state, id), body = await response.json();
+    assert.equal(response.status, 201, JSON.stringify(body)); nativeMemoryConsumerTurn(body, id);
+  }
+  if (unrelated) state.certifiedRetirementSurvivor = await nativePrivacyAdditionalScope(state, 'certified-retirement-survivor');
+  return state;
+}
+function nativeCertifiedRetirementSnapshot(state) {
+  const snapshot = nativeMemoryWithdrawalSnapshot(state);
+  if (state.profile) snapshot.profile = {
+    grants: state.sqlite.prepare('SELECT * FROM memory_document_profile_grants ORDER BY grant_id').all(),
+    suppressions: state.sqlite.prepare('SELECT * FROM memory_document_profile_suppressions ORDER BY claim_key').all(),
+  };
+  return snapshot;
+}
+async function nativeCertifiedRetirementDenial(state) {
+  const e = state.current(), user = state.sqlite.prepare('SELECT consent_version FROM users WHERE user_id=?').get(e.actor_user_id);
+  state.sqlite.prepare('UPDATE users SET consent_version=NULL WHERE user_id=?').run(e.actor_user_id);
+  const { createLiveMemoryMaintenanceAttempt } = await import('../worker/memory-live-authority.ts');
+  const attempt = createLiveMemoryMaintenanceAttempt(state.env), resolution = await attempt.resolve(e);
+  assert.equal(resolution.status, 'denied', 'A successful native denial read supplies the certificate; an unavailable read never does');
+  return { e, attempt, certificate: resolution.certificate, originalConsent: user.consent_version };
+}
+async function nativeCertifiedRetirementApply(state, denial) {
+  const { retireDeniedLiveMemoryCounted } = await import('../worker/memory-live-store.ts');
+  return retireDeniedLiveMemoryCounted(state.env, denial.e, denial.attempt, denial.certificate);
+}
+function nativeCertifiedRetirementBatch(statements) {
+  return statements.some(statement => /^DELETE FROM memory_live_sources\b/u.test(statement.sql))
+    && statements.some(statement => statement.sql.includes('DELETE FROM memory_native_answer_dependencies'))
+    && statements.some(statement => /^UPDATE memory_live_enrollments\b/u.test(statement.sql));
+}
+function nativeCertifiedRetirementAssert(state, before, enrollment, { receiptChanged = false } = {}) {
+  const after = nativeCertifiedRetirementSnapshot(state), selected = before.origins.origins.filter(row => row.enrollment_id === enrollment.enrollment_id);
+  assert.ok(selected.length > 0);
+  const ids = new Set(selected.map(row => row.origin_id)), answers = new Set(selected.map(row => row.answer_content_id));
+  const terminal = { ...enrollment, revision: enrollment.revision + 1, learn_enabled: 0, recall_enabled: 0, background_enabled: 0,
+    lease_token: null, lease_expires_at: null, cutoff_sequence: null, failure_code: 'access-changed', next_due_at: '9999-12-31T00:00:00.000Z' };
+  assert.deepEqual({ ...state.current() }, terminal, 'Retirement owns exactly the prescribed terminal fields and preserves the original enrollment snapshot');
+  assert.deepEqual(nativeMemoryWithdrawalIdentity(state, after.origins.origins), nativeMemoryWithdrawalIdentity(state, before.origins.origins));
+  assert.deepEqual(after.origins.dependencies, before.origins.dependencies.filter(row => !ids.has(row.origin_id)));
+  assert.deepEqual(after.origins.origins.filter(row => !ids.has(row.origin_id)), before.origins.origins.filter(row => !ids.has(row.origin_id)));
+  for (const original of selected) {
+    const retired = after.origins.origins.find(row => row.origin_id === original.origin_id);
+    if (original.status === 'withdrawn') assert.deepEqual(retired, original, 'Keep the first withdrawal tombstone exactly');
+    else {
+      assert.ok(retired.withdrawn_at);
+      assert.deepEqual({ ...retired }, { ...original, status: 'withdrawn', withdrawn_at: retired.withdrawn_at, withdrawal_reason: 'access-withdrawn' });
+    }
+    const content = after.contents.find(row => row.content_id === original.answer_content_id), prior = before.contents.find(row => row.content_id === original.answer_content_id);
+    assert.ok(content.redacted_at);
+    assert.deepEqual({ ...content }, { ...prior, content: '', redacted_at: prior.redacted_at ?? content.redacted_at });
+  }
+  assert.deepEqual(after.contents.filter(row => !answers.has(row.content_id)), before.contents.filter(row => !answers.has(row.content_id)));
+  for (const field of ['events', 'privateEvents', 'turns']) assert.deepEqual(after[field], before[field], field);
+  assert.deepEqual({ ...after.memory, enrollments: after.memory.enrollments.map(row => ({ ...row })) }, { ...before.memory,
+    enrollments: before.memory.enrollments.map(row => row.enrollment_id === enrollment.enrollment_id ? terminal : { ...row }),
+    sources: before.memory.sources.filter(row => row.enrollment_id !== enrollment.enrollment_id),
+    groups: before.memory.groups.filter(row => row.enrollment_id !== enrollment.enrollment_id),
+    runs: receiptChanged ? after.memory.runs : before.memory.runs,
+  });
+  if (before.profile) {
+    assert.equal(before.profile.grants.length, 1);
+    const original = before.profile.grants[0], grant = after.profile.grants[0];
+    assert.equal(after.profile.grants.length, 1); assert.equal(grant.grant_id, original.grant_id);
+    assert.ok(grant.revoked_at);
+    assert.deepEqual({ ...grant }, { ...original, infer_enabled: 0, inspect_enabled: 0, background_enabled: 0,
+      revision: original.revision + (original.revoked_at === null ? 1 : 0), revoked_at: original.revoked_at ?? grant.revoked_at,
+      expires_at: original.expires_at < grant.revoked_at ? original.expires_at : grant.revoked_at });
+    assert.ok(Date.parse(grant.expires_at) <= Date.now()); assert.deepEqual(after.profile.suppressions, []);
+  }
+  nativeMemoryUnpaid(state); return after;
+}
+
+test('certified denial retirement: genuine shared answer fanout and first tombstone are minimized with an unrelated scope intact', async t => {
+  const state = await nativeCertifiedRetirementFixture(t, { shared: true, answers: 9, unrelated: true });
+  const e = state.current(), origins = nativeMemoryConsumerOrigins(state).origins.filter(row => row.enrollment_id === e.enrollment_id);
+  assert.equal(origins.length, 9);
+  const { nativeMemoryOriginWithdrawal } = await import('../worker/memory-native-origin.ts');
+  const firstWhen = new Date().toISOString(), legacy = nativeMemoryOriginWithdrawal({ originId: origins[0].origin_id }, 'source-unavailable', firstWhen);
+  assert.ok(legacy); await state.env.DB.batch(legacy.map(query => state.env.DB.prepare(query.sql).bind(...query.bindings)));
+  const denial = await nativeCertifiedRetirementDenial(state), before = nativeCertifiedRetirementSnapshot(state);
+  const count = before.memory.sources.filter(row => row.enrollment_id === e.enrollment_id).length;
+  assert.ok(count > 0 && count < origins.length, 'Source count and dependent answer fanout are distinct');
+  assert.ok(before.origins.dependencies.some(row => row.origin_id === origins[0].origin_id), 'The prewithdrawn header still has terminal residue');
+  const trace = nativeMemoryWithdrawalTrace(state); let result;
+  try { result = await nativeCertifiedRetirementApply(state, denial); } finally { trace.stop(); }
+  assert.deepEqual(result, { retired: true, erased: count });
+  assert.equal(trace.captures.length, 1);
+  assert.deepEqual(trace.captures[0].rows, before.origins.origins.filter(row => row.enrollment_id === e.enrollment_id).map(row => ({ ...row })));
+  const after = nativeCertifiedRetirementAssert(state, before, e);
+  assert.equal(after.origins.origins.find(row => row.origin_id === origins[0].origin_id).withdrawn_at, firstWhen);
+  assert.deepEqual(nativePrivacyMemory(state, state.certifiedRetirementSurvivor.id), state.certifiedRetirementSurvivor.saved);
+});
+
+test('certified denial retirement: real personal palette profile suppression and native answer retire in the same cleanup', async t => {
+  const state = await nativeCertifiedRetirementFixture(t, { profile: true });
+  const denial = await nativeCertifiedRetirementDenial(state), before = nativeCertifiedRetirementSnapshot(state);
+  const count = before.memory.sources.filter(row => row.enrollment_id === denial.e.enrollment_id).length;
+  assert.deepEqual(await nativeCertifiedRetirementApply(state, denial), { retired: true, erased: count });
+  nativeCertifiedRetirementAssert(state, before, denial.e);
+});
+
+test('certified denial retirement: actual scheduled caller reports only committed erased sources', async t => {
+  const state = await nativeCertifiedRetirementFixture(t, { shared: true });
+  state.due(); const e = state.current();
+  state.sqlite.prepare('UPDATE users SET consent_version=NULL WHERE user_id=?').run(e.actor_user_id);
+  const before = nativeCertifiedRetirementSnapshot(state), count = before.memory.sources.filter(row => row.enrollment_id === e.enrollment_id).length;
+  const result = await state.run();
+  assert.equal(result.status, 'completed', state.controls.lastDatabaseError); assert.equal(result.failed, 0);
+  assert.equal(result.processed, 0); assert.equal(result.erased, count);
+  nativeCertifiedRetirementAssert(state, before, e, { receiptChanged: true });
+  const receipt = state.table('memory_live_runs').find(row => row.run_id === result.runId);
+  assert.equal(receipt.erased, count); assert.equal(receipt.status, 'completed');
+});
+
+test('certified denial retirement: unavailable native principal read fails the job without erasing retained data', async t => {
+  const state = await nativeCertifiedRetirementFixture(t, { shared: true });
+  state.due(); const e = state.current();
+  state.sqlite.prepare('UPDATE users SET consent_version=NULL WHERE user_id=?').run(e.actor_user_id);
+  const before = nativeMemoryDependencyJobData(state), prepare = state.env.DB.prepare; let failures = 0;
+  state.env.DB.prepare = function(sql) {
+    const statement = prepare.call(this, sql), bind = statement.bind;
+    statement.bind = function(...values) {
+      const bound = bind.apply(this, values);
+      if (sql.startsWith('WITH memory_maintenance_principal AS (')) bound.all = async () => { failures++; throw new Error('fixture_native_principal_unavailable'); };
+      return bound;
+    };
+    return statement;
+  };
+  let result; try { result = await state.run(); } finally { state.env.DB.prepare = prepare; }
+  assert.equal(failures, 1); assert.equal(result.status, 'partial'); assert.equal(result.failed, 1);
+  assert.equal(result.processed, 0); assert.equal(result.erased, 0);
+  assert.deepEqual(nativeMemoryDependencyJobData(state), before);
+  assert.deepEqual({ ...state.current() }, { ...e, next_due_at: state.current().next_due_at }, 'Only the preexisting retry bookkeeping may change');
+  nativeMemoryUnpaid(state);
+});
+
+test('certified denial retirement: a recovered current principal after the initial nullable lookup does not trigger erasure', async t => {
+  const state = await nativeCertifiedRetirementFixture(t); state.due();
+  const before = nativeMemoryDependencyJobData(state), e = state.current(), prepare = state.env.DB.prepare; let unavailableFirstRead = 0;
+  state.env.DB.prepare = function(sql) {
+    const statement = prepare.call(this, sql), bind = statement.bind;
+    statement.bind = function(...values) {
+      const bound = bind.apply(this, values), first = bound.first;
+      if (sql.includes('grants_json') && sql.includes('approved_canvas_requirements')) bound.first = async function(...args) {
+        if (!unavailableFirstRead) { unavailableFirstRead++; return null; }
+        return first.apply(this, args);
+      };
+      return bound;
+    };
+    return statement;
+  };
+  let result; try { result = await state.run(); } finally { state.env.DB.prepare = prepare; }
+  assert.equal(unavailableFirstRead, 1); assert.equal(result.status, 'completed'); assert.equal(result.failed, 0);
+  assert.equal(result.processed, 0); assert.equal(result.erased, 0);
+  assert.deepEqual(nativeMemoryDependencyJobData(state), before); assert.deepEqual(state.current(), e); nativeMemoryUnpaid(state);
+});
+
+for (const race of ['restored native authority', 'same-revision enrollment snapshot drift'])
+test('certified denial retirement: ' + race + ' before BEGIN rolls back against the original full capture', async t => {
+  const state = await nativeCertifiedRetirementFixture(t), denial = await nativeCertifiedRetirementDenial(state);
+  let raced;
+  const trace = nativeMemoryWithdrawalTrace(state, () => {
+    if (race === 'restored native authority') state.sqlite.prepare('UPDATE users SET consent_version=? WHERE user_id=?').run(denial.originalConsent, denial.e.actor_user_id);
+    else state.sqlite.prepare('UPDATE memory_live_enrollments SET attempts=attempts+1 WHERE enrollment_id=?').run(denial.e.enrollment_id);
+    raced = nativeCertifiedRetirementSnapshot(state);
+  });
+  try { await assert.rejects(nativeCertifiedRetirementApply(state, denial)); } finally { trace.stop(); }
+  assert.equal(trace.injected, 1); assert.equal(trace.batches.length, 1); assert.equal(trace.batches[0].succeeded, false);
+  assert.deepEqual(nativeCertifiedRetirementSnapshot(state), raced, 'The separately committed restoration/drift is retained exactly');
+  if (race === 'restored native authority') assert.equal(state.sqlite.prepare('SELECT consent_version FROM users WHERE user_id=?').get(denial.e.actor_user_id).consent_version, denial.originalConsent);
+  nativeMemoryUnpaid(state);
+});
+
+for (const skipped of ['source deletion', 'terminal enrollment update'])
+test('certified denial retirement: ignored ' + skipped + ' fails final proof and restores prior lineage', async t => {
+  const state = await nativeCertifiedRetirementFixture(t), denial = await nativeCertifiedRetirementDenial(state);
+  const before = nativeCertifiedRetirementSnapshot(state), original = state.env.DB.batch; let injected = 0;
+  state.env.DB.batch = async function(statements) {
+    if (!nativeCertifiedRetirementBatch(statements)) return original.call(this, statements);
+    const matches = statement => skipped === 'source deletion' ? /^DELETE FROM memory_live_sources\b/u.test(statement.sql)
+      : /^UPDATE memory_live_enrollments\b/u.test(statement.sql);
+    assert.equal(statements.filter(matches).length, 1); injected++;
+    // Preserve the real atomic batch, substituting only the one ignored write.
+    return original.call(this, statements.map(statement => matches(statement) ? state.env.DB.prepare('SELECT 0 AS fixture_ignored_write') : statement));
+  };
+  try { await assert.rejects(nativeCertifiedRetirementApply(state, denial)); } finally { state.env.DB.batch = original; }
+  assert.equal(injected, 1); assert.deepEqual(nativeCertifiedRetirementSnapshot(state), before); nativeMemoryUnpaid(state);
+});
+
+test('certified denial retirement: a later SQL failure rolls back terminal enrollment and every completed inverse write', async t => {
+  const state = await nativeCertifiedRetirementFixture(t, { profile: true }), denial = await nativeCertifiedRetirementDenial(state);
+  const before = nativeCertifiedRetirementSnapshot(state), original = state.env.DB.batch; let injected = 0, reachedTerminal = 0;
+  state.env.DB.batch = async function(statements) {
+    if (!nativeCertifiedRetirementBatch(statements)) return original.call(this, statements);
+    injected++; const failure = state.env.DB.prepare("SELECT json('fixture_certified_retirement_late_failure')"), execute = failure.execute;
+    failure.execute = function(kind) { nativeCertifiedRetirementAssert(state, before, denial.e); reachedTerminal++; return execute.call(this, kind); };
+    return original.call(this, [...statements, failure]);
+  };
+  try { await assert.rejects(nativeCertifiedRetirementApply(state, denial), /malformed JSON/u); } finally { state.env.DB.batch = original; }
+  assert.equal(injected, 1); assert.equal(reachedTerminal, 1);
+  assert.deepEqual(nativeCertifiedRetirementSnapshot(state), before); nativeMemoryUnpaid(state);
+});
+
+for (const acknowledgement of ['missing final result', 'empty profile assertion'])
+test('certified denial retirement: postcommit ' + acknowledgement + ' is unconfirmed rather than a fictional rollback', async t => {
+  const state = await nativeCertifiedRetirementFixture(t, { profile: acknowledgement === 'empty profile assertion' }), denial = await nativeCertifiedRetirementDenial(state);
+  const before = nativeCertifiedRetirementSnapshot(state), original = state.env.DB.batch; let committed = 0, returned;
+  state.env.DB.batch = async function(statements) {
+    const results = await original.call(this, statements);
+    if (!nativeCertifiedRetirementBatch(statements)) return results;
+    committed++;
+    if (acknowledgement === 'missing final result') return results.slice(0, -1);
+    const index = statements.findIndex(statement => statement.sql.includes("json('document_profile_schema_unavailable')"));
+    assert.ok(index >= 0, 'Select an assertion emitted by the actual profile helper, not the store\'s separate grant proof');
+    assert.equal(results[index].success, true); assert.deepEqual(results[index].results.map(row => ({ ...row })), [{ verified: 1 }]);
+    return results.map((result, position) => position === index ? { ...result, success: true, results: [] } : result);
+  };
+  try { await assert.rejects(async () => { returned = await nativeCertifiedRetirementApply(state, denial); }, /memory-retirement-unconfirmed/u); }
+  finally { state.env.DB.batch = original; }
+  assert.equal(committed, 1); assert.equal(returned, undefined, 'No successful retirement receipt or erased count was confirmed');
+  nativeCertifiedRetirementAssert(state, before, denial.e);
+});
+
+test('certified denial retirement: a fresh certificate verifies clean terminal state without another revision or tombstone', async t => {
+  const state = await nativeCertifiedRetirementFixture(t), denial = await nativeCertifiedRetirementDenial(state);
+  const before = nativeCertifiedRetirementSnapshot(state);
+  await nativeCertifiedRetirementApply(state, denial); nativeCertifiedRetirementAssert(state, before, denial.e);
+  const terminal = nativeCertifiedRetirementSnapshot(state), fresh = await nativeCertifiedRetirementDenial(state);
+  assert.deepEqual(await nativeCertifiedRetirementApply(state, fresh), { retired: true, erased: 0 });
+  assert.deepEqual(nativeCertifiedRetirementSnapshot(state), terminal); nativeMemoryUnpaid(state);
+});
+
+test('certified denial retirement: an actually leased page cannot publish after independently committed denial retirement', async t => {
+  const state = await nativeCertifiedRetirementFixture(t, { shared: true });
+  await state.send('certified-retirement-stale-publication');
+  state.sqlite.prepare("UPDATE memory_live_enrollments SET last_local_day=NULL,last_admitted_at=NULL,next_due_at='2000-01-01T00:00:00.000Z' WHERE enrollment_id=?")
+    .run(state.current().enrollment_id);
+  const original = state.env.DB.batch; let interrupted = 0, retiredData, terminal, receipt;
+  state.env.DB.batch = async function(statements) {
+    if (!interrupted && statements.some(statement => statement.sql.includes('INSERT INTO memory_live_conversation_segments'))) {
+      interrupted++; assert.ok(state.current().lease_token, 'The original worker already owns a genuine page lease');
+      const denial = await nativeCertifiedRetirementDenial(state), before = nativeCertifiedRetirementSnapshot(state);
+      receipt = await nativeCertifiedRetirementApply(state, denial);
+      assert.deepEqual(receipt, { retired: true, erased: before.memory.sources.filter(row => row.enrollment_id === denial.e.enrollment_id).length });
+      nativeCertifiedRetirementAssert(state, before, denial.e);
+      terminal = state.current(); retiredData = nativeMemoryDependencyJobData(state);
+    }
+    return original.call(this, statements);
+  };
+  let result; try { result = await state.run(); } finally { state.env.DB.batch = original; }
+  assert.equal(interrupted, 1); assert.equal(result.status, 'partial'); assert.equal(result.failed, 1); assert.equal(result.processed, 0);
+  assert.equal(result.erased, 0, 'The failed page does not claim a separately committed retirement receipt'); assert.ok(receipt.erased > 0);
+  assert.deepEqual(state.current(), terminal); assert.deepEqual(nativeMemoryDependencyJobData(state), retiredData); nativeMemoryUnpaid(state);
+});
+
+for (const drift of ['grant deletion', 'immutable source cutoff change', 'first tombstone overwrite'])
+test('certified denial retirement: late profile ' + drift + ' after terminal enrollment rolls back the complete inverse', async t => {
+  const state = await nativeCertifiedRetirementFixture(t, { profile: true });
+  if (drift === 'first tombstone overwrite') {
+    const { documentProfileWithdrawalStatements } = await import('../worker/memory-document-profile-store.ts');
+    const firstWhen = new Date().toISOString();
+    await state.env.DB.batch(await documentProfileWithdrawalStatements(state.env, { enrollmentId: state.current().enrollment_id }, firstWhen));
+    assert.equal(state.sqlite.prepare('SELECT revoked_at FROM memory_document_profile_grants WHERE grant_id=?').get(state.profileGrant.grantId).revoked_at, firstWhen);
+  }
+  const denial = await nativeCertifiedRetirementDenial(state), before = nativeCertifiedRetirementSnapshot(state);
+  const prepare = state.env.DB.prepare; let injected = 0;
+  state.env.DB.prepare = function(sql) {
+    const statement = prepare.call(this, sql), bind = statement.bind;
+    statement.bind = function(...values) {
+      const bound = bind.apply(this, values), execute = bound.execute;
+      if (sql.startsWith('UPDATE memory_live_enrollments SET\n    learn_enabled=?')
+        && values[7] === 'access-changed' && values[9] === denial.e.enrollment_id) bound.execute = function(kind) {
+        const result = execute.call(this, kind);
+        nativeCertifiedRetirementAssert(state, before, denial.e);
+        const grant = state.sqlite.prepare('SELECT * FROM memory_document_profile_grants WHERE grant_id=?').get(state.profileGrant.grantId);
+        assert.ok(grant.revoked_at, 'The profile inverse has already finished before the later write');
+        let changed;
+        if (drift === 'grant deletion') changed = state.sqlite.prepare('DELETE FROM memory_document_profile_grants WHERE grant_id=?').run(grant.grant_id);
+        else if (drift === 'immutable source cutoff change') changed = state.sqlite.prepare('UPDATE memory_document_profile_grants SET source_after_sequence=source_after_sequence+1 WHERE grant_id=?').run(grant.grant_id);
+        else changed = state.sqlite.prepare('UPDATE memory_document_profile_grants SET revoked_at=? WHERE grant_id=?')
+          .run(new Date(Date.parse(grant.revoked_at) + 1).toISOString(), grant.grant_id);
+        assert.equal(Number(changed.changes), 1, 'The existing schema accepted the drift; only the repeated exact final proof must reject it');
+        injected++; return result;
+      };
+      return bound;
+    };
+    return statement;
+  };
+  try { await assert.rejects(nativeCertifiedRetirementApply(state, denial), /malformed JSON/u); }
+  finally { state.env.DB.prepare = prepare; }
+  assert.equal(injected, 1); assert.deepEqual(nativeCertifiedRetirementSnapshot(state), before); nativeMemoryUnpaid(state);
+});
+
+test('certified denial retirement: forged attempt and genuine attempt from another environment cannot reach preparation or writes', async t => {
+  const state = await nativeCertifiedRetirementFixture(t), denial = await nativeCertifiedRetirementDenial(state);
+  const before = nativeCertifiedRetirementSnapshot(state), prepare = state.env.DB.prepare; let preparations = 0, forgedCalls = 0;
+  const forged = { resolve: denial.attempt.resolve, denialRetirementStatements() {
+    forgedCalls++; return { beforeMutation: [], afterRetirement: [], terminal: { ...denial.e } };
+  } };
+  const { retireDeniedLiveMemoryCounted } = await import('../worker/memory-live-store.ts');
+  state.env.DB.prepare = function(sql) { preparations++; return prepare.call(this, sql); };
+  try {
+    await assert.rejects(retireDeniedLiveMemoryCounted(state.env, denial.e, forged, denial.certificate), /memory-maintenance-unavailable/u);
+    await assert.rejects(retireDeniedLiveMemoryCounted({ ...state.env }, denial.e, denial.attempt, denial.certificate), /memory-maintenance-unavailable/u);
+  } finally { state.env.DB.prepare = prepare; }
+  assert.equal(forgedCalls, 0); assert.equal(preparations, 0);
+  assert.deepEqual(nativeCertifiedRetirementSnapshot(state), before); nativeMemoryUnpaid(state);
+});
+
+test('certified denial retirement: origin target read carrying an error never admits a write batch or erases data', async t => {
+  const state = await nativeCertifiedRetirementFixture(t), denial = await nativeCertifiedRetirementDenial(state);
+  const before = nativeCertifiedRetirementSnapshot(state), prepare = state.env.DB.prepare, batch = state.env.DB.batch;
+  let malformed = 0, batches = 0;
+  state.env.DB.prepare = function(sql) {
+    const statement = prepare.call(this, sql), bind = statement.bind;
+    statement.bind = function(...values) {
+      const bound = bind.apply(this, values), all = bound.all;
+      if (/^SELECT origin\.origin_id,/u.test(sql) && sql.includes('FROM memory_native_answer_origins origin WHERE')) bound.all = async function(...args) {
+        const result = await all.apply(this, args);
+        assert.equal(result.success, true); assert.ok(result.results.length > 0, 'Preserve genuine captured headers in the malformed read');
+        malformed++; return { ...result, success: true, error: 'fixture' };
+      };
+      return bound;
+    };
+    return statement;
+  };
+  state.env.DB.batch = async function(statements) { batches++; return batch.call(this, statements); };
+  try { await assert.rejects(nativeCertifiedRetirementApply(state, denial), /memory-retirement-origin-unavailable/u); }
+  finally { state.env.DB.prepare = prepare; state.env.DB.batch = batch; }
+  assert.equal(malformed, 1); assert.equal(batches, 0, 'An error-bearing target read cannot certify a cleanup transaction');
+  assert.deepEqual(nativeCertifiedRetirementSnapshot(state), before); nativeMemoryUnpaid(state);
+});
+
+// Additive specialist replacement source; the accepted P4 prefix is unchanged.
+// Genuine native origins precede EXECUTE approval. Intercepted fixture responses
+// exercise local accounting only; these source cases have not been executed.
+const nativeSpecialistReplacementUpdate = /^UPDATE private_content SET content=\? WHERE content_id=\? AND owner_id=\? AND kind='chat-assistant'/u;
+const nativeSpecialistReplacementSchema = 'SELECT type,name,sql FROM sqlite_schema WHERE name IN(?,?) ORDER BY name';
+function nativeSpecialistReplacementData(state) {
+  const tables = state.sqlite.prepare("SELECT name,type,sql FROM sqlite_schema WHERE name IN('memory_native_answer_origins','memory_native_answer_dependencies') ORDER BY name").all();
+  const has = name => tables.some(row => row.name === name);
+  return { schema: tables,
+    origins: has('memory_native_answer_origins') ? state.sqlite.prepare('SELECT * FROM memory_native_answer_origins ORDER BY origin_id').all() : null,
+    dependencies: has('memory_native_answer_dependencies') ? state.sqlite.prepare('SELECT * FROM memory_native_answer_dependencies ORDER BY origin_id,ordinal').all() : null,
+    contents: state.sqlite.prepare('SELECT * FROM private_content ORDER BY content_id').all(),
+    events: state.sqlite.prepare('SELECT * FROM events ORDER BY event_id').all(),
+    privateEvents: state.sqlite.prepare('SELECT * FROM event_private_payloads ORDER BY private_event_id').all(),
+    turns: state.sqlite.prepare('SELECT * FROM assistant_turns ORDER BY actor_user_id,scope_key,turn_id').all(),
+    tasks: state.sqlite.prepare('SELECT * FROM assistant_specialist_tasks ORDER BY task_id').all(),
+    retention: state.sqlite.prepare('SELECT * FROM private_content_retention_scopes ORDER BY content_id').all(),
+    proposals: state.sqlite.prepare('SELECT * FROM assistant_action_proposals ORDER BY proposal_id').all(),
+    commits: state.sqlite.prepare('SELECT * FROM assistant_action_commits ORDER BY commit_id').all(),
+    memory: state.current ? nativeMemoryApiSnapshot(state) : null };
+}
+async function nativeSpecialistReplacementFixture(t, { shared = false, answers = 1, unrelated = false, identical = false, local = false } = {}) {
+  let state, target;
+  if (local) {
+    state = await specialistMockFixture(); t.after(() => finishOrdinaryFeed(state, { failures: [] }));
+    target = await specialistFreeTurn(state, 'replacement-local-source');
+  } else {
+    state = await nativeMemoryConsumerFixture(t, { shared, sourceCount: 2 }); target = state.consumerSources.at(-1);
+    // Reuse the existing specialist mock response contract; this never contacts a provider.
+    state.env.OPENAI_API_KEY = 'fixture-provider-key'; state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS = state.current().actor_user_id;
+    globalThis.fetch = async (url, init) => {
+      assert.equal(String(url), 'https://api.openai.com/v1/responses'); assert.equal(init.method, 'POST');
+      const payload = JSON.parse(init.body); state.calls.push({ payload, headers: init.headers });
+      return specialistStructuredResponse(payload, { reply: state.replacement.reply });
+    };
+  }
+  const pointers = ordinaryFeedPointers(state, target), reply = identical ? state.sqlite.prepare('SELECT content FROM private_content WHERE content_id=?').get(pointers.answer).content
+    : local ? 'PRIVATE_VERIFIED_SPECIALIST_REPLY' : 'PRIVATE_NATIVE_SOURCE_REPLACEMENT';
+  const review = await specialistQuote(state, target.id), quoted = specialistFeedSnapshot(state);
+  assert.equal(quoted.tasks.length, 0); assert.equal(state.calls.length, 0);
+  state.replacement = { target, pointers, reply, review };
+  if (!local) {
+    for (let index = 0; index < answers; index++) {
+      const id = 'replacement-native-answer-' + index, response = await nativeMemoryConsumerRequest(state, id), body = await response.json();
+      assert.equal(response.status, 201, JSON.stringify(body)); nativeMemoryConsumerTurn(body, id);
+    }
+    if (unrelated) state.replacement.survivor = await nativePrivacyAdditionalScope(state, 'specialist-replacement-control');
+    const origins = nativeMemoryConsumerOrigins(state), affected = origins.dependencies.filter(row => row.assistant_content_id === pointers.answer);
+    assert.equal(new Set(affected.map(row => row.origin_id)).size, answers);
+  }
+  const derived = specialistFeedSnapshot(state);
+  for (const field of ['financial', 'executions', 'steps', 'tasks', 'commits']) assert.deepEqual(derived[field], quoted[field],
+    'Unapproved native derivation changes neither the frozen quote nor local financial records');
+  assert.equal(state.calls.length, 0); return state;
+}
+async function nativeSpecialistReplacementApprove(state, { pauseCopy = false } = {}) {
+  let restore, paused = 0;
+  if (pauseCopy) restore = interceptConsequentialDb(state, 'batch', nativeSpecialistReplacementUpdate, () => {
+    paused++; throw new Error('fixture_pause_materialization_before_BEGIN');
+  });
+  try {
+    const response = await specialistExecute(state, state.replacement.review);
+    assert.equal(response.status, 202, await response.clone().text()); await state.drainBackground();
+  } finally { restore?.(); }
+  assert.equal(paused, Number(pauseCopy)); assert.equal(state.calls.length, 1);
+  const receipt = { ...consequentialReceipt(state, state.replacement.review.quote.executionId),
+    balances: consequentialBalances(state, state.replacement.pointers.row.actor_user_id) };
+  assert.equal(receipt.execution.status, 'completed'); assert.ok(receipt.execution.result_ref);
+  assert.equal(receipt.steps[0].status, 'settled'); assert.equal(receipt.steps[0].verified_tokens, 1300);
+  assert.deepEqual(state.calls[0].payload, state.replacement.review.quote.privateInput.providerRequest);
+  assert.equal(receipt.balances.tokens.reserved, 0); assert.equal(receipt.balances.cost.reserved, 0);
+  assert.equal(receipt.tokens.length, 1); assert.equal(receipt.cost.length, 1);
+  assert.equal(receipt.tokens[0].used_tokens, 1300); assert.equal(receipt.balances.tokens.used, 1300);
+  assert.ok(receipt.cost[0].used_microusd > 0); assert.equal(receipt.cost[0].used_microusd, receipt.steps[0].verified_microusd);
+  assert.equal(receipt.balances.cost.used, receipt.cost[0].used_microusd);
+  if (pauseCopy) assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM assistant_action_commits WHERE commit_id=?')
+    .get('task:' + state.replacement.review.quote.executionId).n, 0);
+  return receipt;
+}
+function nativeSpecialistReplacementTrace(state, beforeBatch) {
+  const trace = nativeMemoryWithdrawalTrace(state), batch = state.env.DB.batch;
+  trace.materializations = [];
+  state.env.DB.batch = async function(statements) {
+    if (!statements.some(statement => nativeSpecialistReplacementUpdate.test(statement.sql))) return batch.call(this, statements);
+    const entry = { statements, before: nativeSpecialistReplacementData(state), financial: adaptiveReentryFinancialState(state), succeeded: false };
+    trace.materializations.push(entry); await beforeBatch?.(entry);
+    const result = await batch.call(this, entry.statements); entry.succeeded = true; return result;
+  };
+  return trace;
+}
+function nativeSpecialistReplacementOrder(trace, { present = true } = {}) {
+  assert.equal(trace.materializations.length, 1); const entry = trace.materializations[0], statements = entry.statements;
+  const update = statements.findIndex(statement => nativeSpecialistReplacementUpdate.test(statement.sql)); assert.equal(update, 0);
+  assert.match(statements[update + 1].sql, /SELECT CASE WHEN changes\(\)=1 .*assistant_result_content_changed/u);
+  const bookends = statements.flatMap((statement, index) => statement.sql.includes("json('memory_origin_withdrawal_schema_changed')") ? [index] : []);
+  assert.deepEqual(bookends, [update + 2, update + (present ? 10 : 3)]);
+  if (present) {
+    nativeMemoryWithdrawalBatch(trace);
+    assert.deepEqual(statements.slice(update + 3, update + 10), trace.prepared, 'All seven original inverse statements remain contiguous after the successful replacement proof');
+  } else { assert.equal(trace.captures.length, 0); assert.equal(trace.prepared.length, 0); }
+  const marker = statements.findIndex(statement => /^INSERT INTO assistant_action_commits/u.test(statement.sql));
+  assert.ok(marker > bookends[1]); return entry;
+}
+function nativeSpecialistReplacementAssert(state, before, { affected = 1 } = {}) {
+  const after = nativeSpecialistReplacementData(state), source = state.replacement.pointers.answer;
+  const ids = new Set((before.dependencies ?? []).filter(row => row.assistant_content_id === source || row.user_content_id === source).map(row => row.origin_id));
+  assert.equal(ids.size, affected);
+  assert.equal(after.origins?.length ?? 0, before.origins?.length ?? 0);
+  for (const origin of before.origins ?? []) {
+    const actual = after.origins.find(row => row.origin_id === origin.origin_id);
+    if (!ids.has(origin.origin_id) || origin.status === 'withdrawn') assert.deepEqual(actual, origin);
+    else {
+      assert.ok(actual.withdrawn_at);
+      assert.deepEqual({ ...actual }, { ...origin, status: 'withdrawn', withdrawn_at: actual.withdrawn_at, withdrawal_reason: 'source-changed' });
+    }
+  }
+  assert.deepEqual(after.dependencies, before.dependencies?.filter(row => !ids.has(row.origin_id)) ?? null);
+  const answers = new Set((before.origins ?? []).filter(row => ids.has(row.origin_id)).map(row => row.answer_content_id));
+  assert.equal(after.contents.length, before.contents.length);
+  for (const original of before.contents) {
+    const actual = after.contents.find(row => row.content_id === original.content_id);
+    if (original.content_id === source) assert.deepEqual({ ...actual }, { ...original, content: state.replacement.reply });
+    else if (answers.has(original.content_id)) {
+      assert.ok(actual.redacted_at); assert.deepEqual({ ...actual }, { ...original, content: '', redacted_at: original.redacted_at ?? actual.redacted_at });
+    } else assert.deepEqual(actual, original);
+  }
+  for (const event of before.events) assert.deepEqual(after.events.find(row => row.event_id === event.event_id), event);
+  for (const event of before.privateEvents) assert.deepEqual(after.privateEvents.find(row => row.private_event_id === event.private_event_id), event);
+  assert.deepEqual(after.turns, before.turns); assert.deepEqual(after.retention, before.retention);
+  assert.equal(after.tasks.length, before.tasks.length);
+  for (const task of before.tasks) {
+    const actual = after.tasks.find(row => row.task_id === task.task_id);
+    if (task.task_id !== state.replacement.review.quote.executionId) assert.deepEqual(actual, task);
+    else {
+      assert.ok(actual.completed_at); assert.equal(actual.updated_at, actual.completed_at);
+      assert.deepEqual({ ...actual }, { ...task, status: 'completed', error_code: null, updated_at: actual.updated_at, completed_at: actual.completed_at });
+    }
+  }
+  const added = after.events.filter(event => !before.events.some(row => row.event_id === event.event_id));
+  assert.equal(added.length, 1); assert.equal(added[0].type, 'AssistantReasoned');
+  assert.equal(added[0].correlation_id, state.replacement.review.quote.executionId);
+  assert.deepEqual(after.memory, before.memory === null ? null : { ...before.memory, canonicalEvents: before.memory.canonicalEvents + 1 }); assert.deepEqual(after.schema, before.schema); assert.deepEqual(after.proposals, before.proposals);
+  if (state.replacement.survivor) assert.deepEqual(nativePrivacyMemory(state, state.replacement.survivor.id), state.replacement.survivor.saved);
+  for (const commit of before.commits) assert.deepEqual(after.commits.find(row => row.commit_id === commit.commit_id), commit);
+  assert.equal(after.commits.filter(row => row.commit_id === 'task:' + state.replacement.review.quote.executionId).length, 1);
+  return after;
+}
+async function nativeSpecialistReplacementRead(state, { pending = false } = {}) {
+  const response = await specialistRetrieve(state, state.replacement.review), body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body)); assert.equal(body.result.reply, state.replacement.reply);
+  assert.equal(body.materializationPending, pending); return body;
+}
+async function nativeSpecialistReplacementOnce(state) {
+  const before = nativeSpecialistReplacementData(state), financial = adaptiveReentryFinancialState(state), trace = nativeMemoryWithdrawalTrace(state);
+  try {
+    const body = await nativeSpecialistReplacementRead(state); assert.equal(body.turn.reply.text, state.replacement.reply);
+    await nativeSpecialistReplacementRead(state);
+  } finally { trace.stop(); }
+  assert.equal(trace.captures.length, 0); assert.equal(trace.batches.length, 0, 'A committed specialist marker prevents replaying the inverse');
+  assert.equal(state.calls.length, 1); assert.deepEqual(adaptiveReentryFinancialState(state), financial);
+  assert.deepEqual(nativeSpecialistReplacementData(state), before);
+}
+
+for (const shared of [false, true]) test('specialist replacement inverse: genuine ' + (shared ? 'shared fanout' : 'personal') + ' source retires dependent answers without rewriting their markers', async t => {
+  const answers = shared ? 9 : 1, state = await nativeSpecialistReplacementFixture(t, { shared, answers, unrelated: shared });
+  let firstWhen, firstId;
+  if (shared) {
+    const origins = nativeMemoryConsumerOrigins(state), source = state.replacement.pointers.answer;
+    firstId = origins.dependencies.find(row => row.assistant_content_id === source).origin_id;
+    const { nativeMemoryOriginWithdrawal } = await import('../worker/memory-native-origin.ts'); firstWhen = new Date().toISOString();
+    const writes = nativeMemoryOriginWithdrawal({ originId: firstId }, 'source-unavailable', firstWhen); assert.ok(writes);
+    await state.env.DB.batch(writes.map(query => state.env.DB.prepare(query.sql).bind(...query.bindings)));
+    assert.ok(nativeMemoryConsumerOrigins(state).dependencies.some(row => row.origin_id === firstId), 'The legacy first tombstone leaves dependency residue to clean');
+  }
+  const trace = nativeSpecialistReplacementTrace(state);
+  try { await nativeSpecialistReplacementApprove(state); } finally { trace.stop(); }
+  const entry = nativeSpecialistReplacementOrder(trace); assert.equal(entry.succeeded, true);
+  assert.equal(trace.captures[0].rows.length, answers);
+  const after = nativeSpecialistReplacementAssert(state, entry.before, { affected: answers });
+  if (shared) assert.equal(after.origins.find(row => row.origin_id === firstId).withdrawn_at, firstWhen);
+  assert.deepEqual(adaptiveReentryFinancialState(state), entry.financial); await nativeSpecialistReplacementOnce(state);
+});
+
+test('specialist replacement inverse: existing local specialist succeeds with both origin tables absent and no runtime DDL', async t => {
+  const state = await nativeSpecialistReplacementFixture(t, { local: true }), trace = nativeSpecialistReplacementTrace(state);
+  try { await nativeSpecialistReplacementApprove(state); } finally { trace.stop(); }
+  const entry = nativeSpecialistReplacementOrder(trace, { present: false }); assert.equal(entry.succeeded, true);
+  assert.ok(entry.statements.every(statement => !/^\s*(?:CREATE|ALTER|DROP)\b/iu.test(statement.sql)));
+  nativeSpecialistReplacementAssert(state, entry.before, { affected: 0 }); await nativeSpecialistReplacementOnce(state);
+});
+
+test('specialist replacement inverse: identical reply still has one genuinely matched UPDATE and withdraws its native dependencies', async t => {
+  const state = await nativeSpecialistReplacementFixture(t, { identical: true }), trace = nativeSpecialistReplacementTrace(state);
+  try { await nativeSpecialistReplacementApprove(state); } finally { trace.stop(); }
+  const entry = nativeSpecialistReplacementOrder(trace); assert.equal(entry.succeeded, true);
+  assert.equal(entry.before.contents.find(row => row.content_id === state.replacement.pointers.answer).content, state.replacement.reply);
+  nativeSpecialistReplacementAssert(state, entry.before); await nativeSpecialistReplacementOnce(state);
+});
+
+test('specialist replacement inverse: ignored UPDATE cannot retire lineage merely because the existing reply is already identical', async t => {
+  const state = await nativeSpecialistReplacementFixture(t, { identical: true }); await nativeSpecialistReplacementApprove(state, { pauseCopy: true });
+  const before = nativeSpecialistReplacementData(state), financial = adaptiveReentryFinancialState(state);
+  const trace = nativeSpecialistReplacementTrace(state, entry => {
+    const original = entry.statements[0]; assert.ok(nativeSpecialistReplacementUpdate.test(original.sql));
+    // A real zero-match UPDATE establishes SQLite changes()=0; a SELECT would leave an unrelated previous write count.
+    entry.statements = [state.env.DB.prepare('UPDATE private_content SET content=content WHERE content_id=? AND 0').bind(state.replacement.pointers.answer), ...entry.statements.slice(1)];
+  });
+  try { await nativeSpecialistReplacementRead(state, { pending: true }); } finally { trace.stop(); }
+  assert.equal(trace.materializations.length, 1); assert.equal(trace.materializations[0].succeeded, false);
+  assert.deepEqual(nativeSpecialistReplacementData(state), before); assert.deepEqual(adaptiveReentryFinancialState(state), financial);
+  await nativeSpecialistReplacementRead(state); await nativeSpecialistReplacementOnce(state);
+});
+
+for (const capture of ['empty', 'nonempty']) test('specialist replacement inverse: ' + capture + ' selection refuses delayed previously certified tombstone metadata', async t => {
+  const state = await nativeSpecialistReplacementFixture(t, { answers: capture === 'empty' ? 1 : 2 });
+  const graph = nativeMemoryConsumerOrigins(state), id = graph.dependencies.find(row => row.assistant_content_id === state.replacement.pointers.answer).origin_id;
+  const { nativeMemoryOriginWithdrawal } = await import('../worker/memory-native-origin.ts');
+  const writes = nativeMemoryOriginWithdrawal({ originId: id }, 'source-unavailable', new Date().toISOString()); assert.ok(writes);
+  await state.env.DB.batch(writes.map(query => state.env.DB.prepare(query.sql).bind(...query.bindings)));
+  const withdrawn = nativeMemoryConsumerOrigins(state), header = withdrawn.origins.find(row => row.origin_id === id), dependencies = withdrawn.dependencies.filter(row => row.origin_id === id);
+  assert.equal(header.status, 'withdrawn'); assert.ok(dependencies.length > 0);
+  // Existing triggers allow deletion only AFTER withdrawal. Save and restore the
+  // same withdrawn row, never an active row and never a paid-time native publication.
+  state.sqlite.prepare('DELETE FROM memory_native_answer_dependencies WHERE origin_id=?').run(id);
+  state.sqlite.prepare('DELETE FROM memory_native_answer_origins WHERE origin_id=?').run(id);
+  await nativeSpecialistReplacementApprove(state, { pauseCopy: true });
+  let raced;
+  const trace = nativeSpecialistReplacementTrace(state, () => {
+    const insert = (table, row) => { const columns = Object.keys(row); state.sqlite.prepare('INSERT INTO ' + table + '(' + columns.join(',') + ') VALUES(' + columns.map(() => '?').join(',') + ')').run(...Object.values(row)); };
+    insert('memory_native_answer_origins', header); for (const dependency of dependencies) insert('memory_native_answer_dependencies', dependency);
+    raced = nativeSpecialistReplacementData(state);
+  });
+  try { await nativeSpecialistReplacementRead(state, { pending: true }); } finally { trace.stop(); }
+  assert.equal(trace.captures.length, 1); assert.equal(trace.captures[0].rows.length, capture === 'empty' ? 0 : 1);
+  assert.equal(trace.materializations.length, 1); assert.equal(trace.materializations[0].succeeded, false);
+  assert.deepEqual(nativeSpecialistReplacementData(state), raced, 'Only the separately restored exact tombstone/residue persists; all replacement writes roll back');
+  assert.equal(state.calls.length, 1); assert.deepEqual(adaptiveReentryFinancialState(state), trace.materializations[0].financial);
+});
+
+for (const read of ['schema error envelope', 'origin error envelope']) test('specialist replacement inverse: strict ' + read + ' leaves a paid result locally retryable without beginning replacement', async t => {
+  const state = await nativeSpecialistReplacementFixture(t); await nativeSpecialistReplacementApprove(state, { pauseCopy: true });
+  const before = nativeSpecialistReplacementData(state), financial = adaptiveReentryFinancialState(state), prepare = state.env.DB.prepare;
+  let corrupted = 0; const trace = nativeSpecialistReplacementTrace(state), tracedPrepare = state.env.DB.prepare;
+  state.env.DB.prepare = function(sql) {
+    const statement = tracedPrepare.call(this, sql), bind = statement.bind;
+    statement.bind = function(...values) {
+      const bound = bind.apply(this, values), all = bound.all;
+      const matches = read === 'schema error envelope' ? sql === nativeSpecialistReplacementSchema
+        : /^SELECT origin\.origin_id,/u.test(sql) && sql.includes('FROM memory_native_answer_origins origin WHERE');
+      if (matches) bound.all = async function(...args) { const result = await all.apply(this, args); corrupted++; return { ...result, success: true, error: 'fixture' }; };
+      return bound;
+    }; return statement;
+  };
+  try { await nativeSpecialistReplacementRead(state, { pending: true }); }
+  finally { state.env.DB.prepare = prepare; trace.stop(); }
+  assert.equal(corrupted, 1); assert.equal(trace.materializations.length, 0);
+  assert.deepEqual(nativeSpecialistReplacementData(state), before); assert.deepEqual(adaptiveReentryFinancialState(state), financial);
+  await nativeSpecialistReplacementRead(state); await nativeSpecialistReplacementOnce(state);
+});
+
+test('specialist replacement inverse: partial origin schema is unavailable before replacement, not certified absence', async t => {
+  const state = await nativeSpecialistReplacementFixture(t); await nativeSpecialistReplacementApprove(state, { pauseCopy: true });
+  state.sqlite.exec('DROP TABLE memory_native_answer_dependencies');
+  const before = nativeSpecialistReplacementData(state), financial = adaptiveReentryFinancialState(state), trace = nativeSpecialistReplacementTrace(state);
+  try { await nativeSpecialistReplacementRead(state, { pending: true }); } finally { trace.stop(); }
+  assert.equal(trace.captures.length, 0); assert.equal(trace.materializations.length, 0);
+  assert.deepEqual(nativeSpecialistReplacementData(state), before); assert.deepEqual(adaptiveReentryFinancialState(state), financial); assert.equal(state.calls.length, 1);
+});
+
+for (const change of ['arrival', 'disappearance']) test('specialist replacement inverse: origin schema ' + change + ' after preparation rolls back the matched content write', async t => {
+  const state = await nativeSpecialistReplacementFixture(t, { local: change === 'arrival' }); await nativeSpecialistReplacementApprove(state, { pauseCopy: true });
+  const { readFile } = await import('node:fs/promises');
+  const schema = change === 'arrival' ? await readFile(new URL('../drizzle/0027_memory_native_origins.sql', import.meta.url), 'utf8') : null;
+  let raced; const trace = nativeSpecialistReplacementTrace(state, () => {
+    if (change === 'arrival') state.sqlite.exec(schema); else state.sqlite.exec('DROP TABLE memory_native_answer_dependencies');
+    raced = nativeSpecialistReplacementData(state);
+  });
+  try { await nativeSpecialistReplacementRead(state, { pending: true }); } finally { trace.stop(); }
+  assert.equal(trace.materializations.length, 1); assert.equal(trace.materializations[0].succeeded, false);
+  assert.deepEqual(nativeSpecialistReplacementData(state), raced); assert.deepEqual(adaptiveReentryFinancialState(state), trace.materializations[0].financial);
+  assert.equal(state.calls.length, 1);
+});
+
+test('specialist replacement inverse: late commit-marker failure restores source and complete inverse, then local retrieval retries once without buying again', async t => {
+  const state = await nativeSpecialistReplacementFixture(t, { shared: true, answers: 3, unrelated: true });
+  await nativeSpecialistReplacementApprove(state, { pauseCopy: true });
+  const before = nativeSpecialistReplacementData(state), financial = adaptiveReentryFinancialState(state); let reached = 0;
+  const trace = nativeSpecialistReplacementTrace(state, entry => {
+    const marker = entry.statements.find(statement => /^INSERT INTO assistant_action_commits/u.test(statement.sql)); assert.ok(marker);
+    const execute = marker.execute;
+    marker.execute = function(kind) {
+      const current = nativeSpecialistReplacementData(state);
+      assert.equal(current.contents.find(row => row.content_id === state.replacement.pointers.answer).content, state.replacement.reply);
+      const ids = new Set(before.dependencies.filter(row => row.assistant_content_id === state.replacement.pointers.answer).map(row => row.origin_id));
+      assert.equal(ids.size, 3); assert.ok(current.origins.filter(row => ids.has(row.origin_id)).every(row => row.status === 'withdrawn'));
+      assert.ok(current.dependencies.every(row => !ids.has(row.origin_id)));
+      for (const row of current.origins.filter(row => ids.has(row.origin_id))) assert.equal(current.contents.find(content => content.content_id === row.answer_content_id).content, '');
+      reached++; return execute.call(this, kind);
+    };
+  });
+  state.controls.failAssistantActionCommit = true;
+  try { await nativeSpecialistReplacementRead(state, { pending: true }); } finally { trace.stop(); }
+  nativeSpecialistReplacementOrder(trace); assert.equal(reached, 1); assert.equal(trace.materializations[0].succeeded, false);
+  assert.deepEqual(nativeSpecialistReplacementData(state), before); assert.deepEqual(adaptiveReentryFinancialState(state), financial);
+  const retry = nativeSpecialistReplacementTrace(state);
+  try { await nativeSpecialistReplacementRead(state); } finally { retry.stop(); }
+  const entry = nativeSpecialistReplacementOrder(retry); assert.equal(entry.succeeded, true);
+  nativeSpecialistReplacementAssert(state, before, { affected: 3 }); assert.deepEqual(adaptiveReentryFinancialState(state), financial);
+  await nativeSpecialistReplacementOnce(state);
+});
+
+test('specialist replacement inverse: assigned source custody drift after capture preserves the external change and rolls back replacement', async t => {
+  const state = await nativeSpecialistReplacementFixture(t, { shared: true }); await nativeSpecialistReplacementApprove(state, { pauseCopy: true });
+  let raced; const trace = nativeSpecialistReplacementTrace(state, () => {
+    const changed = state.sqlite.prepare('UPDATE private_content_retention_scopes SET project_id=? WHERE content_id=?')
+      .run('fixture-replaced-source-custody', state.replacement.pointers.answer);
+    assert.equal(Number(changed.changes), 1); raced = nativeSpecialistReplacementData(state);
+  });
+  let response, body;
+  try { response = await specialistRetrieve(state, state.replacement.review); body = await response.json(); }
+  finally { trace.stop(); }
+  nativeSpecialistReplacementOrder(trace); assert.equal(trace.materializations[0].succeeded, false);
+  assert.equal(response.status, 404, JSON.stringify(body)); assert.equal(body.error, 'assistant_execution_unavailable');
+  assert.equal(body.retentionUnavailable, true); assert.equal(body.noAutomaticRetry, true); assert.equal(body.result, undefined); assert.equal(body.turn, undefined);
+  assert.deepEqual(nativeSpecialistReplacementData(state), raced, 'The failed copy cannot undo the independently changed custody or publish its own task/answer/origin writes');
+  assert.deepEqual(adaptiveReentryFinancialState(state), trace.materializations[0].financial); assert.equal(state.calls.length, 1);
+});
+
+// The private copied-value builder is reached only through the actual feed.
+// Its preserved public guard supplies the SQL oracle; no test-only export is added.
+async function paidSiblingExpectedProof(binding,scopeKey,turn){
+  const {paidReplyContentGuard}=await import("../worker/assistant-specialist-consent.ts");
+  const legacy=paidReplyContentGuard(binding,scopeKey,"turn.turn_id"),custody=consequential.executionContentCustodyGuard(binding,"content");
+  assert.deepEqual(legacy.bindings,[JSON.stringify([binding.actorUserId,scopeKey,...custody.bindings,...custody.bindings])]);
+  if(!binding.scope){
+    // Retained public guard with only the reviewed event-witness literal replacement.
+    assert.equal(new TextEncoder().encode(legacy.sql).byteLength,5363);
+    assert.equal(Buffer.from(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(legacy.sql))).toString("hex"),
+      "0433ab39b58179e2c4ba9cedce8b96a854aea3ff5e492b1ed3da0dab2769c013");
+  }
+  assert.equal(legacy.sql.split("signed.turn_id=turn.turn_id").length,2);
+  assert.equal(legacy.sql.split(",answer.content,signed.task_id").length,2);
+  const copied=legacy.sql.replace(/json_extract\(paid_reply_context\.value,'\$\[(\d+)\]'\)/gu,(_match,index)=>
+    "json_extract(paid_reply_context.value,'$["+(Number(index)>=2?Number(index)+2:Number(index))+"]')")
+    .replace("signed.turn_id=turn.turn_id","signed.turn_id=CAST(json_extract(paid_reply_context.value,'$[2]') AS TEXT)")
+    .replace(",answer.content,signed.task_id",",CAST(json_extract(paid_reply_context.value,'$[3]') AS TEXT),signed.task_id");
+  const expected=JSON.stringify({actor:binding.actorUserId,scopeKey,turnId:turn.id,user:turn.user,reply:turn.reply.text??null});
+  const authored=custody.sql.replaceAll("content.content_id","authored.content_id"),answer=custody.sql.replaceAll("content.content_id","answer.content_id");
+  const sql=`NOT EXISTS(SELECT 1 FROM assistant_specialist_tasks signed,(SELECT ? AS value) expected
+      WHERE signed.actor_user_id=json_extract(expected.value,'$.actor') AND signed.scope_key=json_extract(expected.value,'$.scopeKey')
+        AND signed.turn_id=json_extract(expected.value,'$.turnId') AND json_extract(signed.result_json,'$.specialistConsentVersion')=1)
+    OR (EXISTS(SELECT 1 FROM assistant_turns turn,(SELECT ? AS value) expected
+      JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id
+        AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id
+        AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE turn.actor_user_id=json_extract(expected.value,'$.actor') AND turn.scope_key=json_extract(expected.value,'$.scopeKey')
+        AND turn.turn_id=json_extract(expected.value,'$.turnId') AND authored.content=json_extract(expected.value,'$.user')
+        AND answer.content=json_extract(expected.value,'$.reply') AND ${authored} AND ${answer}) AND ${copied})`;
+  return{sql,bindings:[expected,expected,...custody.bindings,...custody.bindings,
+    JSON.stringify([binding.actorUserId,scopeKey,turn.id,turn.reply.text??null,...custody.bindings,...custody.bindings])]};
+}
+function paidSiblingFeedCapture(state,turnId,before){
+  let captured=null;
+  const restore=interceptConsequentialDb(state,"batch",/AS feed_turn_retained$/u,statements=>{
+    const matches=statements.filter(statement=>/AS feed_turn_retained$/u.test(statement.sql)
+      && JSON.parse(statement.values.at(-1))[2]===turnId);
+    assert.equal(matches.length,1,"one actual final feed proof for the selected copied turn");
+    const statement=matches[0],execute=statement.execute;
+    captured={sql:statement.sql,values:[...statement.values],row:null};
+    before?.();
+    statement.execute=function(kind){
+      const result=execute.call(this,kind);assert.equal(kind,"all");assert.equal(result.results.length,1);
+      assert.deepEqual(Object.keys(result.results[0]),["feed_turn_retained"]);
+      captured.row={...result.results[0]};return result;
+    };
+  });
+  return{get captured(){return captured;},restore};
+}
+
+for(const shared of[false,true])for(const paid of[false,true])test("paid sibling proof: exact public SQL and copied bindings retain "+(shared?"shared":"personal")+" "+(paid?"paid":"unsigned")+" feed",async()=>{
+  const state=await specialistMockFixture({shared}),failures=[];let trace,capture;
+  try{
+    const completed=paid?await specialistFeedCompleted(state,"paid-sibling-paid-turn"):null;
+    const turn=completed?{...completed.turn,reply:{text:"PRIVATE_VERIFIED_SPECIALIST_REPLY"}}:await ordinaryFeedTurn(state,"paid-sibling-unsigned-turn",{});
+    const row=state.sqlite.prepare("SELECT * FROM assistant_turns WHERE turn_id=?").get(turn.id);
+    const binding=completed?JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(specialistFeedPointers(state,turn,completed.review).consent).content).binding
+      :{actorUserId:row.actor_user_id,scope:shared?{organizationId:row.organization_id,projectAccessId:row.project_access_id,projectId:row.project_id,
+        ownerUserId:state.sqlite.prepare("SELECT owner_user_id FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(row.user_content_ref).owner_user_id}:null};
+    const expected=await paidSiblingExpectedProof(binding,row.scope_key,turn),before=specialistFeedSnapshot(state);
+    capture=paidSiblingFeedCapture(state,turn.id);trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(),{headers:state.owner??{}}),body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.turns.find(item=>item.id===turn.id)?.reply.text,turn.reply.text);
+    assert.ok(capture.captured);assert.equal(capture.captured.row.feed_turn_retained,1);
+    const suffix="("+expected.sql+")) THEN 1 ELSE 0 END AS feed_turn_retained";
+    assert.equal(capture.captured.sql.slice(-suffix.length),suffix,"complete sibling grouping and canonical/custody SQL stay exact");
+    assert.deepEqual(capture.captured.values.slice(-expected.bindings.length),expected.bindings);
+    assertSpecialistFeedReadOnly(state,before,trace,paid?1:0);
+  }catch(error){failures.push(error);}
+  finally{await finishOrdinaryFeed(state,{failures,trace,restore:()=>capture?.restore()});}
+});
+
+for(const mutation of["numeric canonical reply","different numeric-looking text","null canonical reply","missing canonical reply","BLOB answer","late turn ID"])
+  test("paid sibling proof: actual final feed snapshot preserves "+mutation+" comparison",async()=>{
+    const state=await specialistMockFixture({respond:payload=>specialistRawResponse(payload,{output:[{type:"message",id:"paid-sibling-numeric-reply",role:"assistant",status:"completed",
+      content:[{type:"output_text",text:JSON.stringify({reply:"1",actions:[]})}]}]})}),failures=[];let trace,capture;
+    try{
+      const {turn,review}=await specialistFeedCompleted(state,"paid-sibling-numeric-turn"),pointers=specialistFeedPointers(state,turn,review);
+      const expectedTurn={...turn,reply:{text:"1"}},row=state.sqlite.prepare("SELECT * FROM assistant_turns WHERE turn_id=?").get(turn.id);
+      const binding=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(pointers.consent).content).binding;
+      const expected=await paidSiblingExpectedProof(binding,row.scope_key,expectedTurn),before=specialistFeedSnapshot(state);let changed;
+      capture=paidSiblingFeedCapture(state,turn.id,()=>{
+        if(mutation==="numeric canonical reply")state.sqlite.prepare("UPDATE private_content SET content=json_set(content,'$.reply',1) WHERE content_id=?").run(pointers.canonical);
+        else if(mutation==="different numeric-looking text")state.sqlite.prepare("UPDATE private_content SET content=json_set(content,'$.reply','01') WHERE content_id=?").run(pointers.canonical);
+        else if(mutation==="null canonical reply")state.sqlite.prepare("UPDATE private_content SET content=json_set(content,'$.reply',NULL) WHERE content_id=?").run(pointers.canonical);
+        else if(mutation==="missing canonical reply")state.sqlite.prepare("UPDATE private_content SET content=json_remove(content,'$.reply') WHERE content_id=?").run(pointers.canonical);
+        else if(mutation==="BLOB answer")state.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?").run(new Uint8Array([49]),pointers.answer);
+        else state.sqlite.prepare("UPDATE assistant_turns SET turn_id='paid-sibling-replaced-turn' WHERE actor_user_id=? AND scope_key=? AND turn_id=?").run(row.actor_user_id,row.scope_key,turn.id);
+        changed={canonical:state.sqlite.prepare("SELECT * FROM private_content WHERE content_id=?").get(pointers.canonical),
+          answer:state.sqlite.prepare("SELECT * FROM private_content WHERE content_id=?").get(pointers.answer),
+          turns:state.sqlite.prepare("SELECT * FROM assistant_turns ORDER BY actor_user_id,scope_key,turn_id").all()};
+      });trace=specialistFeedTrace(state);
+      const response=await state.request(endpoint()),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));assert.ok(capture.captured);
+      assert.equal(capture.captured.row.feed_turn_retained,mutation==="numeric canonical reply"?1:0);
+      const suffix="("+expected.sql+")) THEN 1 ELSE 0 END AS feed_turn_retained";
+      assert.equal(capture.captured.sql.slice(-suffix.length),suffix);assert.deepEqual(capture.captured.values.slice(-expected.bindings.length),expected.bindings);
+      if(mutation!=="numeric canonical reply")assert.equal(body.turns.some(item=>item.id===turn.id),false);
+      // Other unchanged canonical-result/context certificates may still withhold
+      // the final response. A passing scalar is not a new public result certificate.
+      assert.deepEqual({canonical:state.sqlite.prepare("SELECT * FROM private_content WHERE content_id=?").get(pointers.canonical),
+        answer:state.sqlite.prepare("SELECT * FROM private_content WHERE content_id=?").get(pointers.answer),
+        turns:state.sqlite.prepare("SELECT * FROM assistant_turns ORDER BY actor_user_id,scope_key,turn_id").all()},changed);
+      if(mutation==="BLOB answer")assert.equal(state.sqlite.prepare("SELECT typeof(content) AS storage FROM private_content WHERE content_id=?").get(pointers.answer).storage,"blob");
+      assertSpecialistFeedReadOnly(state,before,trace);
+    }catch(error){failures.push(error);}
+    finally{await finishOrdinaryFeed(state,{failures,trace,restore:()=>capture?.restore()});}
+  });
+
+function consequentialQuotePublicationSnapshot(state){
+  return{feed:specialistFeedSnapshot(state),
+    contents:state.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all(),
+    resources:state.sqlite.prepare("SELECT * FROM project_resource_scopes ORDER BY project_access_id,resource_kind,resource_id").all(),
+    retention:state.sqlite.prepare("SELECT * FROM private_content_retention_scopes ORDER BY content_id").all(),
+    turns:state.sqlite.prepare("SELECT * FROM assistant_turns ORDER BY actor_user_id,scope_key,turn_id").all(),
+    events:state.sqlite.prepare("SELECT * FROM events ORDER BY event_id").all(),
+    privateEvents:state.sqlite.prepare("SELECT * FROM event_private_payloads ORDER BY private_event_id").all(),
+    fullFinancial:{tokens:state.sqlite.prepare("SELECT * FROM budget_reservations ORDER BY reservation_id").all(),
+      costs:state.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all(),
+      tokenCounters:state.sqlite.prepare("SELECT * FROM budget_counters ORDER BY scope,scope_id,period").all(),
+      costCounters:state.sqlite.prepare("SELECT * FROM cost_budget_counters ORDER BY scope,scope_id,period").all()},
+    providerCalls:state.calls.length};
+}
+function interceptConsequentialQuotePublication(state,mutate){
+  const trace={entered:false,completed:[],firstVerified:null,observedWrites:false,mutationChanges:0,finalFailure:null};
+  const restore=interceptConsequentialDb(state,"batch",/json\('context_quote_source_changed'\)/u,statements=>{
+    const first=statements[0],last=statements.at(-1),prefix="SELECT CASE WHEN (",ending=") THEN 1 ELSE json('context_quote_source_changed') END AS verified";
+    assert.ok(first.sql.startsWith(prefix)&&first.sql.endsWith(ending));
+    const guard=first.sql.slice(prefix.length,-ending.length),exists="EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?)";
+    assert.equal(last.sql,prefix+guard+") THEN CASE WHEN "+exists+" THEN 1 ELSE json('context_quote_source_changed') END ELSE json('context_quote_source_changed') END AS verified");
+    const [contentId,ownerId]=last.values.slice(-2);
+    assert.deepEqual(last.values,[...first.values,contentId,ownerId],"The final proof retains every guard binding before the same content/owner suffix");
+    const content=statements.find(statement=>/^\s*INSERT INTO private_content\b/u.test(statement.sql)&&statement.values[2]==="execution-consent");
+    assert.ok(content);assert.equal(content.values[0],contentId);assert.equal(content.values[1],ownerId);
+    const retained=JSON.parse(content.values[3]),expectedSteps=retained.binding.steps.length;assert.ok(expectedSteps>0);
+    const executionId=retained.preview.executionId;
+    const required=/^\s*INSERT INTO (?:private_content|project_resource_scopes|private_content_retention_scopes|consequential_executions|consequential_execution_steps)\b/u;
+    const requiredIndexes=statements.flatMap((statement,index)=>required.test(statement.sql)?[index]:[]),writes=new Map();
+    trace.entered=true;trace.contentId=contentId;trace.executionId=executionId;
+    for(const [index,statement]of statements.entries()){
+      const execute=statement.execute;
+      statement.execute=function(kind){
+        if(statement===last){
+          assert.equal(kind,"all");assert.equal(trace.firstVerified,1);
+          assert.deepEqual(trace.completed,Array.from({length:statements.length-1},(_value,position)=>position),"All original preceding statements completed in the real contiguous batch");
+          for(const requiredIndex of requiredIndexes)assert.equal(writes.get(requiredIndex),1,"Each required publication INSERT genuinely wrote one row before the fault");
+          const saved=state.sqlite.prepare("SELECT * FROM private_content WHERE content_id=? AND owner_id=?").get(contentId,ownerId);
+          assert.ok(saved);assert.equal(saved.kind,"execution-consent");assert.equal(saved.content,content.values[3]);
+          const execution=state.sqlite.prepare("SELECT * FROM consequential_executions WHERE execution_id=?").get(executionId);
+          assert.ok(execution);assert.equal(execution.status,"quoted");assert.equal(execution.consent_ref,contentId);assert.equal(execution.actor_user_id,ownerId);
+          const steps=state.sqlite.prepare("SELECT * FROM consequential_execution_steps WHERE execution_id=? ORDER BY step_index").all(executionId);
+          assert.equal(steps.length,expectedSteps);assert.ok(steps.every(step=>step.status==="quoted"));
+          assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(contentId).n,1);
+          assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM private_content_retention_scopes WHERE content_id=?").get(contentId).n,1);
+          trace.beforeFault=consequentialQuotePublicationSnapshot(state);trace.observedWrites=true;
+          trace.mutationChanges=Number(mutate({contentId,ownerId,executionId}).changes);assert.equal(trace.mutationChanges,1);
+          trace.contentExistsAfterFault=Boolean(state.sqlite.prepare("SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?").get(contentId,ownerId));
+        }
+        try{
+          const result=execute.call(this,kind);
+          if(statement===first){assert.equal(kind,"all");trace.firstVerified=result.results[0]?.verified;}
+          if(required.test(statement.sql))writes.set(index,Number(result.meta.changes));
+          trace.completed.push(index);return result;
+        }catch(error){if(statement===last)trace.finalFailure=error;throw error;}
+      };
+    }
+  });
+  return{trace,restore};
+}
+
+for(const fault of["shared source custody loss","missing new consent"])
+test("consequential quote final publication: "+fault+" after writes rolls back the complete quote",async()=>{
+  const state=await specialistMockFixture({shared:true}),failures=[];let hook;
+  try{
+    const turn=await specialistFreeTurn(state,"quote-final-publication-turn");await state.drainBackground();
+    const source=ordinaryFeedPointers(state,turn).answer,before=consequentialQuotePublicationSnapshot(state);
+    assert.equal(before.providerCalls,0);assert.ok(before.retention.some(row=>row.content_id===source));
+    hook=interceptConsequentialQuotePublication(state,({contentId,ownerId})=>fault==="shared source custody loss"
+      ?state.sqlite.prepare("DELETE FROM private_content_retention_scopes WHERE content_id=?").run(source)
+      :state.sqlite.prepare("DELETE FROM private_content WHERE content_id=? AND owner_id=?").run(contentId,ownerId));
+    const response=await specialistProtocolRequest(state,{action:"quote",turnId:turn.id}),body=await response.json();await state.drainBackground();
+    assert.equal(response.status,409,JSON.stringify(body));assert.equal(body.error,"assistant_specialist_unavailable");assert.equal(body.noAutomaticRetry,true);assert.equal(body.quote,undefined);
+    const trace=hook.trace;assert.equal(trace.entered,true);assert.equal(trace.observedWrites,true);assert.equal(trace.mutationChanges,1);
+    assert.ok(trace.finalFailure instanceof Error);assert.equal(trace.finalFailure.code,"ERR_SQLITE_ERROR");assert.match(trace.finalFailure.message,/malformed JSON/u);
+    assert.equal(trace.contentExistsAfterFault,fault==="shared source custody loss","Only the missing-consent case removes E's content witness");
+    assert.deepEqual(trace.beforeFault.fullFinancial,before.fullFinancial);assert.equal(trace.beforeFault.providerCalls,0);
+    assert.deepEqual(consequentialQuotePublicationSnapshot(state),before,"Final failure rolls back consent, custody, execution/steps and the in-transaction fault without partial publication or spending");
+  }catch(error){failures.push(error);}
+  finally{await finishOrdinaryFeed(state,{failures,restore:()=>hook?.restore()});}
+});
+
+test("consequential quote final publication: synthetic true false NULL guards evaluate existence only after a true guard",t=>{
+  // Controlled CASE semantics only, not a substitute native authority or content proof.
+  const state=database();t.after(()=>state.sqlite.close());let calls=0;
+  state.sqlite.function("final_quote_exists_probe",value=>{calls++;return value;});
+  const statement=state.sqlite.prepare("SELECT CASE WHEN ? THEN CASE WHEN final_quote_exists_probe(?) THEN 1 ELSE json('context_quote_source_changed') END ELSE json('context_quote_source_changed') END AS verified");
+  for(const guard of[1,0,null])for(const exists of[1,0,null]){
+    calls=0;
+    if(guard===1&&exists===1)assert.equal(statement.get(guard,exists).verified,1);
+    else assert.throws(()=>statement.get(guard,exists),/malformed JSON/u);
+    assert.equal(calls,guard===1?1:0,"False and NULL outer guards skip the existence expression rather than evaluating it before rejecting");
+  }
 });

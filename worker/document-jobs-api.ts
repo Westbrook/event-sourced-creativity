@@ -1,3 +1,5 @@
+import { prepareOutputImageFinalizationProjectPublicationStatements } from "./output-native-project-publication.ts";
+import { createImageFinalizationMediaVerifier, readImageFinalizationProof, imageRecoveryHasNoExplicitStop, imageRecoveryCancellationAssertion, readPublishedImageAcknowledgment, classifyImageRecoveryCandidate, classifyImageRecoveryStage, imageRecoveryDigest, readImageRecoveryPointer, readImageRecoveryStage, type ImageRecoveryProviderCall } from "./image-server-recovery.ts";
 import { captureDocumentRenderSettings } from "../src/model/document-render-request.ts";
 import { documentRenderGuidance, documentRenderGuidanceProblem } from "../src/model/document-render-guidance.ts";
 import { PresentationModelConfigurationError, readFrozenPresentationModelRoutes, resolvePresentationModelRoutes } from "./presentation-model-routing.ts";
@@ -6,12 +8,12 @@ import { OUTPUT_NATIVE_EXECUTION_POLICY, readOutputNativeExecutionPolicy, type O
 import { outputSchemaIsReady } from "./output-schema-state.ts";
 import { loadOutputJobBinding, createOutputEventExecution, synchronizeOutputJobOutcome, prepareOutputJobOutcomeStatements, reconcileKnownOutputProviderReceipts, type OutputExecutionProof, type OutputEventExecution } from "./output-execution-control.ts";
 import { retainedOutputBodyAssertions, rememberOutputPrivateBody, type OutputScope, ensureOutputRequirementsSchema, outputAssertionStatements, outputScopeAuthority, OutputConflictError, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
-import { resolveOutputExecutionAuthority, prepareOutputExecutionProof } from "./output-requirements-api.ts";
+import { resolveOutputImageFinalizationAuthority, resolveOutputImageAcknowledgmentAuthority, resolveOutputExecutionAuthority, prepareOutputExecutionProof, readOutputProofBatch } from "./output-requirements-api.ts";
 import { MAX_MANUAL_PRESENTATION_SLIDES, PresentationCountPolicyError, readSlideCountPolicy, resolvePresentationCountRequest, sameSlideCountPolicy, slideCountAccepted, type SlideCountPolicy } from "../src/model/presentation-count-policy.ts";
-import { approvedAudioVideoReference, handleEvents } from "./events-api";
+import { approvedAudioVideoReference, handleEvents, reconstructRetainedImageInput, buildRetainedImagePublication } from "./events-api";
 import { DEFAULT_EVIDENCE_RETENTION_DAYS, POLICY_VERSION, adoptLegacyCostReservation, costBudgetReservation, hasCapability, loadPrivateContent, loadPrivateProviderResponse, pilotExecutionAllowance, readAccountBudgets, readCostBudgets, reconcileFailedBudgetReservations, releaseBudgetReservationsForCorrelation, releaseCostReservationsForCorrelation, requireConsent, requireUser, settleInterruptedDocumentJobReservations, settleDocumentGenerationBudgets, storePrivateContent, preparePrivateContent, type PilotUser, type ProjectExecutionScope } from "./pilot-policy";
 import { prepareProjectResourceScopeStatement, hasProjectContextCookie, ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents, synchronizeProjectScope } from "./project-access";
-import { appendAuditEvent, ensureSchema, EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, readCorrelatedEvents, readWorkspaceEvents, StaleSequenceError, streamHead, uuidV7, type EventRow, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
+import { appendAuditEvent, ensureSchema, EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, readCorrelatedEvents, readWorkspaceEvents, serializeEvent, StaleSequenceError, streamHead, uuidV7, type EventRow, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
 import { foldEvents } from "../src/model/events";
 import { adaptiveRequestKey, adaptiveRequestLocale } from "../src/model/adaptive-request";
 import { livePlanningBoardGuard, planningBoardCurrent } from "./planning-destination";
@@ -224,7 +226,7 @@ async function anchorProjectJobs(env:WorkerEnv,user:PilotUser,jobs:Array<{jobId:
 
 function safeScopedJob(row:DocumentJobRow,recoveryBlocker:DocumentJobRow|null=null){
   const job=serializeJob(row,recoveryBlocker,false);
-  const sensitive=new Set(["scenePolicyStopSummary","providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","plannerInput","providerInput","provider_input","videoInputReceipt","audioInputReceipt","model3dInputReceipt","model3dProviderFiles","model3dPrompt","model3dSettings","model3dReferenceBlockIds","model3d_prompt","model3d_settings","model3d_reference_block_ids","audioProfile","audio_profile","transcript","script","spokenScript","spoken_script","audioVideoArtifactId","videoReferenceId","video_reference_id","artifactPlan","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","contentRef","contentExpiresAt","contentSha256","productionPlan","productionSceneReceipts","productionFrameReceipts","productionAnchor","providerStatusUrl","providerResponseUrl","providerCancelUrl","moderationPromptRef","intentRef","providerJobId","providerRequestId","storyboardSafeRecovery","storyboardRejectedProviderReceipt","generationReceipt","generation_receipt","input_ref","inputRef","input_expires_at","source_snapshot_sha256","snapshot","document_snapshot","sourceAliasMap","sourceAliases","source_alias_map","source_aliases","settings","audience","tone"]);
+  const sensitive=new Set(["scenePolicyStopSummary","providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","plannerInput","providerInput","provider_input","videoInputReceipt","audioInputReceipt","model3dInputReceipt","model3dProviderFiles","model3dPrompt","model3dAdaptation","model3d_adaptation","model3dSettings","model3dReferenceBlockIds","model3d_prompt","model3d_settings","model3d_reference_block_ids","audioProfile","audio_profile","transcript","script","spokenScript","spoken_script","audioVideoArtifactId","videoReferenceId","video_reference_id","artifactPlan","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","contentRef","contentExpiresAt","contentSha256","productionPlan","productionSceneReceipts","productionFrameReceipts","productionAnchor","providerStatusUrl","providerResponseUrl","providerCancelUrl","moderationPromptRef","intentRef","providerJobId","providerRequestId","storyboardSafeRecovery","storyboardRejectedProviderReceipt","generationReceipt","generation_receipt","input_ref","inputRef","input_expires_at","source_snapshot_sha256","snapshot","document_snapshot","sourceAliasMap","sourceAliases","source_alias_map","source_aliases","settings","audience","tone"]);
   const recoverySummary=(value:unknown)=>value&&typeof value==="object"?Object.fromEntries(Object.entries(value).filter(([key,item])=>["mode","original_source_revision","new_generation_requests","provider_retrieval_only","current_edits_preserved"].includes(key)&&["string","number","boolean"].includes(typeof item))):null;
   sensitive.add("audioOriginalSourceRecovery");
   const redact=(value:unknown):unknown=>Array.isArray(value)?value.map(redact):value&&typeof value==="object"?Object.fromEntries(Object.entries(value).filter(([key])=>!sensitive.has(key)).map(([key,item])=>[key,key==="recovery"?recoverySummary(item):redact(item)])):value;
@@ -432,7 +434,7 @@ function renderRequestIdempotencyKey(request:Record<string,unknown>,documentId:s
     videoSeconds:request.videoSeconds??null,videoSize:request.videoSize??null,videoAudioMode:request.videoAudioMode??null,
     soundtrackBlockIds:Array.isArray(request.soundtrackBlockIds)?[...new Set(request.soundtrackBlockIds.map(String))]:[],audioImageBlockId:request.audioImageBlockId??null,sendSoundtrackToVideoProvider:request.sendSoundtrackToVideoProvider===true,
     ...(request.audioProfile?{audioProfile:request.audioProfile}:{}),...(request.audioProviderModel?{audioProviderModel:request.audioProviderModel}:{}),...(request.audioVideoArtifactId?{audioVideoArtifactId:request.audioVideoArtifactId}:{}),...(request.sendAudioVideoToProvider===true?{sendAudioVideoToProvider:true}:{}),
-    ...(request.artifactKind==="model3d"?{model3dPrompt:request.model3dPrompt,model3dSettings:request.model3dSettings,model3dReferenceBlockIds:request.model3dReferenceBlockIds}:{}),
+    ...(request.artifactKind==="model3d"?{model3dPrompt:request.model3dPrompt,model3dSettings:request.model3dSettings,model3dReferenceBlockIds:request.model3dReferenceBlockIds,...(request.model3dPromptSource==="document"?{model3dPromptSource:"document",model3dAdaptation:request.model3dAdaptation}:{})}:{}),
     workflowId:typeof request.workflowId==="string"?request.workflowId:null,
     workflowStageId:typeof request.workflowStageId==="string"?request.workflowStageId:null,
     workflowSources:productionWorkflowSourceIdentity(Array.isArray(request.workflowSources)?request.workflowSources as ProductionWorkflowSource[]:[]),
@@ -1075,6 +1077,94 @@ async function reviseRetainedPresentationCandidate(env:WorkerEnv,user:PilotUser,
 
 type PresentationRecoveryResult={job:DocumentJobRow;recovered:true}|{error:string;status:number;reason?:string};
 
+/** Publish the original, fully retained Image without a provider request or a new lease. */
+export async function finalizeRetainedImageJob(env:WorkerEnv,current:PilotUser,jobId:string,expectedContextId?:string|null):Promise<{job:DocumentJobRow;finalized:true}|{error:string;status:number}>{
+  const unavailable=(error="output_image_finalization_unavailable",status=409)=>({error,status});
+  const selectedContextId=expectedContextId;
+  try{
+    if(requireConsent(current))return unavailable("consent_required",403);
+    if(!outputSchemaIsReady(env.DB))return unavailable();
+    const found=await env.DB.prepare(`SELECT *, (SELECT slot.slot_id FROM output_operation_slots slot WHERE slot.job_id=document_jobs.job_id) AS output_slot_id
+      FROM document_jobs WHERE job_id=? AND owner_id=? AND length(CAST(request_json AS BLOB))<=2000000
+        AND length(CAST(COALESCE(result_json,'') AS BLOB))<=2000000`).bind(jobId,current.userId).first<DocumentJobRow>();
+    if(!found){
+      const present=await env.DB.prepare("SELECT 1 AS present FROM document_jobs WHERE job_id=? AND owner_id=?").bind(jobId,current.userId).first();
+      return present?unavailable():unavailable("job_not_found",404);
+    }
+    if(found.owner_id!==current.userId)return unavailable("job_not_found",404);
+    if(found.kind!=="generate"||!found.output_slot_id||!["committing","failed"].includes(found.status))return unavailable();
+    const user=await documentJobPrincipal(env,found,current);
+    if(!user||user.userId!==found.owner_id)return unavailable("output_image_finalization_authority_unavailable",403);
+    const projectAuthority=documentJobProjectAuthority(user,found.document_id,found.job_id);
+    if(projectAuthority)await readOutputProofBatch(env,[projectAuthority]);
+    const binding=await loadOutputJobBinding(env,user,found);
+    if(!binding)return unavailable();
+    if(selectedContextId!==undefined&&binding.scope.contextId!==selectedContextId)return unavailable("output_execution_context_changed",403);
+    const authority=await resolveOutputImageFinalizationAuthority(env,binding.scope,binding.slot,found,user.billingUserId??user.userId);
+    const job=authority.originalJob,scope=authority.scope,slot=authority.slot;
+    const mediaVerifier=createImageFinalizationMediaVerifier(env,scope.ownerUserId);
+    const proof=await readImageFinalizationProof({env,user,job,scope,slot,mediaVerifier,
+      readProofBatch:(assertions,reads)=>readOutputProofBatch(env,assertions,reads),
+      reconstructInput:(stage,anchors)=>reconstructRetainedImageInput({env,user,job,authority,stage,anchors,mediaVerifier}),
+      authorityAssertions:[...authority.assertions,...(projectAuthority?[projectAuthority]:[])],
+      publicationAuthorityAssertions:[...authority.lateAssertions,...(projectAuthority?[projectAuthority]:[])],
+    });
+    let financial=await proof.readFinancialProof();
+    const checkpoint=parseResult(job);
+    if(financial.needsSettlement){
+      await settleDocumentGenerationBudgets(env,proof.payerUserId,{
+        reservationId:String(checkpoint.reservationId),costReservationId:String(checkpoint.costReservationId),
+        usedTokens:financial.totals.usedTokens,usedMicrousd:financial.totals.usedMicrousd,reason:"retained_image_finalization",
+        assertions:[...proof.settlementAssertions,...financial.assertions],
+      });
+      // Settlement is a separate durable transition. A later publication loss
+      // retains it; replay verifies it rather than charging the counters again.
+      financial=await proof.readFinancialProof();
+    }
+    if(financial.needsSettlement)return unavailable("output_image_finalization_settlement_required");
+    const stored=await preparePrivateContent(env,user.userId,"provider-output",proof.stage.planned.raw,user.projectExecution,undefined,undefined,undefined,proof.expiresAt);
+    const promptStored=await preparePrivateContent(env,user.userId,"prompt",proof.stage.rendered.image.prompt,user.projectExecution,undefined,undefined,undefined,proof.expiresAt);
+    const publication=buildRetainedImagePublication({job,input:proof.input,stage:proof.stage,head:authority.head,stored,promptStored,
+      financial:{totals:financial.totals,receipts:proof.receipts}});
+    const events=[publication.complete,publication.usage],completedAt=new Date().toISOString();
+    const previousReceipt=checkpoint.generationReceipt&&typeof checkpoint.generationReceipt==="object"&&!Array.isArray(checkpoint.generationReceipt)
+      ?checkpoint.generationReceipt as Record<string,unknown>:{};
+    const generationReceipt:Record<string,unknown>={...previousReceipt,...financial.generationReceipt};
+    delete generationReceipt.failure_code;delete generationReceipt.failure_category;delete generationReceipt.failure_stage;
+    const result:Record<string,unknown>={...checkpoint,...safeResult({head:authority.head+2,appended:events,promoted:publication.promoted}),
+      generationReceipt,stage:"completed",progressMessage:"Completed",imageFinalized:true};
+    delete result.errorDetail;delete result.resultUnavailable;
+    const resultJson=JSON.stringify(result);
+    const projectPublication=await prepareOutputImageFinalizationProjectPublicationStatements(env,{scope,slot,job,
+      completionEventId:publication.complete.eventId,expectedGrantStatus:authority.expectedGrantStatus},events);
+    const assertions=(items:readonly OutputSqlAssertion[])=>items.flatMap(item=>outputAssertionStatements(env,item));
+    const changed=()=>outputAssertionStatements(env,{sql:"changes()=1"});
+    const statements=[...assertions([...proof.assertions,...financial.assertions]),
+      ...outputAssertionStatements(env,{sql:"(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?",bindings:[job.stream_id,authority.head]})];
+    // Only the two original result payloads; unrelated retention cleanup is not
+    // part of finalization. Each conditional custody insert must really happen.
+    for(const prepared of [stored,promptStored])for(const statement of prepared.statements.slice(0,prepared.requiredInserts))statements.push(statement,...changed());
+    for(const event of events)statements.push(env.DB.prepare(`INSERT INTO event_write_stage (${EVENT_WRITE_COLUMNS}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(...eventWriteBindings(event)),...changed());
+    // Recheck late source and retained evidence while the original job still
+    // owns this transaction; the source proof permits only our appended events.
+    statements.push(...financial.publicationStatements(events),
+      env.DB.prepare(`UPDATE document_jobs SET status='completed',result_json=?,error_message=NULL,completed_at=?,lease_expires_at=NULL,updated_at=?
+        WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND attempt_count=? AND status=? AND request_json IS ? AND result_json IS ? AND lease_expires_at IS ?`)
+        .bind(resultJson,completedAt,completedAt,job.job_id,job.owner_id,job.stream_id,job.correlation_id,job.attempt_count,job.status,job.request_json,job.result_json,job.lease_expires_at),...changed(),
+      ...prepareOutputJobOutcomeStatements(env,job),
+      ...assertions(authority.publicationAssertions({resultJson,completedAt,completionEventId:publication.complete.eventId})),
+      ...projectPublication);
+    const committed=await env.DB.batch(statements);
+    if(committed.length!==statements.length||statements.some((_,index)=>committed[index]?.success!==true))return unavailable("output_image_finalization_commit_unconfirmed");
+    return{job:{...job,status:"completed",result_json:resultJson,error_message:null,completed_at:completedAt,lease_expires_at:null,updated_at:completedAt},finalized:true};
+  }catch(error){
+    if(error instanceof OutputConflictError)return unavailable(error.code,error.status);
+    // A lost CAS, head or late proof never routes to the paid runner or a
+    // generic outcome writer. Any already-settled pair remains settled.
+    return unavailable();
+  }
+}
+
 /** Recover a fully paid presentation solely from actor-private retained provider output. */
 async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:DocumentJobRow,projectContextId=""):Promise<PresentationRecoveryResult>{
   const failed=(reason="paid_evidence_unavailable")=>({error:"presentation_recovery_unavailable",status:409,reason} as const);
@@ -1347,10 +1437,10 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
     schema_version:1,job_id:jobId,artifact_kind:artifactKind,document_id:documentId,captured_at:capturedAt,
     ...(sceneConfiguration?{scene_request_id:payload.sceneRequestId,scene_cost_binding_hash:(payload.sceneCostConsent as Record<string,unknown>|undefined)?.bindingHash}:{}),
     ...(sceneConfiguration?{scene_medium:sceneConfiguration.medium,scene_configuration:sceneConfiguration,context_continuity:sceneContext}:{}),
-    request:{...requestSettings,editable_settings:captureDocumentRenderSettings(payload),...(audioProfile?{audio_profile:audioProfile,audio_video_artifact_id:typeof payload.audioVideoArtifactId==="string"?payload.audioVideoArtifactId:null,audio_video_provider_transfer:payload.sendAudioVideoToProvider===true}:{}),...(model3d?{model3d_prompt:payload.model3dPrompt,model3d_reference_block_ids:payload.model3dReferenceBlockIds}:{})},document_snapshot:snapshot,...(effectiveSnapshot?{production_workflow_snapshot:effectiveSnapshot}:{}),
+    request:{...requestSettings,editable_settings:captureDocumentRenderSettings(payload),...(audioProfile?{audio_profile:audioProfile,audio_video_artifact_id:typeof payload.audioVideoArtifactId==="string"?payload.audioVideoArtifactId:null,audio_video_provider_transfer:payload.sendAudioVideoToProvider===true}:{}),...(model3d?{model3d_prompt:payload.model3dPrompt,model3d_reference_block_ids:payload.model3dReferenceBlockIds,...(payload.model3dPromptSource==="document"?{model3d_prompt_source:"document",model3d_adaptation:payload.model3dAdaptation}:{})}:{})},document_snapshot:snapshot,...(effectiveSnapshot?{production_workflow_snapshot:effectiveSnapshot}:{}),
     source_block_versions:Array.isArray(payload.sourceBlockVersions)?payload.sourceBlockVersions:[],
     planner:isModel3d?{provider:null,model:null,request_status:"not_applicable"}:{provider:plannerProvider,model:plannerModel,request_status:"not_submitted"},
-    source:{scope:isModel3d?"authored_prompt_and_selected_reference_views":"authorized_document_context",status:"not_transmitted",snapshot_sha256:sourceHash},
+    source:{scope:isModel3d?(payload.model3dPromptSource==="document"?"adapted_document_and_selected_reference_views":"authored_prompt_and_selected_reference_views"):"authorized_document_context",status:"not_transmitted",snapshot_sha256:sourceHash},
     accounting:{reservation_microusd:estimatedCostMicrousd,settled_cost_microusd:0,reservation_is_provider_hard_cap:false,reservation_is_application_hard_cap:applicationSpendingCap,...(applicationSpendingCap?{maximum_authorized_cost_microusd:estimatedCostMicrousd}:{})},
   };
   const stored=deferredPrivate?await preparePrivateContent(env,user.userId,"document-artifact-input",JSON.stringify(privateReceipt),contentScope,admissionReads):await storePrivateContent(env,user.userId,"document-artifact-input",JSON.stringify(privateReceipt),contentScope);
@@ -1368,7 +1458,7 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
     batch_count:batchCount,minimum_provider_call_count:plannedProviderCallCount,planned_provider_call_count:plannedProviderCallCount,actual_provider_call_count:null,max_repair_call_count:maxRepairCallCount,maximum_provider_call_count:maximumProviderCallCount,
     reservation_microusd:estimatedCostMicrousd,settled_cost_microusd:0,reservation_status:"estimated",
     reservation_is_provider_hard_cap:false,reservation_is_application_hard_cap:applicationSpendingCap,...(applicationSpendingCap?{maximum_authorized_cost_microusd:estimatedCostMicrousd}:{}),repair_calls_may_incur_additional_usage:maxRepairCallCount>0,
-    source_transmission_scope:isModel3d?"authored_prompt_and_selected_reference_views":"authorized_document_context",source_transmission_status:"not_transmitted",provider_request_status:"not_submitted",
+    source_transmission_scope:isModel3d?(payload.model3dPromptSource==="document"?"adapted_document_and_selected_reference_views":"authored_prompt_and_selected_reference_views"):"authorized_document_context",source_transmission_status:"not_transmitted",provider_request_status:"not_submitted",
     source_fact_count:Array.isArray(snapshot.facts)?snapshot.facts.length:0,source_snapshot_sha256:sourceHash,
     input_ref:stored.contentId,input_expires_at:stored.expiresAt,settings:requestSettings,
   };
@@ -1423,7 +1513,7 @@ function failureProgressMessage(detail: ProviderFailureDetail | DocumentJobError
 async function finishDocumentJob(env: WorkerEnv, row: DocumentJobRow, status: "completed" | "failed", result: Record<string, unknown>, errorMessage: string | null, completedAt = new Date().toISOString(), guardActive = true) {
   const parentId = parentJobIdFromRequest(parseRequest(row));
   const bindings = documentJobCompletionBindings({ status, result, errorMessage, completedAt, parentId, jobId: row.job_id, ownerId: row.owner_id, correlationId: row.correlation_id });
-  const resultAssignment=row.output_slot_id?"json_patch(?,json_object('providerSubmissions',json(COALESCE(json_extract(result_json,'$.providerSubmissions'),'{}')),'plannerUsage',json(json_extract(result_json,'$.plannerUsage')),'plannerResponseId',json_extract(result_json,'$.plannerResponseId'),'plannerResponseIds',json(json_extract(result_json,'$.plannerResponseIds')),'plannerModel',json_extract(result_json,'$.plannerModel')))":PRESERVE_ADAPTIVE_RECEIPT_SQL;
+  const resultAssignment=row.output_slot_id?"json_patch(?,json_object('providerSubmissions',json(COALESCE(json_extract(result_json,'$.providerSubmissions'),'{}')),'plannerUsage',json(json_extract(result_json,'$.plannerUsage')),'plannerResponseId',json_extract(result_json,'$.plannerResponseId'),'plannerResponseIds',json(json_extract(result_json,'$.plannerResponseIds')),'plannerModel',json_extract(result_json,'$.plannerModel'),'imageRecovery',json(json_extract(result_json,'$.imageRecovery'))))":PRESERVE_ADAPTIVE_RECEIPT_SQL;
   const statement = guardActive
     ? `UPDATE document_jobs SET status=?,result_json=${resultAssignment},error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=? AND status IN ('running','committing')`
     : `UPDATE document_jobs SET status=?,result_json=${resultAssignment},error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=?`;
@@ -1450,7 +1540,7 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
   const members = Array.isArray(parsed.members) ? parsed.members : [];
   const recovery = queueRecoveryPresentation(row, recoveryBlocker);
   const errorDetail=errorDetailFromResult(parsed);
-  const privateCheckpointKeys=new Set(["scenePolicyStopSummary","providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","storyboardSafeRecovery","storyboardRejectedProviderReceipt","adaptiveProviderReceipt","model3dProviderFiles","quote"]);
+  const privateCheckpointKeys=new Set(["imageRecovery","scenePolicyStopSummary","providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","storyboardSafeRecovery","storyboardRejectedProviderReceipt","adaptiveProviderReceipt","model3dProviderFiles","quote"]);
   const sanitizedResult=result?Object.fromEntries(Object.entries(result).filter(([key])=>!privateCheckpointKeys.has(key)&&(key!=="recoverablePresentationCandidate"||request.artifactKind==="slides"&&row.status==="failed"&&parsed.recoverablePresentationCandidate===true))):null;
   if(sanitizedResult&&request.artifactKind==="model3d")Object.assign(sanitizedResult,model3dRecoveryProviderReceipt(parsed)??{});
   if(sanitizedResult&&consentedAdaptiveJob(row)&&!certifiedAdaptiveRows.has(row)){delete sanitizedResult.structure;delete sanitizedResult.intent;}
@@ -1617,7 +1707,7 @@ async function updateJobProgress(env: WorkerEnv, row: DocumentJobRow, stage: str
     result.generationReceipt={...receipt,...(active?{provider:active.provider,model:active.model}:{}),provider_request_status:unknown?"submission_unknown":submitted?"submitted":receipt.provider_request_status,source_transmission_status:submitted||receipt.source_transmission_status==="transmitted"?"transmitted":unknown?"unknown":receipt.source_transmission_status,settled_cost_microusd:hasUnsettledProviderSubmission(result)&&!Number(receipt.settled_cost_microusd)?null:receipt.settled_cost_microusd,reservation_status:"executing"};
   }
   if(!persist){row.result_json=JSON.stringify(result);row.updated_at=updatedAt;return;}
-  const persistedResult=row.output_slot_id?"json_patch(?,json_object('providerSubmissions',json(COALESCE(json_extract(result_json,'$.providerSubmissions'),'{}'))))":PRESERVE_ADAPTIVE_RECEIPT_SQL;
+  const persistedResult=row.output_slot_id?"json_patch(?,json_object('providerSubmissions',json(COALESCE(json_extract(result_json,'$.providerSubmissions'),'{}')),'imageRecovery',json(json_extract(result_json,'$.imageRecovery'))))":PRESERVE_ADAPTIVE_RECEIPT_SQL;
   const updated=await env.DB.prepare(`UPDATE document_jobs SET result_json=${persistedResult},updated_at=? WHERE job_id=? AND owner_id=? AND status='running' AND correlation_id=?`).bind(JSON.stringify(result), updatedAt, row.job_id, row.owner_id, row.correlation_id).run();
   if(Number(updated.meta.changes??0)!==1)throw new Error("document_job_canceled");
   row.result_json = JSON.stringify(result); row.updated_at = updatedAt;
@@ -1730,6 +1820,15 @@ async function releaseInterruptedAttempt(env: WorkerEnv, user: PilotUser, row: D
 }
 
 async function failStaleJob(env: WorkerEnv, user: PilotUser, row: DocumentJobRow,detail?:ProviderFailureDetail) {
+  // Output Image attempts use the durable call ledger and retained-stage handoff.
+  // A stale heartbeat or missing checkpoint receipt cannot prove non-submission.
+  // Preserve the original slot, grant and holds until its same-job recovery path
+  // or source-free financial reconciliation has decisive evidence.
+  if(row.kind==="generate"&&await env.DB.prepare(`SELECT 1 FROM output_operation_slots slot
+    JOIN document_jobs job ON job.job_id=slot.job_id
+    JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
+    WHERE job.job_id=? AND job.owner_id=? AND job.stream_id=? AND job.kind='generate' AND grant_row.actor_user_id=job.owner_id`)
+    .bind(row.job_id,row.owner_id,row.stream_id).first())return "held" as const;
   if(consentedAdaptiveJob(row)){const recovered=await certifiedAdaptiveJob(env,user,row,true);if(recovered.status==="completed")return;await failConsequentialExecution(env,row.owner_id,row.job_id,"adaptive_execution_interrupted");}
   const observedResult=row.result_json;
   const timestamp=Date.now();const now = new Date(timestamp).toISOString();const staleBefore=new Date(timestamp-DOCUMENT_JOB_STALE_AFTER_MS).toISOString();
@@ -2022,7 +2121,30 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     .first<{job_id:string}>();
   if (blocker) return row;
   if (row.status === "running" && !rowIsStale(row)) return row;
-  if((row.status==="running"||row.status==="queued"&&row.attempt_count>0)&&requiresForegroundDocumentExecution(row)){const unsafe=unsafePaidRecovery(row);if(unsafe){await failStaleJob(env,user,row,unsafe);return readJob(env,user.userId,jobId);}}
+  const imageRecoveryCalls=outputBinding&&row.kind==="generate"?(await env.DB.prepare("SELECT call_key,stage_key,client_request_id,request_digest,provider,model,status,used_microusd,provider_response_id FROM output_provider_calls WHERE scope_key=? AND slot_id=? ORDER BY call_key")
+    .bind(outputBinding.scope.key,outputBinding.slot.slotId).all<ImageRecoveryProviderCall>()).results:null;
+  if(imageRecoveryCalls){
+    // Native execution owns a fixed lease; an old heartbeat alone is not a takeover boundary.
+    if(row.status==="running"&&(!Number.isFinite(Date.parse(String(row.lease_expires_at)))||Date.parse(String(row.lease_expires_at))>Date.now()))return row;
+    if(row.attempt_count>=documentJobMaxAttempts(row.kind))return row;
+    const recovery=classifyImageRecoveryCandidate(row,imageRecoveryCalls);
+    // An initial event append without a retained stage has no resumable anchor
+    // handoff. Keep it unresolved; do not create another generation identity.
+    const unretainedAnchors=["GenerationRequested","ContextCompiled","BudgetReserved"];
+    if(recovery==="undispatched"&&existingEvents.some(event=>unretainedAnchors.includes(event.type)))return row;
+    const claimExcludedEvents=["GenerationCompleted","GenerationFailed",...(recovery==="undispatched"?unretainedAnchors:[])];
+    // Shape classification is not permission to spend. The execution factory
+    // rechecks the exact retained private body and current authority before use.
+    if(recovery==="unresolved"||recovery==="observe")return row;
+    outputAdmissionAssertions.push({
+      sql:`(SELECT COUNT(*) FROM output_provider_calls WHERE scope_key=? AND slot_id=?)=?${imageRecoveryCalls.map(()=>" AND EXISTS(SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=? AND call_key=? AND stage_key=? AND client_request_id=? AND request_digest=? AND provider=? AND model=? AND status=? AND used_microusd IS ? AND provider_response_id IS ?)").join("")}`,
+      bindings:[outputBinding!.scope.key,outputBinding!.slot.slotId,imageRecoveryCalls.length,...imageRecoveryCalls.flatMap(call=>[outputBinding!.scope.key,outputBinding!.slot.slotId,call.call_key,call.stage_key,call.client_request_id,call.request_digest,call.provider,call.model,call.status,call.used_microusd,call.provider_response_id])],
+    },{
+      sql:"NOT EXISTS(SELECT 1 FROM events WHERE stream_id=? AND correlation_id=? AND type IN(SELECT value FROM json_each(?)))",
+      bindings:[row.stream_id,row.correlation_id,JSON.stringify(claimExcludedEvents)],
+    });
+  }
+  if(!imageRecoveryCalls&&(row.status==="running"||row.status==="queued"&&row.attempt_count>0)&&requiresForegroundDocumentExecution(row)){const unsafe=unsafePaidRecovery(row);if(unsafe){await failStaleJob(env,user,row,unsafe);return readJob(env,user.userId,jobId);}}
   if(row.status==="running"&&unresolvedAudioSubmission(row)){await failStaleJob(env,user,row,{code:"provider_submission_uncertain",category:"network",scope:"network",action:"contact_support",message:"The paid music request may already have reached Lyria. Automatic resubmission was stopped to prevent a duplicate charge.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:null});return readJob(env,user.userId,jobId);}
   if(row.status==="running"&&unresolvedStoryboardSubmission(row)){
     const checkpoint=parseResult(row);const confirmed=checkpoint.storyboardProviderSubmission==="confirmed"&&Boolean(checkpoint.providerJobId);
@@ -2044,11 +2166,11 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     && Boolean(previousCheckpoint.reservationId && previousCheckpoint.costReservationId));
   const now = new Date(); const nowIso = now.toISOString(); const staleBefore = new Date(now.getTime() - DOCUMENT_JOB_STALE_AFTER_MS).toISOString(); const leaseExpiresAt = new Date(now.getTime() + (outputBinding?nativeExecutionPolicy.maximumMilliseconds:DOCUMENT_JOB_LEASE_MS)).toISOString();
   const attemptCorrelationId=settledModel3dRecovery?row.correlation_id:consentedAdaptiveJob(row)?jobId:`${jobId}:attempt:${attempt}`;const foregroundPresentation=isPresentationJob(row);const initialResult={...previousCheckpoint,...(requiresForegroundDocumentExecution(row)?{providerSubmissionProtocol:1}:{}),stage:foregroundPresentation?"compiling":"preparing",progressMessage:foregroundPresentation?attempt>1?"Recovering the interrupted presentation and compiling its authorized document context.":"Compiling the document into the requested presentation.":attempt>1?"Recovering the interrupted operation.":"Preparing the document context."};
-  const claimSql=`UPDATE document_jobs SET status='running',attempt_count=attempt_count+1,correlation_id=?,started_at=COALESCE(started_at,?),lease_expires_at=?,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND (status='queued' OR (status='running' AND (lease_expires_at<?${outputBinding?'':' OR updated_at<?'}))) AND correlation_id=? AND result_json IS ? AND NOT EXISTS(SELECT 1 FROM document_jobs active WHERE active.stream_id=document_jobs.stream_id AND active.job_id<>document_jobs.job_id AND active.kind!='prompt_fan' AND active.status IN('running','committing')
+  const claimSql=`UPDATE document_jobs SET status='running',attempt_count=attempt_count+1,correlation_id=?,started_at=COALESCE(started_at,?),lease_expires_at=?,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND (status='queued' OR (status='running' AND (lease_expires_at<?${outputBinding?'':' OR updated_at<?'}))) AND correlation_id=? AND result_json IS ?${imageRecoveryCalls?' AND status=? AND attempt_count=? AND request_json=? AND updated_at=?':''} AND NOT EXISTS(SELECT 1 FROM document_jobs active WHERE active.stream_id=document_jobs.stream_id AND active.job_id<>document_jobs.job_id AND active.kind!='prompt_fan' AND active.status IN('running','committing')
     AND NOT (?=1 AND active.kind='render_document' AND COALESCE(json_extract(active.request_json,'$.artifactKind'),'')='video'
       AND ${documentJobProjectSql("document_jobs")}<>''
       AND ${documentJobProjectSql("active")} NOT IN ('',${documentJobProjectSql("document_jobs")})))`;
-  const claimBindings=[attemptCorrelationId,nowIso,leaseExpiresAt,JSON.stringify(initialResult),nowIso,jobId,user.userId,user.streamId,nowIso,...(outputBinding?[]:[staleBefore]),row.correlation_id,row.result_json,Number(independentPresentation)] as const;
+  const claimBindings=[attemptCorrelationId,nowIso,leaseExpiresAt,JSON.stringify(initialResult),nowIso,jobId,user.userId,user.streamId,nowIso,...(outputBinding?[]:[staleBefore]),row.correlation_id,row.result_json,...(imageRecoveryCalls?[row.status,row.attempt_count,row.request_json,row.updated_at]:[]),Number(independentPresentation)] as const;
   let claimed;
   if (handoffPaidProviderReservations) {
     const billingOwnerId = user.billingUserId ?? user.userId;
@@ -2085,6 +2207,12 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     row.result_json=JSON.stringify(checkpoint);row.updated_at=updatedAt;
   }
 
+  // Capture scalar attempt identity before execution can yield or update the local row.
+  // A stale worker may retain monetary evidence, but cannot settle a successor's allowance.
+  const outputSettlementAttempt:OutputSqlAssertion={
+    sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND attempt_count=?)",
+    bindings:[row.job_id,row.owner_id,row.stream_id,row.correlation_id,row.attempt_count],
+  };
   let persistedForegroundPresentation:DocumentJobRow|null=null;let outputOutcomeSynchronized=false;
   let operationEnvironment=env;let outputOperationExecution:OutputEventExecution|undefined;
   try {
@@ -2136,7 +2264,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     const acceptedReceipt=rawReceipt&&typeof rawReceipt==="object"?{...rawReceipt as Record<string,unknown>,...(observedPlannerCalls?{actual_provider_call_count:observedPlannerCalls}:{})}:null;
     let terminalResult = { ...durableCheckpoint, ...(acceptedReceipt?{generationReceipt:acceptedReceipt}:{}), ...safeResult({...body,followupJobId:followup?.job_id}), ...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}), ...(detail ? { errorDetail: publicFailureDetail(detail) } : {}), stage: response.ok ? "completed" : "failed", progressMessage: response.ok ? "The operation finished." : failureProgressMessage(detail) };
     const recordedNativeFailure=outputBinding&&Array.isArray(body.appended)&&body.appended.some(event=>event&&typeof event==="object"&&["GenerationFailed","DocumentRenderFailed"].includes(String((event as Record<string,unknown>).type)));
-    if(outputBinding&&!response.ok&&!recordedNativeFailure)await settleDocumentGenerationBudgets(env,user.billingUserId??user.userId,{reservationId:outputBinding.slot.tokenReservationId,costReservationId:outputBinding.slot.costReservationId,reason:"output_rejected_before_generation"});
+    if(outputBinding&&!response.ok&&!recordedNativeFailure)await settleDocumentGenerationBudgets(env,user.billingUserId??user.userId,{reservationId:outputBinding.slot.tokenReservationId,costReservationId:outputBinding.slot.costReservationId,reason:"output_rejected_before_generation",assertions:[outputSettlementAttempt]});
     // Build the final receipt while the lease and source-retention proof are still
     // live, then publish it with the terminal state in the same guarded write.
     const nativeReceiptReady=outputBinding?await refreshGenerationReceipt(operationEnvironment,user,row,body,detail,"",{
@@ -2172,7 +2300,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
       // Monetary evidence may converge independently of erased source bodies.
       // A failed/uncertain settlement leaves its original allowance for the
       // explicit receipt check; it never starts another provider request.
-      if(!outputOperationExecution?.accountSettlement)try{await settleDocumentGenerationBudgets(env,user.billingUserId??user.userId,{reservationId:outputBinding.slot.tokenReservationId,costReservationId:outputBinding.slot.costReservationId,reason:"output_execution_stopped"});}catch{/* The durable call and account reservation remain the source of truth. */}
+      if(!outputOperationExecution?.accountSettlement)try{await settleDocumentGenerationBudgets(env,user.billingUserId??user.userId,{reservationId:outputBinding.slot.tokenReservationId,costReservationId:outputBinding.slot.costReservationId,reason:"output_execution_stopped",assertions:[outputSettlementAttempt]});}catch{/* The durable call and account reservation remain the source of truth. */}
       const safeFailure={errorDetail:localDispatchStop??{code:detail.code,category:detail.category,scope:"request",action:"none",message:"The Output operation could not finish under its current authorization.",retryable:false},stage:"failed",progressMessage:"The Output operation stopped; inspect its retained receipt before authorizing another attempt."};
       const terminal=env.DB.prepare("UPDATE document_jobs SET status='failed',result_json=json_patch(COALESCE(result_json,'{}'),?),error_message=?,completed_at=?,lease_expires_at=NULL,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status IN('queued','running','committing')")
         .bind(JSON.stringify(safeFailure),detail.code,completedAt,completedAt,row.job_id,user.userId,user.streamId,row.correlation_id);
@@ -2210,12 +2338,12 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   return finishedRow;
 }
 
-async function documentJobPrincipal(env:WorkerEnv,row:DocumentJobRow,current:PilotUser):Promise<PilotUser|null>{
+async function documentJobPrincipal(env:WorkerEnv,row:DocumentJobRow,current?:PilotUser):Promise<PilotUser|null>{
   const project=await env.DB.prepare("SELECT organization_id,project_access_id,project_id,owner_user_id,actor_user_id,EXISTS(SELECT 1 FROM events anchor WHERE anchor.event_id=resource.source_event_id AND anchor.stream_id='creative:'||resource.owner_user_id AND anchor.actor='user:'||resource.actor_user_id AND anchor.type='ProjectDocumentJobQueued' AND json_extract(anchor.payload,'$.job_id')=resource.resource_id AND json_extract(anchor.payload,'$.organization_id')=resource.organization_id AND json_extract(anchor.payload,'$.project_access_id')=resource.project_access_id) AS anchor_valid FROM project_resource_scopes resource WHERE resource_kind='job' AND resource_id=? AND actor_user_id=? AND owner_user_id=?")
     .bind(row.job_id,row.owner_id,row.stream_id.slice("creative:".length)).first<{organization_id:string;project_access_id:string;project_id:string;owner_user_id:string;actor_user_id:string;anchor_valid:number}>();
   if(project&&!project.anchor_valid)return null;
-  if(project&&current.userId===row.owner_id&&current.projectExecution?.projectAccessId===project.project_access_id&&current.projectExecution.organizationId===project.organization_id)return current;
-  if(!project&&current.userId===row.owner_id&&!current.projectExecution&&current.streamId===row.stream_id)return current;
+  if(project&&current&&current.userId===row.owner_id&&current.projectExecution?.projectAccessId===project.project_access_id&&current.projectExecution.organizationId===project.organization_id)return current;
+  if(!project&&current&&current.userId===row.owner_id&&!current.projectExecution&&current.streamId===row.stream_id)return current;
   if(!project&&row.owner_id!==row.stream_id.slice("creative:".length))return null;
   const principal=await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(row.owner_id).first<Record<string,unknown>>();
   if(!principal||principal.consent_version!==POLICY_VERSION)return null;
@@ -2224,6 +2352,282 @@ async function documentJobPrincipal(env:WorkerEnv,row:DocumentJobRow,current:Pil
   const actor:PilotUser={userId:String(principal.user_id),email:String(principal.email??""),displayName:String(principal.display_name??""),role:role as PilotUser["role"],consentVersion:String(principal.consent_version),consentedAt:principal.consented_at?String(principal.consented_at):null,streamId:row.stream_id,access:await principalAccessFromRow(principal,role),billingUserId:row.owner_id,authorizationSnapshot:{updatedAt:String(principal.updated_at??""),rawEpoch:String(principal.permission_epoch??""),grants:String(principal.grants_json??"[]"),organizations:String(principal.organizations_json??"[]"),projects:String(principal.projects_json??"[]"),identityPolicies:String(principal.identity_policies_json??"[]"),canvasRequirements:Number(principal.approved_canvas_requirements??0)},...(project?{projectExecution:{organizationId:project.organization_id,projectAccessId:project.project_access_id,projectId:project.project_id,ownerUserId:project.owner_user_id,actorUserId:project.actor_user_id}}:{})};
   if(project&&(!hasCapability(actor,"project.output.request",{organizationId:project.organization_id,projectAccessId:project.project_access_id})||!await activeProjectExecution(env,actor,row.document_id,row.job_id)))return null;
   return actor;
+}
+
+/** Bound both private columns before returning an Image checkpoint to worker code. */
+async function readImageAcknowledgmentJob(env:WorkerEnv,ownerId:string,jobId:string){
+  return env.DB.prepare(`SELECT *, (SELECT slot.slot_id FROM output_operation_slots slot WHERE slot.job_id=document_jobs.job_id) AS output_slot_id
+    FROM document_jobs WHERE job_id=? AND owner_id=? AND kind='generate'
+      AND length(CAST(request_json AS BLOB))<=2000000 AND length(CAST(result_json AS BLOB))<=2000000`)
+    .bind(jobId,ownerId).first<DocumentJobRow>();
+}
+
+/** Bounded metadata routing only; neither result grants execution authority. */
+async function readImagePublicationState(env:WorkerEnv,row:DocumentJobRow):Promise<'published'|'unpublished'|'held'>{
+  if(!Number.isSafeInteger(row.attempt_count)||row.attempt_count<1||row.attempt_count>2)return 'held';
+  const correlations=Array.from({length:row.attempt_count},(_,index)=>`${row.job_id}:attempt:${index+1}`);
+  const published=(await env.DB.prepare("SELECT type FROM events WHERE stream_id=? AND correlation_id IN(SELECT value FROM json_each(?)) AND type IN('GenerationCompleted','GenerationUsageRecorded') ORDER BY sequence LIMIT 3")
+    .bind(row.stream_id,JSON.stringify(correlations)).all<{type:string}>()).results;
+  if(!published.length)return 'unpublished';
+  return published.length===2&&published.filter(event=>event.type==='GenerationCompleted').length===1&&published.filter(event=>event.type==='GenerationUsageRecorded').length===1?'published':'held';
+}
+
+/** Provider-free acknowledgment shared by the HTTP route and the terminal sweep.
+ * expectedContextId is the caller's selected context, or the original grant's
+ * retained context for a server tick; the existing proof rechecks it live. */
+async function acknowledgeRetainedImageJob(env:WorkerEnv,user:PilotUser,target:DocumentJobRow,expectedContextId:string|null):Promise<{job:DocumentJobRow;acknowledged:true}|{error:string;status:number}>{
+  // A single read-only recheck may observe a concurrent successful acknowledgment.
+  // It never retries an execution, changes the attempt, or admits provider work.
+  for(let observed=target,pass=0;pass<2;pass++){
+    try{
+      if(!Number.isSafeInteger(observed.attempt_count)||observed.attempt_count<1||observed.attempt_count>2
+        ||!imageRecoveryHasNoExplicitStop(observed,parseResult(observed)))throw new OutputConflictError("output_image_acknowledgment_unavailable",409);
+      const binding=await loadOutputJobBinding(env,user,observed);
+      if(!binding||binding.scope.contextId!==expectedContextId)throw new OutputConflictError("output_execution_context_changed",403);
+      const assertions=await resolveOutputImageAcknowledgmentAuthority(env,binding.scope,binding.slot,user.billingUserId??user.userId);
+      const projectAuthority=documentJobProjectAuthority(user,observed.document_id,observed.job_id);
+      const readProof=(proofs:readonly OutputSqlAssertion[],statements:readonly D1PreparedStatement[]=[])=>readOutputProofBatch(env,proofs,statements);
+      const proof=await readPublishedImageAcknowledgment({env,user,job:observed,scope:binding.scope,slot:binding.slot,assertions:[...assertions,...(projectAuthority?[projectAuthority]:[]),imageRecoveryCancellationAssertion(observed)],readProof});
+      const guards=proof.assertions.flatMap(assertion=>outputAssertionStatements(env,assertion));
+      const read=env.DB.prepare("SELECT * FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND length(CAST(request_json AS BLOB))<=2000000 AND length(CAST(result_json AS BLOB))<=2000000").bind(observed.job_id,observed.owner_id,observed.stream_id,observed.correlation_id);
+      const writes=observed.status==="completed"?[]:[env.DB.prepare("UPDATE document_jobs SET status='completed',result_json=?,error_message=NULL,completed_at=?,lease_expires_at=NULL,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status=? AND attempt_count=? AND result_json IS ?")
+        .bind(JSON.stringify(proof.result),proof.completedAt,new Date().toISOString(),observed.job_id,observed.owner_id,observed.stream_id,observed.correlation_id,observed.status,observed.attempt_count,observed.result_json),...outputAssertionStatements(env,{sql:"changes()=1"})];
+      const statements=[...guards,...writes,read],result=await env.DB.batch(statements);
+      if(result.length!==statements.length||statements.some((_,index)=>result[index]?.success!==true))throw new OutputConflictError("output_image_acknowledgment_commit_unconfirmed",409);
+      const acknowledged=result.at(-1)?.results[0] as DocumentJobRow|undefined;
+      if(!acknowledged||acknowledged.status!=="completed")throw new OutputConflictError("output_image_acknowledgment_changed",409);
+      // Only the job projection changes. Events, grant, slot, storage and settlement remain untouched.
+      return {job:acknowledged,acknowledged:true};
+    }catch(error){
+      const readConvergence=error instanceof OutputConflictError&&error.code==="output_source_changed_during_read"&&observed.status!=="completed";
+      if((String(error).includes("constraint failed")||readConvergence)&&pass===0){
+        const winner=await readImageAcknowledgmentJob(env,user.userId,target.job_id);
+        // A winner may differ only in the six acknowledgment projection fields.
+        // Re-enter every live proof; the completed row alone is never success.
+        const identityKeys=["output_slot_id","job_id","owner_id","stream_id","document_id","kind","source_surface","correlation_id","requested_sequence","request_json","attempt_count","requested_at","started_at","notified_at","expires_at"] as const;
+        if(winner?.status==="completed"&&identityKeys.every(key=>winner[key]===target[key])){observed=winner;continue;}
+      }
+      if(error instanceof OutputConflictError)return {error:error.code,status:error.status};
+      if(String(error).includes("constraint failed"))return {error:"output_execution_authority_revoked",status:403};
+      throw error;
+    }
+  }
+  return {error:"output_image_acknowledgment_changed",status:409};
+}
+
+/** Conservative read-only triage, not execution authority. The existing runner
+ * repeats retained-body, anchor, route, reservation and claim checks at use. */
+async function serverImageRecoveryReady(env:WorkerEnv,user:PilotUser,row:DocumentJobRow):Promise<boolean>{
+  const binding=await loadOutputJobBinding(env,user,row);
+  if(!binding||!['queued','running'].includes(binding.slot.status))return false;
+  const {scope,slot}=binding;
+  const calls=(await env.DB.prepare("SELECT call_key,stage_key,client_request_id,request_digest,provider,model,status,used_microusd,provider_response_id FROM output_provider_calls WHERE scope_key=? AND slot_id=? ORDER BY call_key LIMIT 3")
+    .bind(scope.key,slot.slotId).all<ImageRecoveryProviderCall>()).results;
+  const recovery=classifyImageRecoveryCandidate(row,calls);
+  if(recovery==='observe'||recovery==='unresolved')return false;
+  const excluded=['GenerationCompleted','GenerationFailed',...(recovery==='undispatched'?['GenerationRequested','ContextCompiled','BudgetReserved']:[])];
+  if(await env.DB.prepare("SELECT 1 FROM events WHERE stream_id=? AND correlation_id=? AND type IN(SELECT value FROM json_each(?)) LIMIT 1")
+    .bind(row.stream_id,row.correlation_id,JSON.stringify(excluded)).first())return false;
+  const checkpoint=parseResult(row);
+  if(checkpoint.reservationId!==slot.tokenReservationId||checkpoint.costReservationId!==slot.costReservationId||checkpoint.costReservationMicrousd!==slot.maximumMicrousd||checkpoint.costReservationPeriod!==new Date().toISOString().slice(0,7))return false;
+  // A missing original reservation is a hold, never permission to reserve again.
+  if(!await env.DB.prepare("SELECT 1 FROM budget_reservations token JOIN cost_budget_reservations cost ON cost.owner_id=token.owner_id AND cost.stream_id=token.stream_id AND cost.correlation_id=token.correlation_id AND cost.operation=token.operation AND cost.period=token.period WHERE token.reservation_id=? AND cost.reservation_id=? AND token.owner_id=? AND token.stream_id=? AND token.correlation_id=? AND token.operation='image-generation' AND token.status='active' AND cost.status IN('active','executing') AND cost.period=? LIMIT 1")
+    .bind(slot.tokenReservationId,slot.costReservationId,user.billingUserId??user.userId,row.stream_id,row.correlation_id,checkpoint.costReservationPeriod).first())return false;
+  if(recovery!=='undispatched'){
+    const pointer=readImageRecoveryPointer(checkpoint.imageRecovery);
+    if(!pointer)return false;
+    const containment=privateContentScopeGuard(user.userId,user.projectExecution);
+    // Bound the actual private read as well as the candidate count. Larger or
+    // missing evidence stays held for explicit recovery; no clipping or repair.
+    const stored=await env.DB.prepare(`SELECT content FROM private_content WHERE content_id=? AND owner_id=? AND kind='provider-output' AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND length(CAST(content AS BLOB))<=? AND ${containment.sql}`)
+      .bind(pointer.contentId,user.userId,MAX_PAYLOAD_BYTES,...containment.bindings).first<{content:string}>();
+    if(!stored||typeof stored.content!=='string')return false;
+    const envelope:unknown=JSON.parse(stored.content);
+    if(!envelope||typeof envelope!=='object'||Array.isArray(envelope)||JSON.stringify(envelope)!==stored.content||await imageRecoveryDigest(envelope)!==pointer.contentSha256)return false;
+    const saved=envelope as Record<string,unknown>;
+    const identity={jobId:row.job_id,actorUserId:user.userId,scopeKey:scope.key,slotId:slot.slotId,grantId:slot.grantId,sourceDigest:slot.sourceDigest,routeDigest:slot.routeDigest,inputDigest:pointer.inputDigest};
+    if(saved.version!==1||JSON.stringify(saved.identity)!==JSON.stringify(identity))return false;
+    const stage=readImageRecoveryStage(saved.stage);
+    if(!stage||pointer.stage!==(stage.rendered?'rendered':'planned')||classifyImageRecoveryStage(stage,checkpoint,calls)==='blocked')return false;
+    const correlations=Array.from({length:Math.min(row.attempt_count,2)},(_,index)=>`${row.job_id}:attempt:${index+1}`);
+    const anchors=[
+      {id:stage.requestedEventId,type:'GenerationRequested',projectId:null,documentId:row.document_id},
+      {id:stage.compiledEventId,type:'ContextCompiled',projectId:scope.projectId,documentId:row.document_id},
+      {id:stage.budgetEventId,type:'BudgetReserved',projectId:null,documentId:null},
+    ];
+    for(const anchor of anchors){
+      const retained=await env.DB.prepare("SELECT event.*,body.private_json FROM events event JOIN event_private_payloads body ON body.private_event_id=event.event_id WHERE event.event_id=? AND event.stream_id=? AND event.type=? AND event.correlation_id IN(SELECT value FROM json_each(?)) AND body.owner_id=? AND body.project_id IS ? AND body.document_id IS ? AND body.redacted_at IS NULL AND length(CAST(body.private_json AS BLOB))<=? AND length(CAST(event.payload AS BLOB))<=? LIMIT 1")
+        .bind(anchor.id,row.stream_id,anchor.type,JSON.stringify(correlations),scope.ownerUserId,anchor.projectId,anchor.documentId,MAX_PAYLOAD_BYTES,MAX_PAYLOAD_BYTES).first<Record<string,unknown>>();
+      if(!retained||typeof retained.private_json!=='string')return false;
+      const event=serializeEvent(retained);
+      if(!event.payload||typeof event.payload!=='object'||Array.isArray(event.payload)||!correlations.includes(event.correlationId))return false;
+    }
+    if(stage.rendered){
+      const storageKey=decodeURIComponent(stage.rendered.media.url.slice('/api/media/'.length));
+      if(!await env.DB.prepare("SELECT 1 FROM output_native_storage_writes WHERE scope_key=? AND slot_id=? AND storage_key=? AND content_sha256=? AND status='written' LIMIT 1")
+        .bind(scope.key,slot.slotId,storageKey,stage.rendered.media.contentHash).first())return false;
+    }
+  }
+  const proof=prepareOutputExecutionProof(scope,await resolveOutputExecutionAuthority(env,scope,slot));
+  const settings=proof.targetPreflight.settings as Record<string,unknown>;
+  if(settings.kind!=='generate'||!readOutputNativeExecutionPolicy(settings.executionPolicy))return false;
+  const project=documentJobProjectAuthority(user,row.document_id,row.job_id);
+  const assertions=[...proof.assertions,outputScopeAuthority(scope,'request'),...(project?[project]:[])];
+  if(assertions.some(assertion=>assertion.deadlineMs!==undefined&&(!Number.isFinite(assertion.deadlineMs)||assertion.deadlineMs<=Date.now())))return false;
+  await readOutputProofBatch(env,assertions);
+  return true;
+}
+
+/** One bounded server tick over already-started Image grants. No request,
+ * browser identity, new grant or replacement job is created. Only the shared
+ * runner may claim its normal lease; this sweep never renews one independently. */
+export async function recoverServerImageJobs(env:WorkerEnv,options:{candidateLimit?:number;executionLimit?:number}={}):Promise<{inspected:number;attempted:number}>{
+  const limit=(value:number|undefined,fallback:number,maximum:number)=>Number.isSafeInteger(value)&&Number(value)>=0?Math.min(Number(value),maximum):fallback;
+  const candidateLimit=limit(options.candidateLimit,25,100),executionLimit=limit(options.executionLimit,1,5);
+  const counts={inspected:0,attempted:0};
+  if(!candidateLimit||!executionLimit)return counts;
+  await ensureSchema(env);await ensureOutputRequirementsSchema(env);
+  // One durable Image-only traversal row prevents held oldest jobs from owning
+  // every tick. It is not a job lease: concurrent execution still uses run's CAS.
+  await env.DB.prepare("INSERT OR IGNORE INTO document_job_recovery_scan(cursor_key,last_requested_at,last_job_id,version) VALUES('image-output-v1','','',0)").run();
+  type ScanCursor={last_requested_at:string;last_job_id:string;version:number};
+  let cursor=await env.DB.prepare("SELECT last_requested_at,last_job_id,version FROM document_job_recovery_scan WHERE cursor_key='image-output-v1'").first<ScanCursor>();
+  if(!cursor||typeof cursor.last_requested_at!=='string'||typeof cursor.last_job_id!=='string'||!Number.isSafeInteger(cursor.version)||cursor.version<0||cursor.version>=Number.MAX_SAFE_INTEGER)return counts;
+  const advance=async(requestedAt:string,jobId:string):Promise<boolean>=>{
+    if(!cursor||cursor.version>=Number.MAX_SAFE_INTEGER)return false;
+    const changed=await env.DB.prepare("UPDATE document_job_recovery_scan SET last_requested_at=?,last_job_id=?,version=version+1 WHERE cursor_key='image-output-v1' AND last_requested_at=? AND last_job_id=? AND version=?")
+      .bind(requestedAt,jobId,cursor.last_requested_at,cursor.last_job_id,cursor.version).run();
+    if(Number(changed.meta.changes??0)!==1)return false;
+    cursor={last_requested_at:requestedAt,last_job_id:jobId,version:cursor.version+1};
+    return true;
+  };
+  const now=new Date().toISOString();
+  const readCandidates=async()=>(await env.DB.prepare(`SELECT job.*,slot.slot_id AS output_slot_id FROM document_jobs job
+    JOIN output_operation_slots slot ON slot.job_id=job.job_id AND slot.status IN('queued','running')
+    JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
+      AND plan.document_id=job.document_id AND job.stream_id='creative:'||plan.owner_user_id
+    JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
+      AND grant_row.actor_user_id=job.owner_id AND grant_row.status='active' AND julianday(grant_row.expires_at)>julianday(?)
+    WHERE job.kind='generate' AND job.status IN('queued','running') AND job.attempt_count>=0 AND job.attempt_count<? AND julianday(job.expires_at)>julianday(?)
+      AND (job.status='queued' OR job.status='running' AND julianday(job.lease_expires_at)<julianday(?))
+      AND length(CAST(job.request_json AS BLOB))<=? AND (job.result_json IS NULL OR length(CAST(job.result_json AS BLOB))<=?)
+      AND (job.requested_at,job.job_id)>(?,?)
+    ORDER BY job.requested_at ASC,job.job_id ASC LIMIT ?`)
+    .bind(now,documentJobMaxAttempts('generate'),now,now,MAX_PAYLOAD_BYTES,MAX_PAYLOAD_BYTES,cursor!.last_requested_at,cursor!.last_job_id,candidateLimit).all<DocumentJobRow>()).results;
+  let candidates=await readCandidates();
+  if(!candidates.length&&(cursor.last_requested_at!==''||cursor.last_job_id!=='')){
+    if(!await advance('',''))return counts;
+    candidates=await readCandidates(); // At most one wrap and two bounded reads.
+  }
+  for(const row of candidates){
+    if(counts.attempted>=executionLimit)break;
+    // Advance even for a held row, but only if this tick still owns its exact
+    // traversal snapshot. A loser stops; no job, reservation or grant is touched.
+    if(!await advance(row.requested_at,row.job_id))return counts;
+    counts.inspected++;
+    try{
+      if(row.status==='running'&&(!Number.isFinite(Date.parse(String(row.lease_expires_at)))||Date.parse(String(row.lease_expires_at))>=Date.now()))continue;
+      // Preserve account-stream serialization. A held earlier job in one stream
+      // does not spend the allowance for another independently eligible stream.
+      const blocker=await env.DB.prepare(`SELECT 1 FROM document_jobs candidate WHERE candidate.stream_id=? AND candidate.job_id<>? AND candidate.kind!='prompt_fan'
+        AND (candidate.status IN('running','committing') OR candidate.status='queued' AND NOT(candidate.kind='render_document' AND COALESCE(json_extract(candidate.request_json,'$.artifactKind'),'')='slides')
+          AND NOT EXISTS(SELECT 1 FROM output_operation_slots output_slot WHERE output_slot.job_id=candidate.job_id AND output_slot.status NOT IN('queued','running'))
+          AND (candidate.requested_at<? OR candidate.requested_at=? AND candidate.job_id<?)) LIMIT 1`)
+        .bind(row.stream_id,row.job_id,row.requested_at,row.requested_at,row.job_id).first();
+      if(blocker)continue;
+      const user=await documentJobPrincipal(env,row);
+      if(!user||!await serverImageRecoveryReady(env,user,row))continue;
+      counts.attempted++;
+      // This is the only execution call. All current authority and exact-row,
+      // call-set, lease and original-reservation CAS remain in the shared runner.
+      await runDocumentJob(env,user,row.job_id,row);
+    }catch{
+      // Unavailable/changed evidence stays held. A lost claim still consumed its
+      // attempted-execution allowance; this sweep never repairs or retries it.
+    }
+  }
+  return counts;
+}
+
+/** Bounded, provider-free completion of original Image attempts. The terminal
+ * cursor is independent of the paid runnable sweep and is not an execution lease.
+ * Finalization is supplied by the separately reviewed retained-finalization join. */
+export async function recoverServerImageTerminalJobs(env:WorkerEnv,options:{candidateLimit?:number;finalizationLimit?:number}={}):Promise<{inspected:number;attempted:number}>{
+  const limit=(value:number|undefined,fallback:number,maximum:number)=>Number.isSafeInteger(value)&&Number(value)>=0?Math.min(Number(value),maximum):fallback;
+  const candidateLimit=limit(options.candidateLimit,25,100),finalizationLimit=limit(options.finalizationLimit,1,5);
+  const counts={inspected:0,attempted:0};
+  if(!candidateLimit||!finalizationLimit)return counts;
+  await ensureSchema(env);await ensureOutputRequirementsSchema(env);
+  await env.DB.prepare("INSERT OR IGNORE INTO document_job_terminal_recovery_scan(cursor_key,last_requested_at,last_job_id,version) VALUES('image-terminal-v1','','',0)").run();
+  type TerminalScanCursor={last_requested_at:string;last_job_id:string;version:number};
+  let cursor=await env.DB.prepare("SELECT last_requested_at,last_job_id,version FROM document_job_terminal_recovery_scan WHERE cursor_key='image-terminal-v1'").first<TerminalScanCursor>();
+  if(!cursor||typeof cursor.last_requested_at!=='string'||typeof cursor.last_job_id!=='string'||!Number.isSafeInteger(cursor.version)||cursor.version<0||cursor.version>=Number.MAX_SAFE_INTEGER)return counts;
+  const advance=async(requestedAt:string,jobId:string):Promise<boolean>=>{
+    if(!cursor||cursor.version>=Number.MAX_SAFE_INTEGER)return false;
+    const changed=await env.DB.prepare("UPDATE document_job_terminal_recovery_scan SET last_requested_at=?,last_job_id=?,version=version+1 WHERE cursor_key='image-terminal-v1' AND last_requested_at=? AND last_job_id=? AND version=?")
+      .bind(requestedAt,jobId,cursor.last_requested_at,cursor.last_job_id,cursor.version).run();
+    if(Number(changed.meta.changes??0)!==1)return false;
+    cursor={last_requested_at:requestedAt,last_job_id:jobId,version:cursor.version+1};
+    return true;
+  };
+  const candidateKeys=['job_id','owner_id','stream_id','document_id','kind','status','correlation_id','attempt_count','requested_at','updated_at','output_slot_id'] as const;
+  type TerminalCandidate=Pick<DocumentJobRow,typeof candidateKeys[number]>;
+  // Only small identities cross this batch boundary. Private JSON is read for
+  // one visited row at a time after traversal CAS, never retained for a page.
+  const readCandidates=async()=>(await env.DB.prepare(`SELECT job.job_id,job.owner_id,job.stream_id,job.document_id,job.kind,job.status,
+      job.correlation_id,job.attempt_count,job.requested_at,job.updated_at,slot.slot_id AS output_slot_id FROM document_jobs job
+    JOIN output_operation_slots slot ON slot.job_id=job.job_id
+    JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
+      AND plan.document_id=job.document_id AND job.stream_id='creative:'||plan.owner_user_id
+    JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
+      AND grant_row.actor_user_id=job.owner_id
+    WHERE job.kind='generate' AND job.status IN('committing','failed') AND job.source_surface='outputs'
+      AND typeof(job.attempt_count)='integer' AND typeof(job.job_id)='text' AND typeof(job.requested_at)='text'
+      AND length(CAST(job.job_id AS BLOB))<=512 AND length(CAST(job.owner_id AS BLOB))<=512
+      AND length(CAST(job.stream_id AS BLOB))<=512 AND length(CAST(job.document_id AS BLOB))<=512
+      AND length(CAST(job.correlation_id AS BLOB))<=512 AND length(CAST(slot.slot_id AS BLOB))<=512
+      AND length(CAST(job.requested_at AS BLOB))<=64 AND length(CAST(job.updated_at AS BLOB))<=64
+      AND (job.requested_at,job.job_id)>(?,?)
+    ORDER BY job.requested_at ASC,job.job_id ASC LIMIT ?`)
+    .bind(cursor!.last_requested_at,cursor!.last_job_id,candidateLimit).all<TerminalCandidate>()).results;
+  let candidates=await readCandidates();
+  if(!candidates.length&&(cursor.last_requested_at!==''||cursor.last_job_id!=='')){
+    if(!await advance('',''))return counts;
+    candidates=await readCandidates();
+  }
+  for(const candidate of candidates){
+    if(counts.attempted>=finalizationLimit)break;
+    if(!await advance(candidate.requested_at,candidate.job_id))return counts;
+    counts.inspected++;
+    try{
+      const row=await readImageAcknowledgmentJob(env,candidate.owner_id,candidate.job_id);
+      if(!row||candidateKeys.some(key=>row[key]!==candidate[key]))continue;
+      if(!Number.isSafeInteger(row.attempt_count)||row.attempt_count<1||row.attempt_count>2)continue;
+      if(row.status==='committing'&&(!row.lease_expires_at||!Number.isFinite(Date.parse(row.lease_expires_at))||Date.parse(row.lease_expires_at)>Date.now())
+        ||row.status==='failed'&&row.lease_expires_at!==null&&(!Number.isFinite(Date.parse(row.lease_expires_at))||Date.parse(row.lease_expires_at)>Date.now()))continue;
+      const request:unknown=JSON.parse(row.request_json),checkpoint:unknown=JSON.parse(row.result_json??'null');
+      if(!request||typeof request!=='object'||Array.isArray(request)||!checkpoint||typeof checkpoint!=='object'||Array.isArray(checkpoint))continue;
+      const pointer=readImageRecoveryPointer((checkpoint as Record<string,unknown>).imageRecovery);
+      if(!pointer||pointer.stage!=='rendered'||!imageRecoveryHasNoExplicitStop(row,checkpoint as Record<string,unknown>))continue;
+      const user=await documentJobPrincipal(env,row);
+      if(!user)continue;
+      const binding=await loadOutputJobBinding(env,user,row);
+      if(!binding)continue;
+      // Coarse routing only. A partial or duplicate publication is never repaired
+      // by this selector. Both actions repeat their complete current proofs/CAS.
+      const publication=await readImagePublicationState(env,row);
+      if(publication==='held')continue;
+      // Count attempted invocations even when authority changes or proof is held.
+      // Cursor progress prevents one such row from owning every later tick.
+      counts.attempted++;
+      if(publication==='published')await acknowledgeRetainedImageJob(env,user,row,binding.scope.contextId);
+      else await finalizeRetainedImageJob(env,user,row.job_id,binding.scope.contextId);
+    }catch{
+      // Keep genuine uncertainty held. Never fall back to paid run, renew a
+      // grant, synthesize a completion, or retry this row in the same tick.
+    }
+  }
+  return counts;
 }
 
 async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
@@ -2237,7 +2641,7 @@ async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
         if(scope){await cancelProjectActorJobs(env,user,{organizationId:scope.organization_id,projectAccessId:scope.project_access_id,actorUserId:running.owner_id});continue;}
         return;
       }
-      if(requiresForegroundDocumentExecution(running)){await failStaleJob(env,owner,running,unsafePaidRecovery(running)??undefined);continue;}
+      if(requiresForegroundDocumentExecution(running)){if(await failStaleJob(env,owner,running,unsafePaidRecovery(running)??undefined)==="held")return;continue;}
       const recovered = await runDocumentJob(env, owner, running.job_id);
       if (!recovered || recovered.status === "queued" || recovered.status === "running" || recovered.status === "committing") return;
       continue;
@@ -2684,7 +3088,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
         'promptFanId',json_extract(job.request_json,'$.promptFanId'),'parentJobId',json_extract(job.request_json,'$.parentJobId'),
         'fanKind',json_extract(job.request_json,'$.fanKind'),'artifactKind',json_extract(job.request_json,'$.artifactKind'),'productionMode',json_extract(job.request_json,'$.productionMode'),'itemCount',json_extract(job.request_json,'$.itemCount'),'canvasId',json_extract(job.request_json,'$.canvasId'),
         'sceneMedium',json_extract(job.request_json,'$.sceneMedium'),'sceneConfiguration',json(json_extract(job.request_json,'$.sceneConfiguration'))) AS request_json,
-      json_remove(job.result_json,'$.scenePolicyStopSummary','$.providerSubmissions','$.providerSubmissionProtocol','$.providerSubmissionLegacyUncertain','$.plannerInput','$.videoInputReceipt','$.audioInputReceipt','$.model3dInputReceipt','$.model3dProviderFiles','$.artifactPlan','$.presentationCandidates','$.presentationRecoveryOnly','$.productionPlan','$.productionSceneReceipts','$.productionFrameReceipts','$.productionAnchor','$.providerStatusUrl','$.providerResponseUrl','$.providerCancelUrl','$.moderationPromptRef','$.intentRef','$.providerJobId','$.providerRequestId','$.storyboardSafeRecovery','$.storyboardRejectedProviderReceipt','$.generationReceipt','$.generation_receipt','$.input_ref','$.inputRef','$.source_snapshot_sha256') AS result_json,
+      json_remove(job.result_json,'$.imageRecovery','$.scenePolicyStopSummary','$.providerSubmissions','$.providerSubmissionProtocol','$.providerSubmissionLegacyUncertain','$.plannerInput','$.videoInputReceipt','$.audioInputReceipt','$.model3dInputReceipt','$.model3dProviderFiles','$.artifactPlan','$.presentationCandidates','$.presentationRecoveryOnly','$.productionPlan','$.productionSceneReceipts','$.productionFrameReceipts','$.productionAnchor','$.providerStatusUrl','$.providerResponseUrl','$.providerCancelUrl','$.moderationPromptRef','$.intentRef','$.providerJobId','$.providerRequestId','$.storyboardSafeRecovery','$.storyboardRejectedProviderReceipt','$.generationReceipt','$.generation_receipt','$.input_ref','$.inputRef','$.source_snapshot_sha256') AS result_json,
       job.error_message,job.attempt_count,job.requested_at,job.started_at,job.completed_at,job.lease_expires_at,job.notified_at,job.expires_at,job.updated_at
       FROM document_jobs job JOIN project_resource_scopes resource ON resource.resource_kind='job'
       AND resource.resource_id=job.job_id AND resource.actor_user_id=job.owner_id AND resource.owner_user_id=?
@@ -2716,9 +3120,14 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   }
   if(project&&path){
     const targetId=decodeURIComponent(path.replace(/\/(?:cancel|force-fail|ack|dismiss|retry|run|recover|reconcile-provider|reconcile-output|continue-safer-frames)$/,""));
-    const target=await readJob(env,user.userId,targetId);
-    if(!target||!await activeProjectExecution(env,user,target.document_id,targetId))return Response.json({error:"job_not_found"},{status:404});
-    if(executionRequest)verifiedPathJob=target;
+    if(request.method==='POST'&&path.endsWith('/recover')){
+      const target=await env.DB.prepare("SELECT document_id FROM document_jobs WHERE job_id=? AND owner_id=?").bind(targetId,user.userId).first<{document_id:string}>();
+      if(!target||!await activeProjectExecution(env,user,target.document_id,targetId))return Response.json({error:"job_not_found"},{status:404});
+    }else{
+      const target=await readJob(env,user.userId,targetId);
+      if(!target||!await activeProjectExecution(env,user,target.document_id,targetId))return Response.json({error:"job_not_found"},{status:404});
+      if(executionRequest)verifiedPathJob=target;
+    }
   }
   type DocumentJobAdmission={kind?:string;documentId?:string;sourceSurface?:string;payload?:Record<string,unknown>&{sceneMedium?:SceneMedium;sceneConfiguration?:SceneConfiguration}};let submittedInput:DocumentJobAdmission|null=null;
   if(request.method==="POST"&&!path){const consent=requireConsent(user);if(consent)return consent;submittedInput=await request.json() as DocumentJobAdmission;if(submittedInput.kind==="structure_adaptive")return Response.json({error:"adaptive_consent_required",submission:"not-submitted"},{status:428});const payload=submittedInput.payload;if(submittedInput.kind==="render_document"&&(payload?.artifactKind==="storyboard"||payload?.artifactKind==="video"||payload?.artifactKind==="audio")&&payload.paidMediaConfirmed!==true)return Response.json({error:"paid_media_confirmation_required",message:"Confirm paid media generation before starting this render."},{status:428});}
@@ -2856,7 +3265,32 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   if(path.endsWith("/recover")&&request.method==="POST"){
     const consent=requireConsent(principal);if(consent)return consent;
     const jobId=decodeURIComponent(path.slice(0,-8).replace(/\/$/,""));
-    const target=await readJob(env,user.userId,jobId);
+    // Discriminate without materializing an Image's private request/checkpoint.
+    const nativeImage=outputSchemaIsReady(env.DB)?await env.DB.prepare(`SELECT 1 AS present FROM document_jobs job WHERE job.job_id=? AND job.owner_id=? AND job.kind='generate'
+      AND EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.job_id=job.job_id)`).bind(jobId,user.userId).first():null;
+    if(nativeImage){
+      if(auth.impersonation)return Response.json({error:"output_image_acknowledgment_actor_required"},{status:403,headers:{"cache-control":"private, no-store"}});
+      const target=await readImageAcknowledgmentJob(env,user.userId,jobId);
+      if(!target)return Response.json({error:"output_image_acknowledgment_unavailable"},{status:409,headers:{"cache-control":"private, no-store"}});
+      const publication=await readImagePublicationState(env,target);
+      if(publication==='held')return Response.json({error:"output_image_publication_incomplete"},{status:409,headers:{"cache-control":"private, no-store"}});
+      if(publication==='published'){
+        const acknowledged=await acknowledgeRetainedImageJob(env,user,target,project?.contextId??null);
+        if("error" in acknowledged)return Response.json({error:acknowledged.error},{status:acknowledged.status,headers:{"cache-control":"private, no-store"}});
+        return Response.json({job:project?safeScopedJob(acknowledged.job):serializeJob(acknowledged.job),recovered:true},{headers:{"cache-control":"private, no-store"}});
+      }
+      const binding=await loadOutputJobBinding(env,user,target);
+      if(!binding||binding.scope.contextId!==(project?.contextId??null))return Response.json({error:"output_execution_context_changed"},{status:403,headers:{"cache-control":"private, no-store"}});
+      const finalized=await finalizeRetainedImageJob(env,user,jobId,project?.contextId??null);
+      if("error" in finalized)return Response.json({error:finalized.error},{status:finalized.status,headers:{"cache-control":"private, no-store"}});
+      return Response.json({job:project?safeScopedJob(finalized.job):serializeJob(finalized.job),recovered:true,finalized:true},{headers:{"cache-control":"private, no-store"}});
+    }
+    // Keep the non-Image classification in the full-row SELECT as well: a
+    // newly attached Output slot must not race this fallback into a private read.
+    const ready=outputSchemaIsReady(env.DB);
+    const target=await env.DB.prepare(`SELECT *${ready?",(SELECT slot.slot_id FROM output_operation_slots slot WHERE slot.job_id=document_jobs.job_id) AS output_slot_id":""}
+      FROM document_jobs WHERE job_id=? AND owner_id=?${ready?" AND NOT(kind='generate' AND EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.job_id=document_jobs.job_id))":""}`)
+      .bind(jobId,user.userId).first<DocumentJobRow>();
     if(!target)return Response.json({error:"job_not_found"},{status:404});
     const recovered=await recoverRetainedPresentation(env,user,target,project?.contextId??"");
     if("error" in recovered)return Response.json({error:recovered.error,...(recovered.reason?{reason:recovered.reason}:{})},{status:recovered.status});
@@ -3197,7 +3631,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
         'fanKind',json_extract(request_json,'$.fanKind'),'artifactKind',json_extract(request_json,'$.artifactKind'),'productionMode',json_extract(request_json,'$.productionMode'),'itemCount',json_extract(request_json,'$.itemCount'),'canvasId',json_extract(request_json,'$.canvasId'),
         'sceneMedium',json_extract(request_json,'$.sceneMedium'),'sceneConfiguration',json(json_extract(request_json,'$.sceneConfiguration'))
       ) END AS request_json,
-      json_remove(result_json,'$.providerSubmissions','$.providerSubmissionProtocol','$.providerSubmissionLegacyUncertain','$.plannerInput','$.videoInputReceipt','$.audioInputReceipt','$.model3dInputReceipt','$.model3dProviderFiles','$.artifactPlan','$.presentationCandidates','$.presentationRecoveryOnly','$.productionPlan','$.productionSceneReceipts','$.productionAnchor') AS result_json,
+      json_remove(result_json,'$.imageRecovery','$.providerSubmissions','$.providerSubmissionProtocol','$.providerSubmissionLegacyUncertain','$.plannerInput','$.videoInputReceipt','$.audioInputReceipt','$.model3dInputReceipt','$.model3dProviderFiles','$.artifactPlan','$.presentationCandidates','$.presentationRecoveryOnly','$.productionPlan','$.productionSceneReceipts','$.productionAnchor') AS result_json,
       error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at
       FROM document_jobs WHERE owner_id=? AND stream_id=? AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='job' AND resource.resource_id=document_jobs.job_id) AND (status IN ('queued','running','committing') OR (notified_at IS NULL AND expires_at>?) OR (kind IN ('preview','generate','prompt_fan','render_document','structure_adaptive') AND (status IN ('failed','partial') OR kind='structure_adaptive') AND expires_at>?))
       AND NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.job_id=document_jobs.job_id AND slot.status='authorized')
@@ -3221,8 +3655,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       // A compact list row must never replace the retained recovery checkpoint.
       const retained = path ? row : await readJob(env, user.userId, row.job_id);
       if (retained && rowIsStale(retained) && retained.attempt_count >= documentJobMaxAttempts(retained.kind)) {
-        await failStaleJob(env, user, retained);
-        reconciled = true;
+        if(await failStaleJob(env, user, retained)!=="held")reconciled = true;
       }
     }
     if (reconciled) {
@@ -3433,8 +3866,9 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     let selectedModel3d:Awaited<ReturnType<typeof prepareModel3dRequest>>|undefined;
     if(kind==="render_document"&&artifactKind==="model3d"){
       try{
-        selectedModel3d=await prepareModel3dRequest({env,ownerId:projectContentScope?.ownerUserId??project?.ownerUserId??user.userId,snapshot:trustedSnapshot??{},sourceEvents:events as EventRow[],prompt:payload.model3dPrompt,settings:payload.model3dSettings,referenceBlockIds:payload.model3dReferenceBlockIds,projectScope:projectContentScope});
+        selectedModel3d=await prepareModel3dRequest({env,ownerId:projectContentScope?.ownerUserId??project?.ownerUserId??user.userId,snapshot:trustedSnapshot??{},sourceEvents:events as EventRow[],prompt:payload.model3dPrompt,promptSource:payload.model3dPromptSource,adaptation:payload.model3dAdaptation,settings:payload.model3dSettings,referenceBlockIds:payload.model3dReferenceBlockIds,projectScope:projectContentScope});
         payload.model3dPrompt=selectedModel3d.prompt;payload.model3dSettings=selectedModel3d.settings;payload.model3dEstimatedCostMicrousd=selectedModel3d.estimatedCostMicrousd;
+        if(selectedModel3d.adaptation)payload.model3dAdaptation=selectedModel3d.adaptation;
       }catch(error){
         if(error instanceof ProviderRequestError){const detail=error.detail;return Response.json({error:detail.code,message:detail.message,errorDetail:publicFailureDetail(detail),attemptSubmission:"not-submitted"},{status:detail.httpStatus??422});}
         throw error;

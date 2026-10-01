@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { guardReadOnlyNetwork } from "./helpers/read-only-network.mjs";
+import { observeInitialSession } from "./helpers/initial-session.mjs";
 import { installSyntheticNetwork, syntheticNetworkEnabled, syntheticNetworkProvenance, syntheticEvidence } from "./helpers/synthetic-network.mjs";
 
 import { installPublicMarketingNetwork, publicMarketingProvenance, publicMarketingEvidence } from "./helpers/public-marketing-network.mjs";
@@ -177,6 +178,27 @@ export async function applyBrowserZoom(page, context, factor, testInfo) {
 }
 
 export async function openForma(page, context, geometry, path, testInfo) {
+  const selected = ["e9-source-peers", "e11-copy-locales"].includes(testInfo.project.name);
+  if (!selected) return openFormaPage(page, context, geometry, path, testInfo);
+  expect(syntheticNetworkEnabled(testInfo.project.use.baseURL), "F44 initial session requires the declared synthetic transport").toBe(true);
+  const observer = observeInitialSession(page, path);
+  let primaryError, cleanupError;
+  try {
+    await openFormaPage(page, context, geometry, path, testInfo);
+    const { evidence } = await observer.read();
+    expect(evidence).toMatchObject({ transport: "observed-session-get", mainFrameRequestBound: true,
+      observedSessionGetStatus: 200, authenticatedUserPresent: false, transportSynthetic: true, bootstrapServerMs: null });
+    // Persist only the existing observer's actual response evidence, never its session payload.
+    await attachJSON(testInfo, "f44-initial-session", { ...evidence, requestedPath: path });
+  } catch (error) { primaryError = error; }
+  finally {
+    try { observer.dispose(); } catch (error) { cleanupError = error; }
+  }
+  if (primaryError && cleanupError) throw new AggregateError([primaryError, cleanupError], "F44 initial open/session evidence and observer cleanup failed");
+  if (primaryError || cleanupError) throw primaryError || cleanupError;
+}
+
+async function openFormaPage(page, context, geometry, path, testInfo) {
   const response = await page.goto(path, { waitUntil: "domcontentloaded" });
   expect(response?.ok(), syntheticNetworkEnabled(testInfo.project.use.baseURL)
     ? "Reuse the actual source application with explicitly synthetic network declarations"

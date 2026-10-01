@@ -793,6 +793,142 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/apps/product/experience-review.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaExperienceReview",
+          "tagName": "forma-experience-review",
+          "customElement": true,
+          "summary": "Experience review application interface.",
+          "description": "Store-independent experience review interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "Departure"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "openDecision",
+              "parameters": [
+                {
+                  "name": "decisionId",
+                  "type": {
+                    "text": "string"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<void>"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "refresh",
+              "return": {
+                "type": {
+                  "text": "Promise<void>"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "retireAccess",
+              "parameters": [
+                {
+                  "name": "keepOriginal",
+                  "type": {
+                    "text": "boolean"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Withdraw private content now, not at Lit's next microtask. Keep only a dispatched original on read denial."
+            },
+            {
+              "kind": "field",
+              "name": "reviewContext",
+              "type": {
+                "text": "Readonly<{ available: boolean; writable: boolean; approvalAuthority?: boolean; owners: readonly Readonly<{ userId: string; displayName: string; }>[]; }>"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "selectMaterial",
+              "parameters": [
+                {
+                  "name": "material",
+                  "type": {
+                    "text": "Readonly<{ selection: ExperienceMaterialSelection; experienceId: string; definitionRevision: number; output: import(\"./src/experiences/contracts\").OutputKind; evaluation: Readonly<{ outcome: \"passed\"; caseCount: number; }>; }>"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<void>"
+                }
+              }
+            }
+          ],
+          "events": [
+            {
+              "name": "experience-operation-saved",
+              "type": {
+                "text": "CustomEvent<{ registerDeliveryRefresh: (completion: Promise<unknown>) => void; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "experience-proposal-saved",
+              "type": {
+                "text": "CustomEvent<{ registerDeliveryRefresh: (completion: Promise<unknown>) => void; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-experience-review",
+          "declaration": {
+            "name": "FormaExperienceReview",
+            "module": "src/apps/product/experience-review.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaExperienceReview",
+          "declaration": {
+            "name": "FormaExperienceReview",
+            "module": "src/apps/product/experience-review.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/apps/product/insights.ts",
       "declarations": [
         {
@@ -12369,6 +12505,68 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/forma-personal-memory.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaPersonalMemory",
+          "tagName": "forma-personal-memory",
+          "customElement": true,
+          "summary": "Personal memory application interface.",
+          "description": "Consent controls only. Mounting this component never enrolls or captures activity.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "suspendPresentation",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Closing the composing host retires work before its next DOM update. Reopening requires a fresh mount."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-personal-memory",
+          "declaration": {
+            "name": "FormaPersonalMemory",
+            "module": "src/components/forma-personal-memory.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaPersonalMemory",
+          "declaration": {
+            "name": "FormaPersonalMemory",
+            "module": "src/components/forma-personal-memory.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/forma-platform-assistant.ts",
       "declarations": [
         {
@@ -13920,6 +14118,22 @@
           "members": [
             {
               "kind": "field",
+              "name": "adaptation",
+              "type": {
+                "text": "Model3dDocumentAdaptation | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "blockLabels",
+              "type": {
+                "text": "Record<string, string>"
+              },
+              "default": "{}"
+            },
+            {
+              "kind": "field",
               "name": "disabled",
               "type": {
                 "text": "boolean"
@@ -13936,6 +14150,15 @@
               },
               "default": "\"\"",
               "attribute": "prompt"
+            },
+            {
+              "kind": "field",
+              "name": "promptSource",
+              "type": {
+                "text": "\"document\" | \"exact\""
+              },
+              "default": "\"exact\"",
+              "attribute": "prompt-source"
             },
             {
               "kind": "field",
@@ -13972,6 +14195,14 @@
                 "text": "string"
               },
               "default": "\"\""
+            },
+            {
+              "name": "prompt-source",
+              "fieldName": "promptSource",
+              "type": {
+                "text": "\"document\" | \"exact\""
+              },
+              "default": "\"exact\""
             },
             {
               "name": "reference-count",
@@ -16212,6 +16443,152 @@
           "declaration": {
             "name": "VideoReferencePreflight",
             "module": "src/components/video-reference-preflight.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/experiences/entry.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaExperienceNavigation",
+          "tagName": "forma-experience-navigation",
+          "customElement": true,
+          "summary": "Experience navigation application interface.",
+          "description": "Shared locale presentation only; this element owns no intake or navigation state.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "activeId",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "activeid"
+            },
+            {
+              "kind": "field",
+              "name": "chooser",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "chooser"
+            },
+            {
+              "kind": "field",
+              "name": "message",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "message"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "activeid",
+              "fieldName": "activeId",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
+            },
+            {
+              "name": "chooser",
+              "fieldName": "chooser",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false"
+            },
+            {
+              "name": "message",
+              "fieldName": "message",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-experience-navigation",
+          "declaration": {
+            "name": "FormaExperienceNavigation",
+            "module": "src/experiences/entry.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaExperienceNavigation",
+          "declaration": {
+            "name": "FormaExperienceNavigation",
+            "module": "src/experiences/entry.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/experiences/view.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaExperienceSurface",
+          "tagName": "forma-experience",
+          "customElement": true,
+          "summary": "Experience application interface.",
+          "description": "Property-only presentation. The controller owns decisions and all consequential intents.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "runtime",
+              "type": {
+                "text": "ExperienceSurface | undefined"
+              }
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-experience",
+          "declaration": {
+            "name": "FormaExperienceSurface",
+            "module": "src/experiences/view.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaExperienceSurface",
+          "declaration": {
+            "name": "FormaExperienceSurface",
+            "module": "src/experiences/view.ts"
           }
         }
       ]

@@ -1444,21 +1444,33 @@ export async function releaseCostReservationsForCorrelation(env: WorkerEnv, user
 export const DURABLE_WORK_RETENTION_END = "9999-12-31T23:59:59.999Z";
 export const DEFAULT_EVIDENCE_RETENTION_DAYS = 365;
 
-type PrivateContentKind = "prompt" | "provider-output" | "provider-response" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact" | "document-artifact-input" | "activity-issue-note" | "execution-consent" | "context-proposal" | "authoring-preview";
+type PrivateContentKind = "prompt" | "provider-output" | "provider-response" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "chat-assistant-memory" | "ideation-prompt" | "document-artifact" | "document-artifact-input" | "activity-issue-note" | "execution-consent" | "context-proposal" | "authoring-preview" | "experience-draft" | "memory-structured-ledger" | "memory-structured-origin";
 
 export function privateContentRetentionClass(kind: PrivateContentKind): "durable-work" | "governed-evidence" | "transient-private" {
   return kind === "document-artifact" ? "durable-work" : ["document-artifact-input","activity-issue-note","execution-consent","context-proposal","authoring-preview"].includes(kind) ? "governed-evidence" : "transient-private";
 }
 
-export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope, admissionReads?:OutputAdmissionReads, guard?:BudgetReservationGuard, identity?:{contentId:string}) {
-  if(identity&&(kind!=="authoring-preview"||(!/^copy-preview-[a-f0-9]{64}$/u.test(identity.contentId)&&!/^canvas-arrangement-preview-[a-f0-9]{64}$/u.test(identity.contentId))))throw new Error("private_content_identity_invalid");
+export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope, admissionReads?:OutputAdmissionReads, guard?:BudgetReservationGuard, identity?:{contentId:string}, expiryCeiling?:string) {
+  const preparationDb = env.DB;
+  // Retained Image finalization and structured memory cannot refresh the original private lifetime.
+  if (kind === "memory-structured-origin" && (typeof content !== "string" || content.length > 65_536 || new TextEncoder().encode(content).byteLength > 65_536)) throw new Error("private_content_manifest_invalid");
+  if ((kind === "memory-structured-ledger" || kind === "memory-structured-origin") && expiryCeiling === undefined) throw new Error("private_content_expiry_ceiling_invalid");
+  if (expiryCeiling !== undefined && ((kind !== "provider-output" && kind !== "prompt" && kind !== "memory-structured-ledger" && kind !== "memory-structured-origin") || typeof expiryCeiling !== "string")) throw new Error("private_content_expiry_ceiling_invalid");
+  if (kind === "memory-structured-origin" && (typeof expiryCeiling !== "string" || expiryCeiling.length !== 24)) throw new Error("private_content_expiry_ceiling_invalid");
+  const ceiling = expiryCeiling === undefined ? null : Date.parse(expiryCeiling);
+  if (ceiling !== null && (!Number.isSafeInteger(ceiling) || new Date(ceiling).toISOString() !== expiryCeiling || ceiling <= Date.now())) throw new Error("private_content_expiry_ceiling_invalid");
+  if(identity&&!((kind==="authoring-preview"&&(/^copy-preview-[a-f0-9]{64}$/u.test(identity.contentId)||/^canvas-arrangement-preview-[a-f0-9]{64}$/u.test(identity.contentId)))||(kind==="experience-draft"&&typeof identity.contentId==="string"&&/^experience-draft-[a-f0-9]{64}$/u.test(identity.contentId))))throw new Error("private_content_identity_invalid");
   if(projectScope&&projectScope.actorUserId!==ownerId)throw new Error("project_private_content_actor_mismatch");
   assertOutputAdmissionActor(admissionReads,env,ownerId,projectScope?.organizationId??null,projectScope?.projectAccessId??null);
   const policy=projectScope?await readOutputAdmissionValue(admissionReads,"private-retention-policy",()=>env.DB.prepare("SELECT transient_days,evidence_days,version FROM organization_retention_policies WHERE organization_id=?")
     .bind(projectScope.organizationId).first<{transient_days:number;evidence_days:number;version:number}>()):null;
+  if (kind === "memory-structured-origin" && env.DB !== preparationDb) throw new Error("private_content_preparation_database_changed");
   const contentId = identity?.contentId ?? uuidV7(); const createdAt = new Date(); const category=privateContentRetentionClass(kind);
   const days=category==="governed-evidence"?Number(policy?.evidence_days??Math.max(1,Math.min(3650,intEnv(env.FORMA_EVIDENCE_RETENTION_DAYS,DEFAULT_EVIDENCE_RETENTION_DAYS)))):Number(policy?.transient_days??intEnv(env.FORMA_RETENTION_DAYS,30));
   const expiresAt=category==="durable-work"?new Date(DURABLE_WORK_RETENTION_END):new Date(createdAt.getTime()+days*86_400_000);
+  if (ceiling !== null) expiresAt.setTime(Math.min(expiresAt.getTime(), ceiling));
+  // Policy reads may outlive the supplied ceiling; do not prepare an already expired manifest.
+  if (kind === "memory-structured-origin" && (!Number.isSafeInteger(expiresAt.getTime()) || expiresAt.getTime() <= createdAt.getTime())) throw new Error("private_content_expiry_ceiling_invalid");
   const now=createdAt.toISOString();
   const statements=projectScope?[
     env.DB.prepare(`INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at)
@@ -1485,7 +1497,26 @@ export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kin
   if(identityAdmission)statements[0]=env.DB.prepare(`INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at)
     SELECT ?,?,?,CASE WHEN (${identityAdmission.sql}) THEN ? ELSE NULL END,?,?,NULL`)
     .bind(contentId,ownerId,kind,...identityAdmission.bindings,content,now,expiresAt.toISOString());
-  statements.push(projectScope?env.DB.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind!='document-artifact' AND expires_at<=?
+  // A schema change cannot turn a dedicated answer into ordinary expiry cleanup.
+  // Unavailable schema only omits this optional cleanup; body insertion is unchanged.
+  let cleanupGuard: { condition: string; bindings: (string | number | null)[] } | null = null;
+  if (kind !== "memory-structured-ledger" && kind !== "memory-structured-origin") {
+    if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
+    const { nativeStructuredOriginSchema, nativeStructuredMemoryOriginAnswerExclusion } = await import("./memory-native-origin.ts");
+    if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
+    try {
+      const schema = await nativeStructuredOriginSchema(env);
+      if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
+      const exclusion = nativeStructuredMemoryOriginAnswerExclusion(schema.present);
+      cleanupGuard = { condition: `(${schema.guard.condition}) AND (${exclusion.sql})`,
+        bindings: [...schema.guard.bindings, ...exclusion.bindings] };
+    } catch (error) {
+      if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
+      if (!(error instanceof Error) || error.message !== "native_structured_origin_schema_unavailable") throw error;
+    }
+  }
+  // Structured ledger/origin preparation owns only its inserts; bodies/metadata retire under their bounded cleanup contracts.
+  if(cleanupGuard)statements.push(projectScope?preparationDb.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind NOT IN('document-artifact','memory-structured-ledger','memory-structured-origin') AND expires_at<=?
     AND EXISTS(SELECT 1 FROM private_content_retention_scopes governed WHERE governed.content_id=private_content.content_id AND governed.organization_id=?)
     AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes governed JOIN organization_retention_policies policy ON policy.organization_id=governed.organization_id AND policy.legal_hold=1
       WHERE governed.content_id=private_content.content_id AND governed.classification='governed-evidence')
@@ -1495,11 +1526,13 @@ export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kin
         AND(hold.scope_kind='organization'
           OR hold.scope_kind='project' AND hold.resource_id=governed.project_access_id
           OR hold.scope_kind='content' AND hold.resource_id=governed.content_id))
-    AND EXISTS(SELECT 1 FROM private_content inserted WHERE inserted.content_id=? AND inserted.owner_id=?)`)
-    .bind(now,ownerId,now,projectScope.organizationId,contentId,ownerId):env.DB.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind!='document-artifact' AND expires_at<=?
-      AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id)`)
-    .bind(now,ownerId,now));
-  return { contentId, expiresAt: expiresAt.toISOString(), statements, requiredInserts:projectScope?3:1 };
+    AND EXISTS(SELECT 1 FROM private_content inserted WHERE inserted.content_id=? AND inserted.owner_id=?)
+    AND ${cleanupGuard.condition}`)
+    .bind(now,ownerId,now,projectScope.organizationId,contentId,ownerId,...cleanupGuard.bindings):preparationDb.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind NOT IN('document-artifact','memory-structured-ledger','memory-structured-origin') AND expires_at<=?
+      AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id)
+      AND ${cleanupGuard.condition}`)
+    .bind(now,ownerId,now,...cleanupGuard.bindings));
+  return { contentId, createdAt: now, expiresAt: expiresAt.toISOString(), statements, requiredInserts:projectScope?3:1 };
 }
 
 /** Existing callers keep their original storage behavior; atomic admissions collect the same statements. */
@@ -1519,24 +1552,41 @@ export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind:
   return {contentId:prepared.contentId,expiresAt:prepared.expiresAt};
 }
 
-/** Reused by private reads and atomic recovery writes; the caller also binds exact retention/bytes. */
-export function privateContentScopeGuard(ownerId:string,projectScope?:ProjectExecutionScope){
+/** Ordinary hydration needs current read membership, not permission to buy new work. */
+const activeProjectReadSql=`EXISTS(SELECT 1 FROM organization_projects project
+  JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
+  JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=? AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
+  JOIN organization_memberships owner_member ON owner_member.organization_id=project.organization_id AND owner_member.user_id=project.owner_user_id
+    AND owner_member.status='active' AND owner_member.accepted_at IS NOT NULL AND owner_member.revoked_at IS NULL
+  LEFT JOIN project_memberships project_member ON project_member.project_access_id=project.project_access_id AND project_member.organization_id=project.organization_id AND project_member.project_id=project.project_id
+    AND project_member.user_id=? AND project_member.status='active' AND project_member.revoked_at IS NULL
+  WHERE project.project_access_id=? AND project.organization_id=? AND project.status='active' AND (project.owner_user_id=? OR project_member.role IN('owner','editor','viewer')))`;
+function privateContentScopeGuardFor(ownerId:string,projectScope:ProjectExecutionScope|undefined,projectAuthoritySql:string){
   if(projectScope&&projectScope.actorUserId!==ownerId)return{sql:"0",bindings:[] as string[]};
   const containment=projectScope?` AND EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id
     AND resource.project_access_id=? AND resource.organization_id=? AND resource.project_id=? AND resource.owner_user_id=? AND resource.actor_user_id=? AND resource.visibility='actor_private'
-    AND(private_content.kind NOT IN('chat-user','chat-assistant') OR EXISTS(SELECT 1 FROM private_content_retention_scopes retention
+    AND(private_content.kind NOT IN('chat-user','chat-assistant','chat-assistant-memory','memory-structured-ledger','memory-structured-origin') OR EXISTS(SELECT 1 FROM private_content_retention_scopes retention
       WHERE retention.content_id=private_content.content_id AND retention.organization_id=resource.organization_id
         AND retention.project_access_id=resource.project_access_id AND retention.project_id=resource.project_id
-        AND retention.actor_user_id=resource.actor_user_id))) AND ${activeProjectBillingSql}`:
+        AND retention.actor_user_id=resource.actor_user_id
+        AND(private_content.kind NOT IN('memory-structured-ledger','memory-structured-origin') OR (retention.classification='transient-private'
+          AND typeof(retention.policy_version)='integer' AND retention.policy_version BETWEEN 0 AND 9007199254740991
+          AND retention.created_at=private_content.created_at))))) AND ${projectAuthoritySql}`:
     " AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id AND resource.actor_user_id=private_content.owner_id AND resource.owner_user_id!=private_content.owner_id AND resource.visibility='actor_private')"
-    + " AND(private_content.kind NOT IN('chat-user','chat-assistant') OR NOT EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id=private_content.content_id))";
+    + " AND(private_content.kind NOT IN('chat-user','chat-assistant','chat-assistant-memory','memory-structured-ledger','memory-structured-origin') OR NOT EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id=private_content.content_id))";
   return{sql:containment.replace(/^ AND /u,""),bindings:projectScope?[projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,ownerId,ownerId,ownerId,projectScope.projectAccessId,projectScope.organizationId,ownerId]:[]};
+}
+/** Reused by atomic recovery writes; retain the original billing predicate exactly. */
+export function privateContentScopeGuard(ownerId:string,projectScope?:ProjectExecutionScope){
+  return privateContentScopeGuardFor(ownerId,projectScope,activeProjectBillingSql);
 }
 
 export async function loadPrivateContent(env: WorkerEnv, ownerId: string, scope: "all" | "chat" | "memory" = "all", projectScope?: ProjectExecutionScope) {
-  const now = new Date().toISOString(),guard=privateContentScopeGuard(ownerId,projectScope);
+  const now = new Date().toISOString(),guard=privateContentScopeGuardFor(ownerId,projectScope,activeProjectReadSql);
+  const { nativeMemoryAnswerExclusion } = await import("./memory-native-boundary.ts");
+  const ordinary = await nativeMemoryAnswerExclusion(env,{answerAlias:"private_content"});
   const restricted = scope === "chat" ? " AND kind IN ('chat-user','chat-assistant')" : scope === "memory" ? " AND kind='condition'" : "";
-  const rows=await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND kind NOT IN('provider-response','activity-issue-note','execution-consent','context-proposal','authoring-preview')${restricted} AND ${guard.sql}`).bind(ownerId,now,...guard.bindings).all<{content_id:string;content:string}>();
+  const rows=await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND kind NOT IN('provider-response','activity-issue-note','execution-consent','context-proposal','authoring-preview','experience-draft','memory-structured-ledger','memory-structured-origin')${restricted} AND ${guard.sql} AND ${ordinary.sql}`).bind(ownerId,now,...guard.bindings,...ordinary.bindings).all<{content_id:string;content:string}>();
   return Object.fromEntries(rows.results.map((row) => [row.content_id, row.content]));
 }
 

@@ -8,6 +8,7 @@ import { FORMA_CONTEXT_CONTROL_MESSAGES } from "./context-controls-messages.ts";
 import { FORMA_MODEL3D_MESSAGES } from "./model3d-messages.ts";
 import { FORMA_MODEL3D_VIEWER_MESSAGES } from "./model3d-viewer-messages.ts";
 import { REFERENCE_COMPOSITION_MESSAGES } from "./reference-composition-messages.ts";
+import { FORMA_EXPERIENCE_REVIEW_MESSAGES } from "./experience-review-messages.ts";
 
 const messages: Record<string, string> = {
   "sessions.blank.originalCreated": "Le document initial a été créé. Ce nom n’a pas été utilisé pour créer un autre document.",
@@ -31,6 +32,7 @@ const messages: Record<string, string> = {
   ...FORMA_MODEL3D_MESSAGES.fr,
   ...FORMA_MODEL3D_VIEWER_MESSAGES.fr,
   ...REFERENCE_COMPOSITION_MESSAGES.fr,
+  ...FORMA_EXPERIENCE_REVIEW_MESSAGES.fr,
   ...FORMA_RESPONSIVE_MESSAGES.fr,
   ...FORMA_OUTPUT_DELIVERY_MESSAGES.fr,
   ...FORMA_OUTPUT_REQUIREMENT_MESSAGES.fr,

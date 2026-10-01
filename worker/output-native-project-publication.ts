@@ -5,6 +5,9 @@ import { OutputConflictError, outputAssertionStatements, outputScopeAuthority, t
 
 type NativeJob={job_id:string;owner_id:string;stream_id:string;document_id:string;correlation_id:string;kind:string;request_json?:string};
 export type OutputNativeProjectPublication={scope:OutputScope;slot:OutputOperationSlot;job:NativeJob};
+export type OutputImageFinalizationProjectPublication=OutputNativeProjectPublication&{
+  completionEventId:string;expectedGrantStatus:"active"|"completed";
+};
 const actors:Record<string,string>={
   DocumentRenderRequested:"user",GenerationRequested:"user",ContextCompiled:"worker:compiler",
   DocumentRenderCompleted:"worker:renderer",DocumentRenderFailed:"worker:renderer",GenerationCompleted:"worker:generator",GenerationFailed:"worker:generator",
@@ -21,6 +24,21 @@ const documentEvents=new Set(["DocumentRenderRequested","GenerationRequested","C
  * source refresh. Native publication must not reactivate a quarantined project.
  */
 export function prepareOutputNativeProjectPublicationStatements(env:WorkerEnv,input:OutputNativeProjectPublication,events:EventRow[]):D1PreparedStatement[]{
+  return prepareProjectPublicationStatements(env,input,events,null);
+}
+
+/** A separate purpose: the original job/slot have completed in this same batch.
+ * The caller supplies retained pre-state, exact job CAS and post-state proofs.
+ * No lease or grant is reopened, and a lost projection head rolls back all writes.
+ */
+export function prepareOutputImageFinalizationProjectPublicationStatements(env:WorkerEnv,input:OutputImageFinalizationProjectPublication,events:EventRow[]):D1PreparedStatement[]{
+  if(input.job.kind!=="generate"||events.length!==2||events[0]?.type!=="GenerationCompleted"||events[1]?.type!=="GenerationUsageRecorded"
+    ||events[0].eventId!==input.completionEventId||!["active","completed"].includes(input.expectedGrantStatus))
+    throw new OutputConflictError("output_image_finalization_publication_invalid",409);
+  return prepareProjectPublicationStatements(env,input,events,input);
+}
+
+function prepareProjectPublicationStatements(env:WorkerEnv,input:OutputNativeProjectPublication,events:EventRow[],finalization:OutputImageFinalizationProjectPublication|null):D1PreparedStatement[]{
   const {scope,slot,job}=input;
   if(scope.kind!=="project"||!events.length)return[];
   if(!scope.organizationId||!scope.projectAccessId||!scope.contextId||slot.scopeKey!==scope.key||slot.jobId!==job.job_id
@@ -64,25 +82,33 @@ export function prepareOutputNativeProjectPublicationStatements(env:WorkerEnv,in
       AND anchor.actor='user:'||job.owner_id AND anchor.type='ProjectDocumentJobQueued'
     JOIN event_private_payloads body ON body.private_event_id=anchor.event_id AND body.owner_id=plan.owner_user_id AND body.redacted_at IS NULL
     WHERE slot.scope_key=? AND slot.slot_id=? AND slot.job_id=? AND slot.grant_id=? AND slot.plan_revision_id=? AND slot.target_id=?
-      AND slot.source_digest=? AND slot.target_contract_digest=? AND slot.status IN('queued','running')
-      AND grant_row.actor_user_id=? AND grant_row.context_id=? AND grant_row.status IN('authorized','active')
+      AND slot.source_digest=? AND slot.target_contract_digest=?
+      AND ${finalization?"slot.status='succeeded' AND slot.outcome_event_id=?":"slot.status IN('queued','running')"}
+      AND grant_row.actor_user_id=? AND grant_row.context_id=?
+      AND ${finalization?"grant_row.status=?":"grant_row.status IN('authorized','active')"}
       AND grant_row.expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND target.selected=1 AND target.target_contract_digest=slot.target_contract_digest AND target.media_kind=?
       AND plan.scope_kind='project' AND plan.owner_user_id=? AND plan.organization_id=? AND plan.project_access_id=? AND plan.project_id=? AND plan.document_id=?
-      AND job.owner_id=? AND job.stream_id=? AND job.document_id=? AND job.correlation_id=? AND job.kind=? AND job.status IN('running','committing')
-      AND job.lease_expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      AND job.owner_id=? AND job.stream_id=? AND job.document_id=? AND job.correlation_id=? AND job.kind=?
+      AND ${finalization?"job.status='completed' AND job.lease_expires_at IS NULL":"job.status IN('running','committing') AND job.lease_expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')"}
       AND json_extract(CASE WHEN json_valid(body.private_json) THEN body.private_json ELSE '{}' END,'$.job_id')=job.job_id AND json_extract(CASE WHEN json_valid(body.private_json) THEN body.private_json ELSE '{}' END,'$.document_id')=plan.document_id
       AND json_extract(CASE WHEN json_valid(body.private_json) THEN body.private_json ELSE '{}' END,'$.organization_id')=plan.organization_id AND json_extract(CASE WHEN json_valid(body.private_json) THEN body.private_json ELSE '{}' END,'$.project_access_id')=plan.project_access_id
       AND json_extract(CASE WHEN json_valid(body.private_json) THEN body.private_json ELSE '{}' END,'$.project_id')=plan.project_id AND json_extract(CASE WHEN json_valid(body.private_json) THEN body.private_json ELSE '{}' END,'$.actor_user_id')=job.owner_id
       AND json_extract(CASE WHEN json_valid(body.private_json) THEN body.private_json ELSE '{}' END,'$.output_slot_id')=slot.slot_id AND json_extract(CASE WHEN json_valid(body.private_json) THEN body.private_json ELSE '{}' END,'$.output_grant_id')=slot.grant_id
       AND EXISTS(SELECT 1 FROM project_resource_scopes document WHERE document.project_access_id=plan.project_access_id AND document.organization_id=plan.organization_id
         AND document.project_id=plan.project_id AND document.owner_user_id=plan.owner_user_id AND document.resource_kind='document' AND document.resource_id=plan.document_id))`,
-    bindings:[scope.key,slot.slotId,job.job_id,slot.grantId,slot.planRevisionId,slot.targetId,slot.sourceDigest,slot.targetContractDigest,
-      scope.actorUserId,scope.contextId,now,job.kind==="generate"?"image":artifactKind,scope.ownerUserId,scope.organizationId,scope.projectAccessId,scope.projectId,scope.documentId,
+    bindings:[scope.key,slot.slotId,job.job_id,slot.grantId,slot.planRevisionId,slot.targetId,slot.sourceDigest,slot.targetContractDigest,...(finalization?[finalization.completionEventId]:[]),
+      scope.actorUserId,scope.contextId,...(finalization?[finalization.expectedGrantStatus]:[]),now,job.kind==="generate"?"image":artifactKind,scope.ownerUserId,scope.organizationId,scope.projectAccessId,scope.projectId,scope.documentId,
       job.owner_id,job.stream_id,job.document_id,job.correlation_id,job.kind]}));
+  if(finalization)statements.push(...outputAssertionStatements(env,{sql:`EXISTS(SELECT 1 FROM output_execution_grants grant_row WHERE grant_row.scope_key=? AND grant_row.grant_id=?
+    AND (grant_row.status='completed' AND NOT EXISTS(SELECT 1 FROM output_operation_slots sibling WHERE sibling.scope_key=grant_row.scope_key AND sibling.grant_id=grant_row.grant_id
+      AND sibling.status IN('authorized','queued','running','uncertain'))
+    OR grant_row.status='active' AND EXISTS(SELECT 1 FROM output_operation_slots sibling WHERE sibling.scope_key=grant_row.scope_key AND sibling.grant_id=grant_row.grant_id
+      AND sibling.status IN('authorized','queued','running','uncertain'))))`,bindings:[scope.key,slot.grantId]}));
   // A lost head race may append nothing, allowing appendEvents to retry. A
   // partially appended batch must roll back; it can never strand event bodies.
   const ids=JSON.stringify([...eventIds]);
-  statements.push(...outputAssertionStatements(env,{sql:`(SELECT COUNT(*) FROM events WHERE event_id IN(SELECT value FROM json_each(?)))=?
+  statements.push(...outputAssertionStatements(env,finalization?{sql:`(SELECT COUNT(*) FROM events WHERE event_id IN(SELECT value FROM json_each(?)))=?
+    AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?`,bindings:[ids,events.length,job.stream_id,last.sequence]}:{sql:`(SELECT COUNT(*) FROM events WHERE event_id IN(SELECT value FROM json_each(?)))=?
     OR (NOT EXISTS(SELECT 1 FROM events WHERE event_id IN(SELECT value FROM json_each(?)))
       AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)<>?)`,bindings:[ids,events.length,ids,job.stream_id,first.sequence-1]}));
   // Check each actual staged event and its exact public/private envelope before
@@ -90,11 +116,16 @@ export function prepareOutputNativeProjectPublicationStatements(env:WorkerEnv,in
   for(const event of events){
     const bindings=eventWriteBindings(event);
     const hasPrivate=bindings[16]!==null;
-    statements.push(...outputAssertionStatements(env,{sql:`NOT EXISTS(SELECT 1 FROM events WHERE event_id=?) OR EXISTS(SELECT 1 FROM events event
+    statements.push(...outputAssertionStatements(env,{sql:`${finalization?"":"NOT EXISTS(SELECT 1 FROM events WHERE event_id=?) OR "}EXISTS(SELECT 1 FROM events event
       ${hasPrivate?"JOIN event_private_payloads body ON body.private_event_id=event.event_id":""}
       WHERE event.event_id=? AND event.stream_id=? AND event.sequence=? AND event.type=? AND event.actor=? AND event.client_id=? AND event.correlation_id=? AND event.payload=?
         ${hasPrivate?"AND body.owner_id=? AND body.redacted_at IS NULL AND body.private_json IS ?":"AND NOT EXISTS(SELECT 1 FROM event_private_payloads body WHERE body.private_event_id=event.event_id)"})`,
-      bindings:[event.eventId,event.eventId,event.streamId,event.sequence,event.type,event.actor,event.clientId,event.correlationId,bindings[12]!,...(hasPrivate?[scope.ownerUserId,bindings[16]!]:[])]}));
+      bindings:[...(finalization?[]:[event.eventId]),event.eventId,event.streamId,event.sequence,event.type,event.actor,event.clientId,event.correlationId,bindings[12]!,...(hasPrivate?[scope.ownerUserId,bindings[16]!]:[])]}));
+    if(finalization)statements.push(...outputAssertionStatements(env,{sql:`EXISTS(SELECT 1 FROM events event LEFT JOIN event_private_payloads body ON body.private_event_id=event.event_id
+      WHERE event.event_id=? AND event.stream_id=? AND event.sequence=? AND event.occurred_at=? AND event.recorded_at=?
+        AND event.actor=? AND event.client_id=? AND event.correlation_id=? AND event.causation_id IS ? AND event.compensates_event_id IS ? AND event.schema_version=? AND event.type=? AND event.payload=?
+        AND (? IS NULL AND body.private_event_id IS NULL OR ? IS NOT NULL AND body.owner_id=? AND body.project_id IS ? AND body.document_id IS ? AND body.private_json=? AND body.redacted_at IS NULL))`,
+      bindings:[...bindings.slice(0,13),bindings[16]!,bindings[16]!,bindings[13]!,bindings[14]!,bindings[15]!,bindings[16]!]}));
   }
   for(const event of projectDocumentPublicationEvents(events,scope.projectId,scope.documentId))statements.push(env.DB.prepare(`INSERT INTO project_event_scopes(
     event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at)
@@ -103,18 +134,18 @@ export function prepareOutputNativeProjectPublicationStatements(env:WorkerEnv,in
   const projection=foldEvents(events,Number.POSITIVE_INFINITY,scope.documentId,scope.projectId);
   const resources=projectPublicationResources(projection.libraryOutputs.filter(output=>output.documentId===scope.documentId),projection.libraryArtifacts.filter(artifact=>artifact.documentId===scope.documentId),()=>scope.actorUserId);
   for(const resource of resources){
-    if(resource.kind==="media")statements.push(...outputAssertionStatements(env,{sql:`NOT EXISTS(SELECT 1 FROM events WHERE event_id=?) OR EXISTS(SELECT 1 FROM output_native_storage_writes stored
+    if(resource.kind==="media")statements.push(...outputAssertionStatements(env,{sql:`${finalization?"":"NOT EXISTS(SELECT 1 FROM events WHERE event_id=?) OR "}EXISTS(SELECT 1 FROM output_native_storage_writes stored
       WHERE stored.scope_key=? AND stored.slot_id=? AND stored.storage_key=? AND stored.status='written' AND stored.write_acknowledged=1
-        AND (stored.publication_event_id IS NULL OR stored.publication_event_id=?))`,bindings:[resource.sourceEventId,scope.key,slot.slotId,resource.id,resource.sourceEventId]}));
+        AND ${finalization?"stored.publication_event_id=?":"(stored.publication_event_id IS NULL OR stored.publication_event_id=?)"})`,bindings:[...(finalization?[]:[resource.sourceEventId]),scope.key,slot.slotId,resource.id,resource.sourceEventId]}));
     if(resource.kind==="content"){
       const collaborative=resource.visibility==="collaborative_output";
       const artifactId=events.find(event=>event.eventId===resource.sourceEventId)?.payload.artifact_id;
-      statements.push(...outputAssertionStatements(env,{sql:`NOT EXISTS(SELECT 1 FROM events WHERE event_id=?) OR EXISTS(SELECT 1 FROM private_content content WHERE content.content_id=? AND content.owner_id=? AND content.kind=?
+      statements.push(...outputAssertionStatements(env,{sql:`${finalization?"":"NOT EXISTS(SELECT 1 FROM events WHERE event_id=?) OR "}EXISTS(SELECT 1 FROM private_content content WHERE content.content_id=? AND content.owner_id=? AND content.kind=?
         AND content.redacted_at IS NULL AND content.expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
         ${collaborative?"":`AND json_extract(CASE WHEN json_valid(content.content) THEN content.content ELSE '{}' END,'$.document_id')=? AND json_extract(CASE WHEN json_valid(content.content) THEN content.content ELSE '{}' END,'$.project_id')=? AND json_extract(CASE WHEN json_valid(content.content) THEN content.content ELSE '{}' END,'$.artifact_id')=?
           AND EXISTS(SELECT 1 FROM project_resource_scopes private WHERE private.resource_kind='content' AND private.resource_id=content.content_id
             AND private.project_access_id=? AND private.organization_id=? AND private.project_id=? AND private.owner_user_id=? AND private.actor_user_id=? AND private.visibility='actor_private')`})`,
-        bindings:[resource.sourceEventId,resource.id,collaborative?scope.ownerUserId:scope.actorUserId,collaborative?"document-artifact":"document-artifact-input",now,
+        bindings:[...(finalization?[]:[resource.sourceEventId]),resource.id,collaborative?scope.ownerUserId:scope.actorUserId,collaborative?"document-artifact":"document-artifact-input",now,
           ...(collaborative?[]:[scope.documentId,scope.projectId,String(artifactId??""),scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,scope.actorUserId])]}));
       // Inputs remain private. Fill only a missing anchor; never change visibility.
       if(!collaborative)statements.push(env.DB.prepare(`UPDATE project_resource_scopes SET source_event_id=? WHERE project_access_id=? AND organization_id=? AND project_id=?
@@ -123,12 +154,13 @@ export function prepareOutputNativeProjectPublicationStatements(env:WorkerEnv,in
         .bind(resource.sourceEventId,scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,scope.actorUserId,resource.id,resource.sourceEventId));
     }
     statements.push(prepareProjectResourceScopeStatement(env,project,resource,now,true));
-    statements.push(...outputAssertionStatements(env,{sql:`NOT EXISTS(SELECT 1 FROM events WHERE event_id=?) OR EXISTS(SELECT 1 FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND project_id=?
+    statements.push(...outputAssertionStatements(env,{sql:`${finalization?"":"NOT EXISTS(SELECT 1 FROM events WHERE event_id=?) OR "}EXISTS(SELECT 1 FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND project_id=?
       AND owner_user_id=? AND resource_kind=? AND resource_id=? AND actor_user_id=? AND visibility=? AND source_event_id=?)`,
-      bindings:[resource.sourceEventId,scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,resource.kind,resource.id,scope.actorUserId,resource.visibility,resource.sourceEventId]}));
+      bindings:[...(finalization?[]:[resource.sourceEventId]),scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,resource.kind,resource.id,scope.actorUserId,resource.visibility,resource.sourceEventId]}));
   }
   // Never skip an unprocessed sibling completion or any other owner-stream gap.
-  // A zero-row update is safe publication, but explicitly NOT a fresh manifest.
+  // Ordinary execution can leave a stale manifest. Finalization requires the
+  // exact old head to advance once, or its following CHECK rolls back the batch.
   statements.push(env.DB.prepare(`UPDATE project_migration_states SET last_owner_sequence=?,updated_at=?
     WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active' AND last_owner_sequence=?
       AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?
@@ -137,5 +169,8 @@ export function prepareOutputNativeProjectPublicationStatements(env:WorkerEnv,in
         AND marker.organization_id=project_migration_states.organization_id AND marker.owner_user_id=project_migration_states.owner_user_id
         AND marker.project_id=? AND marker.resource_kind='manifest_version' AND marker.resource_id='canvas-v1')`)
     .bind(last.sequence,now,scope.projectAccessId,scope.organizationId,scope.ownerUserId,first.sequence-1,job.stream_id,last.sequence,last.eventId,scope.projectId));
+  if(finalization)statements.push(...outputAssertionStatements(env,{sql:`changes()=1 AND EXISTS(SELECT 1 FROM project_migration_states
+    WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active' AND last_owner_sequence=?)`,
+    bindings:[scope.projectAccessId,scope.organizationId,scope.ownerUserId,last.sequence]}));
   return statements;
 }

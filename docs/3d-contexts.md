@@ -18,13 +18,15 @@ Rendering does not take a fresh screenshot or guess a new camera. This makes rep
 
 ## Generate and export a model
 
-Open **3D model** from the output creation controls. Write the exact description that will be sent, choose optional image references, and review the settings and cost before confirming.
+Open **Render document** and select **3D model**. Forma adapts the active document context into a read-only **Prepared model prompt**. You do not need to write a separate prompt. Review the prepared text, choose optional image references, and review the settings and cost before confirming. To change the model direction, edit the document’s context blocks.
+
+The adapter suggests Subject, Material, Scale, and reference blocks when they could clarify the result; these suggestions do not prevent an otherwise valid request. Missing or overlong required context must be corrected in the identified blocks. If the document changes before you submit, review the refreshed prompt before confirming.
 
 - Text-to-3D requires a nonempty prompt, up to 1,024 Unicode characters.
 - Image-to-3D accepts one to five ordered JPG, PNG, or WebP references and an optional prompt with the same limit. The first reference guides materials.
 - Existing meshes steer a new model through saved images. Neither endpoint edits an input mesh directly.
 - Shared browser and server validation checks the endpoint's allowlisted fields, enums, seed, bounding box, reference count, and tier-dependent options. Invalid values and overlong text are preserved for correction.
-- Only reviewed settings are sent. There is no implicit document-wide planning call or silent prompt truncation.
+- Only reviewed settings are sent. Document adaptation needs no additional planner call. Optional context left out of the prompt is disclosed for review; required context is never silently truncated.
 
 The full generation dialog supports GLB, USDZ, FBX, OBJ, and STL output. Retained original meshes, additional meshes, textures, and previews have separate download links and a file manifest. GLB is the default and the supported editable context/viewer format. A valid generated GLB with unsupported viewer features remains downloadable; it is not presented as a usable image reference.
 

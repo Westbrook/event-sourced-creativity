@@ -8,7 +8,7 @@ const historicalAliases:Record<string,DeliveryDecisionStatus>={active:"running",
 export function canonicalDeliveryStatus(value:unknown):DeliveryDecisionStatus|null{
   if(typeof value!=="string")return null;
   if((DELIVERY_DECISION_STATUSES as readonly string[]).includes(value))return value as DeliveryDecisionStatus;
-  return historicalAliases[value]??null;
+  return Object.hasOwn(historicalAliases,value)?historicalAliases[value]??null:null;
 }
 
 const transitions:Record<DeliveryDecisionStatus,readonly DeliveryDecisionStatus[]>={

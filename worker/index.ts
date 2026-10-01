@@ -1,10 +1,11 @@
+import { handleExperienceReleases } from "./experience-release-api";
 import { handleEvents, type WorkerEnv } from "./events-api";
 import { getMedia, uploadMedia } from "./media-api";
 import { handleAdminUsers, handleImpersonation, handleSession, hasCapability, requireCapability, requireConsent, requireUser } from "./pilot-policy";
 import { handleShares, handleSharedMedia, handleSharedView } from "./shares-api";
 import { applicationDefinition, authorizedApplicationHome, resolveServerRoute, routeRequiredCapabilities, type ApplicationId } from "../src/platform/applications";
 import { handleReplayApproval, handleReplayEstimate, handleReplaySessions } from "./replay-sessions-api";
-import { handleDocumentJobs } from "./document-jobs-api";
+import { handleDocumentJobs, recoverServerImageJobs, recoverServerImageTerminalJobs } from "./document-jobs-api";
 import { handleDocumentDuplication } from "./document-duplication-api";
 import { handleCanvasArrangements } from "./canvas-arrangements";
 import { handleAdaptiveProposalApplication } from "./adaptive-proposal-application-api";
@@ -25,6 +26,9 @@ import { handlePerformanceSample } from "./performance-api";
 import { handleArtifactEdit } from "./artifact-api";
 import { handleAssistant, handleAssistantBillingReconciliation, handleAssistantProposal, handleAssistantTask, handleAssistantSpecialist } from "./assistant-api";
 import { handlePlatformAssistant } from "./platform-assistant-api";
+import { handleLiveMemory } from "./memory-live-api.ts";
+import { handleMemoryDocumentProfile } from "./memory-document-profile-api.ts";
+import { sweepExpiredDocumentProfileSuppressions } from "./memory-document-profile-store.ts";
 import { handleEventPrivacy } from "./privacy-api";
 import { handleProjectNotifications } from "./project-notifications-api";
 import { processReviewReminders } from "./review-automation-api";
@@ -36,9 +40,19 @@ import { handleContextApplication } from "./context-application-api";
 import { handleWorkspaceLocalProposal } from "./workspace-local-proposal-api";
 import { handleOutputSchemaPreflight, OUTPUT_SCHEMA_PREFLIGHT_PATH } from "./output-schema-preflight";
 import { handleRetainedStoryRead } from "./retained-story-api";
+import { handleExperienceIntake } from "./experience-intake-api";
+import { classifyExperienceRoute } from "../src/experiences/routes.ts";
 
-async function authorizeApplication(request: Request, env: WorkerEnv, application: ApplicationId, path: string) {
+async function authorizeApplication(request: Request, env: WorkerEnv, application: ApplicationId, path: string, experienceSetup = false) {
     if(application==="creative"){
+      if(experienceSetup){
+        const auth=await requireUser(request,env,"creator",{account:"principal"});
+        if(auth.response||!auth.user)return auth.response??Response.json({error:"authentication_required"},{status:401});
+        const consent=requireConsent(auth.user);if(consent)return consent;
+        const selected=await readProjectRequestContext(request,env,auth.user);if(selected.response)return selected.response;
+        if(selected.context||auth.user.projectExecution||auth.user.fictional||!auth.user.access.capabilities.includes("project.author"))return Response.json({error:"personal_author_required"},{status:403});
+        return null;
+      }
       const workspace=path.match(/^\/settings\/workspaces(?:\/([^/]+)(?:\/([^/]+))?)?$/);
       if(!workspace)return null;
       if(!workspace[1]||workspace[1]==="invitations"){
@@ -78,6 +92,16 @@ async function authorizeApplication(request: Request, env: WorkerEnv, applicatio
 
 async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
     const url=new URL(request.url);
+    // The emitted setup entry is an internal asset target, never a public fresh-flow alias.
+    let entryAlias=url.pathname;
+    try{entryAlias=decodeURIComponent(entryAlias);}catch{
+      // Malformed escapes retain the raw pathname for existing alias refusal and route validation.
+    }
+    if(/^\/experiences(?:[/.]|$)/iu.test(entryAlias))return new Response("Page not found",{status:404,headers:{"cache-control":"private, no-store"}});
+    const experienceRoute=classifyExperienceRoute(request.url);
+    if(experienceRoute?.kind==="invalid")return new Response("Page not found",{status:404,headers:{"cache-control":"private, no-store"}});
+    if(experienceRoute&&request.method!=="GET"&&request.method!=="HEAD")return new Response("Method not allowed",{status:405,headers:{allow:"GET, HEAD","cache-control":"private, no-store"}});
+    const experienceSetup=experienceRoute?.kind==="chooser"||experienceRoute?.kind==="fresh"||experienceRoute?.kind==="recover";
     if(url.pathname===OUTPUT_SCHEMA_PREFLIGHT_PATH)return handleOutputSchemaPreflight(request,env);
     if(url.pathname.startsWith("/api/")&&!['GET','HEAD','OPTIONS'].includes(request.method)){
       const origin=request.headers.get("origin");
@@ -114,6 +138,13 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       if(selected.response)return selected.response;
       if(selected.context)return Response.json({error:"project_operation_unavailable"},{status:403,headers:{"cache-control":"private, no-store"}});
     }
+    if(url.pathname.startsWith("/api/portfolio/product/experiences/")){
+      let parts:string[];
+      try{parts=url.pathname.slice("/api/portfolio/product/experiences/".length).split("/").map(part=>decodeURIComponent(part));}
+      catch{return Response.json({error:"not_found"},{status:404});}
+      if(parts.some(part=>!part||!/^[-A-Za-z0-9:._]+$/.test(part)))return Response.json({error:"not_found"},{status:404});
+      return handleExperienceReleases(request,env,parts);
+    }
     if(url.pathname==="/api/portfolio/product/adapter-preview")return handleQualificationPreview(request,env);
     const portfolioMatch=url.pathname.match(/^\/api\/portfolio\/(product|engineering|operations)\/(insights|delivery|evaluation|health|events|sync|jobs|overview|providers)$/);
     if(portfolioMatch)return handlePortfolio(request,env,portfolioMatch[1],portfolioMatch[2]);
@@ -129,6 +160,12 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/platform/assistant")return handlePlatformAssistant(request,env);
     if(url.pathname==="/api/assistant/specialist")return handleAssistantSpecialist(request,env,context);
     if(url.pathname==="/api/assistant")return handleAssistant(request,env,context);
+    if(url.pathname==="/api/memory/settings")return handleLiveMemory(request,env,"settings");
+    if(url.pathname==="/api/memory/recall")return handleLiveMemory(request,env,"recall");
+    if(url.pathname==="/api/memory/export")return handleLiveMemory(request,env,"export");
+    if(url.pathname==="/api/memory/document-profile/settings")return handleMemoryDocumentProfile(request,env,"settings");
+    if(url.pathname==="/api/memory/document-profile/inspect")return handleMemoryDocumentProfile(request,env,"inspect");
+    if(url.pathname==="/api/memory/document-profile/suppress")return handleMemoryDocumentProfile(request,env,"suppress");
     if(url.pathname==="/api/context/decompose")return handleContextIntelligence(request,env,"decompose");
     if(url.pathname==="/api/context/research")return handleContextIntelligence(request,env,"research");
     if(url.pathname==="/api/context/apply")return handleContextApplication(request,env);
@@ -184,6 +221,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname.startsWith("/api/shared/")&&request.method==="GET"){const rest=url.pathname.slice("/api/shared/".length);const marker=rest.indexOf("/media/");if(marker>=0)return handleSharedMedia(request,env,decodeURIComponent(rest.slice(0,marker)),decodeURIComponent(rest.slice(marker+"/media/".length)));return handleSharedView(request,env,decodeURIComponent(rest));}
     if(url.pathname==="/api/media"&&request.method==="POST")return uploadMedia(request,env);
     if(url.pathname.startsWith("/api/media/")&&request.method==="GET")return getMedia(request,decodeURIComponent(url.pathname.slice("/api/media/".length)),env);
+    if(url.pathname==="/api/experiences/catalog"||/^\/api\/experiences\/drafts(?:\/(experience-draft-[a-f0-9]{64})(?:\/(commit|receipt))?)?$/u.test(url.pathname))return handleExperienceIntake(request,env);
     if(url.pathname.startsWith("/api/"))return Response.json({error:"not_found"},{status:404});
     if(url.pathname==="/custom-elements.json"){
       const authorization=await requireCapability(request,env,"design.catalog.read");
@@ -195,23 +233,28 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
     }
     if(request.method==="GET"||request.method==="HEAD"){
-      const route=resolveServerRoute(url.pathname);
+      const route=resolveServerRoute(request.url);
       if(route){
-        const denied=await authorizeApplication(request,env,route.application,url.pathname);
-        if(denied)return denied;
-        const entryUrl=new URL(route.entryPath,url);
+        const denied=await authorizeApplication(request,env,route.application,url.pathname,experienceSetup);
+        if(denied){
+          if(!experienceSetup)return denied;
+          const headers=new Headers(denied.headers);headers.set("cache-control","private, no-store");headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");
+          return new Response(request.method==="HEAD"?null:denied.body,{status:denied.status,statusText:denied.statusText,headers});
+        }
+        // Match marketing's extensionless ASSETS lookup without exposing a public entry alias.
+        const entryUrl=new URL(experienceSetup?"/experiences":route.entryPath,url);
         const trustedIdentity=Boolean(request.headers.get("oai-authenticated-user-id")&&request.headers.get("oai-authenticated-user-email")||url.hostname==="localhost"||url.hostname==="127.0.0.1");
-        const personalize=request.method==="GET"&&!url.pathname.startsWith("/share")&&trustedIdentity;
+        const personalize=request.method==="GET"&&!experienceSetup&&!url.pathname.startsWith("/share")&&trustedIdentity;
         const authenticatedStarted=performance.now();
         const authenticated=personalize?handleSession(request,env,context).catch(()=>null):null;
         const asset=await env.ASSETS.fetch(personalize?new Request(entryUrl,{headers:{"accept-encoding":"identity"}}):new Request(entryUrl,request));
         const encoding=(asset.headers.get("content-encoding")??"identity").trim().toLowerCase();
         const response=personalize&&asset.ok&&asset.body&&/text\/html/i.test(asset.headers.get("content-type")??"")&&encoding==="identity"?streamNavigationSession(asset,authenticated!,authenticatedStarted):asset;
         const headers=new Headers(response.headers);
-        if(applicationDefinition(route.application).sensitivity!=="personal"||url.pathname.startsWith("/share")||url.pathname.startsWith("/settings/workspaces")){headers.set("cache-control","private, no-store");headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");}
-        headers.set("x-forma-route-family",route.canonicalFamily);
+        if(experienceSetup||applicationDefinition(route.application).sensitivity!=="personal"||url.pathname.startsWith("/share")||url.pathname.startsWith("/settings/workspaces")){headers.set("cache-control","private, no-store");headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");}
+        headers.set("x-forma-route-family",experienceSetup?"experience":route.canonicalFamily);
         headers.set("x-forma-application",route.application);
-        return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
+        return new Response(experienceSetup&&request.method==="HEAD"?null:response.body,{status:response.status,statusText:response.statusText,headers});
       }
     }
     // Vite's development runtime has extensionless module endpoints. They are
@@ -290,6 +333,14 @@ export default {
   },
   async scheduled(_controller: unknown, env: WorkerEnv): Promise<void> {
     await observeScheduledRetention(env,1_000);
-    await processReviewReminders(env,100);
+    try {
+      // Privacy cleanup is independent of profile rollout and never performs inference or enrollment.
+      await sweepExpiredDocumentProfileSuppressions(env,128);
+    } finally {
+      // A profile-cleanup failure must not prevent the existing reminder pass.
+      await processReviewReminders(env,100);
+    }
+    await recoverServerImageJobs(env);
+    await recoverServerImageTerminalJobs(env);
   },
 };

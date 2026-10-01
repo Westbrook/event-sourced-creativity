@@ -1,4 +1,5 @@
 import { PLATFORM_ADMIN_CAPABILITIES, type FormaCapability } from "./capabilities.ts";
+import { classifyExperienceRoute } from "../experiences/routes.ts";
 
 export type ApplicationId = "creative" | "canvas" | "operations" | "product" | "knowledge" | "engineering";
 export type ApplicationAudience = "creator" | "platform-operator" | "product-quality" | "design-knowledge" | "engineering-diagnostics";
@@ -372,11 +373,15 @@ const directoryEntry = (path: string) => path === "/" ? "/" : `${path.replace(/\
  * router hydrates; unknown paths are not silently treated as SPA pages.
  */
 export function resolveServerRoute(routeValue: string): ServerRouteResolution | null {
+  const experience = classifyExperienceRoute(routeValue);
+  if (experience) {
+    if (experience.kind === "invalid") return null;
+    if (experience.kind === "retained") return { application: "creative", entryPath: "/creative/", canonicalFamily: "/make/short-story" };
+    return { application: "creative", entryPath: "/experiences.html", canonicalFamily: experience.kind === "chooser" ? "/make" : "/make/" + experience.experienceId };
+  }
   const path = new URL(routeValue, "https://forma.local").pathname.replace(/\/+$/, "") || "/";
   const named = SITE_ROUTE_ENTRIES.find((entry) => entry.path === path);
   if (named) return { application: named.application, entryPath: directoryEntry(named.path), canonicalFamily: named.path };
-
-  if (path === "/make/short-story") return { application: "creative", entryPath: "/creative/", canonicalFamily: "/make/short-story" };
 
   if(/^\/settings\/workspaces(?:\/(?:invitations|[^/]+(?:\/(?:overview|members|projects|usage|activity))?))?$/.test(path)){
     const family=path==="/settings/workspaces"?"/settings/workspaces":path==="/settings/workspaces/invitations"?"/settings/workspaces/invitations":"/settings/workspaces/:organization/:section";

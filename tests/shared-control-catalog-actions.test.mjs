@@ -324,6 +324,56 @@ assert.ok(buttonExampleCase && buttonExampleCase.statements.length === 1 && ts.i
 const renderButtonExample = new Function("html", "nothing", "return function() { " + buttonExampleCase.statements[0].getText(syntax.catalog) + " };")(html, nothing);
 const themeExample = catalog.members.find(member => member.name?.getText(syntax.catalog) === "#theme");
 assert.ok(themeExample);
+
+// Exercise the actual permalink callback, using the existing AST/transpiler
+// ports. These observations cover handler focus/default behavior; they do not
+// simulate a browser opening a tab or certify native focus geometry.
+const catalogEntry = catalog.members.find(member => member.name?.getText(syntax.catalog) === "#entry");
+assert.ok(catalogEntry);
+const entryCallbacks = [];
+const findEntryCallbacks = node => {
+  if (ts.isArrowFunction(node)) entryCallbacks.push(node);
+  ts.forEachChild(node, findEntryCallbacks);
+};
+findEntryCallbacks(catalogEntry);
+assert.equal(entryCallbacks.length, 1, "the actual entry has one inline permalink callback");
+const permalinkClick = new Function("entry", transpile("const callback = " + entryCallbacks[0].getText(syntax.catalog) + ";")
+  + "\nreturn callback;")({ tag: "forma-ui-button" });
+for (const scenario of [
+  { name: "ordinary primary activation", focus: true },
+  { name: "explicit same-context target", target: "_SELF", focus: true },
+  { name: "Meta activation", event: { metaKey: true } },
+  { name: "Control activation", event: { ctrlKey: true } },
+  { name: "Shift activation", event: { shiftKey: true } },
+  { name: "Alt activation", event: { altKey: true } },
+  { name: "middle-button activation", event: { button: 1 } },
+  { name: "secondary-button activation", event: { button: 2 } },
+  { name: "previously prevented activation", event: { defaultPrevented: true } },
+  { name: "new-context target", target: "_blank" },
+  { name: "named-context target", target: "reference-window" },
+  { name: "download link", download: true },
+  { name: "changed fragment", href: "#forma-ui-link" },
+  { name: "absent containing article", article: false },
+]) {
+  test("component permalink preserves focus and browser default for " + scenario.name, () => {
+    const calls = [];
+    const article = { focus: options => calls.push(options) };
+    const attributes = { href: scenario.href ?? "#forma-ui-button", target: scenario.target ?? null };
+    const anchor = {
+      getAttribute: name => attributes[name] ?? null,
+      hasAttribute: name => name === "download" && Boolean(scenario.download),
+      closest(selector) { assert.equal(selector, "article"); return scenario.article === false ? null : article; },
+    };
+    const event = { currentTarget: anchor, button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false,
+      defaultPrevented: false, preventDefault() { assert.fail("the browser retains ordinary and modified link defaults"); },
+      ...scenario.event };
+    permalinkClick(event);
+    assert.deepEqual(calls, scenario.focus ? [{ preventScroll: true }] : []);
+    assert.equal(event.defaultPrevented, scenario.event?.defaultPrevented ?? false);
+    assert.equal(anchor.getAttribute("href"), scenario.href ?? "#forma-ui-button");
+  });
+}
+
 for (const locale of ["en", "fr", "ar", "ja"]) {
   test("current Button catalog peer actions opt into shared stretch without changing native behavior in " + locale, async t => {
     const i18n = await localeController(t, locale), host = new CatalogCase();

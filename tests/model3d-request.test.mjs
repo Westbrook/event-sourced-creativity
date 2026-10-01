@@ -3,6 +3,7 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { model3dReferenceSelection, prepareModel3dRequest } from "../worker/model3d-request.ts";
 import { RODIN_IMAGE_MODEL, RODIN_TEXT_MODEL } from "../src/model/model3d.ts";
+import { adaptDocumentToModel3d, model3dAdaptationReceipt } from "../src/model/model3d-prompt-adapter.ts";
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
 import { hasUnresolvedProviderSubmission, hasUnsettledProviderSubmission, unresolvedProviderSubmissionSql, unsettledProviderSubmissionSql } from "../src/model/provider-submission.ts";
 import { interruptedDocumentJobUsage } from "../worker/document-job-reservations.ts";
@@ -50,6 +51,29 @@ test("text-only generation preserves the exact authored prompt and reads no imag
   assert.equal(prepared.model, RODIN_TEXT_MODEL);
   assert.equal(prepared.estimatedCostMicrousd, 400_000);
   assert.deepEqual(prepared.references, []);
+  assert.deepEqual(reads, []);
+});
+
+test("document admission derives the reviewed prompt from authorized facts without reading images", async () => {
+  const { env, reads } = storage();
+  const snapshot = { facts: [{ block_id: "subject", type: "subject", properties: { description: "A ceramic teapot", weight: 1 } }] };
+  const adapted = adaptDocumentToModel3d(snapshot);
+  const input = { env, ownerId, snapshot, sourceEvents: [], promptSource: "document", prompt: adapted.prompt,
+    adaptation: model3dAdaptationReceipt(adapted), settings: {}, referenceBlockIds: [] };
+  const prepared = await prepareModel3dRequest(input);
+  assert.match(prepared.prompt, /ceramic teapot/);
+  assert.equal(prepared.promptSource, "document");
+  assert.deepEqual(prepared.adaptation, input.adaptation);
+  assert.equal(prepared.estimatedCostMicrousd, 400_000);
+  for (const change of [
+    { prompt: "A forged substitute" },
+    { adaptation: { ...input.adaptation, adapterVersion: "unknown" } },
+    { adaptation: { ...input.adaptation, includedBlockIds: [] } },
+    { adaptation: { ...input.adaptation, omittedBlockIds: ["not-omitted"] } },
+    { adaptation: undefined },
+    { snapshot: { facts: [{ block_id: "subject", type: "subject", properties: { description: "A glass bottle", weight: 1 } }] } },
+  ]) await assert.rejects(prepareModel3dRequest({ ...input, ...change }), error => error.detail?.code === "model3d_document_adaptation_changed");
+  await assert.rejects(prepareModel3dRequest({ ...input, promptSource: "typo" }), error => error.detail?.code === "model3d_prompt_source_invalid");
   assert.deepEqual(reads, []);
 });
 

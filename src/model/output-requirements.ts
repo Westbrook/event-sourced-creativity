@@ -423,7 +423,7 @@ export function parseOutputRequirement(input: OutputRequirementInput, previous?:
     const kind = imageRequest ? "image" : "video", entry = make(kind, kind, imageRequest ? "Social media images" : "Social media videos", content);
     entry.coverage = { kind: "document_context" };
     entry.value_origins.coverage = interpreted("Use the authorized Document's creative context. This does not assert exhaustive topic coverage.");
-    const matches = Array.from(content.matchAll(/(?<![\d.\-])\d+(?:\.\d+)?\s*:\s*\d+(?:\.\d+)?/g));
+    const matches = Array.from(content.matchAll(/(?<![\d.-])\d+(?:\.\d+)?\s*:\s*\d+(?:\.\d+)?/g));
     const previousEntry = prior?.deliverables.find((item) => item.id === entry.id);
     entry.format_variants = matches.map((match, index): OutputFormatVariant => {
       const aspect = parseOutputAspectRatio(match[0]);

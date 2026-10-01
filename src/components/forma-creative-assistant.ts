@@ -1,8 +1,9 @@
 import { html, nothing } from "lit";
+import { keyed } from "lit/directives/keyed.js";
 import { navigateInApp, navigationPresentationClosing, type CommandDeparture } from "./command-departure";
 import type { CapturedSourceOwnership } from "../state/store.ts";
 import { assistantInteractionForSurface, assistantSurfaceForRoute, type AssistantInteractionMode, type AssistantToolRequest } from "../model/assistant-route-policy.ts";
-import type { AssistantContext } from "../model/conversation-context.ts";
+import { ASSISTANT_CONTEXT_LIMITS, type AssistantContext } from "../model/conversation-context.ts";
 import { contextConsentAction } from "../model/context-consent-state.ts";
 import { withDocumentInRoute } from "../model/routes.ts";
 import { creativeNextActions, type CreativeNextAction } from "../model/workspace-intelligence.ts";
@@ -13,6 +14,11 @@ import { FormaElement } from "./forma-element.ts";
 import { captureOutputNavigationFocus } from "./output-navigation-focus.ts";
 import type { AssistantDisplayedMessage, AssistantDisplayedProposal, AssistantDisplayedTask, AssistantSpecialistControl, AssistantSpecialistReview, AssistantSpecialistResponse, AssistantTurnOriginalRequest, FormaAssistantPanel } from "./design-system/assistant-panel.ts";
 import { assistantApprovedRequestCanRun, assistantApprovedRequestCanStop } from "./design-system/assistant-panel.ts";
+import { personalMemoryMessage } from "./design-system/locales/personal-memory-messages.ts";
+import { parseMemoryAnswerPresentation, type MemoryAnswerPresentation } from "../model/memory-answer.ts";
+import { createMemoryElapsed } from "../model/memory-lifetime.ts";
+import type { FormaPersonalMemory } from "./forma-personal-memory.ts";
+import "./forma-personal-memory.ts";
 
 type AssistantServerTurn = {
   id: string;
@@ -21,6 +27,16 @@ type AssistantServerTurn = {
   proposal: AssistantDisplayedProposal | null;
   proposals?: AssistantDisplayedProposal[];
   originalRequest?: AssistantTurnOriginalRequest;
+  memory?: unknown;
+};
+
+type AssistantGuidanceRequest = {
+  turnId: string; message: string; locale: string; url: string; scope: string; status: "sending" | "uncertain"; sourceRetired?: true;
+  memoryMode?: "recall"; memoryEpoch?: number; memoryContext?: string; controller?: AbortController;
+};
+type MemoryAnswerLease = {
+  presentation: MemoryAnswerPresentation; context: string; epoch: number; source: CapturedSourceOwnership | null;
+  elapsed: ReturnType<typeof createMemoryElapsed>; remainingMs: number; controller: AbortController;
 };
 
 /**
@@ -29,8 +45,26 @@ type AssistantServerTurn = {
  */
 export class FormaCreativeAssistant extends FormaElement {
   #open = false;
+  #memoryOpen = false;
+  #memoryScope = "";
+  #memoryPresentation = 0;
+  #memoryRecallActive = false;
+  #memoryRecallEpoch = 0;
+  #memoryRecallNotice = "";
+  #memoryAnswerTimer = 0;
+  #memoryAnswers = new Map<string, MemoryAnswerLease>();
+  #memoryMarked = new Set<string>();
+  #memoryRetired = new Set<string>();
+  #memoryFocus = () => { this.#pruneMemoryAnswers(); this.requestUpdate(); };
+  #memoryDisconnect?: () => void;
+  #memoryInvalidated = () => { this.#closeMemory(); this.requestUpdate(); };
+  #memoryVisibility = () => {
+    if (document.visibilityState !== "visible") this.#closeMemory();
+    this.requestUpdate();
+  };
   #nextNavigation = 0;
   #context: AssistantContext | null = null;
+  #contextUnavailable = false;
   #messages: AssistantDisplayedMessage[] = [];
   #localToolMessages: AssistantDisplayedMessage[] = [];
   #proposals: AssistantDisplayedProposal[] = [];
@@ -46,7 +80,7 @@ export class FormaCreativeAssistant extends FormaElement {
   // Request-order clock: a deliberate read gets a position at dispatch, but
   // only its accepted exact response can certify private presentation.
   #withdrawalRevision = 0;
-  #guidance: { turnId: string; message: string; locale: string; url: string; scope: string; status: "sending" | "uncertain"; sourceRetired?: true } | null = null;
+  #guidance: AssistantGuidanceRequest | null = null;
   #specialist: AssistantSpecialistReview | null = null;
   #specialistUrl = "";
   #sourceProject: { source: CapturedSourceOwnership; projectId: string } | null = null;
@@ -55,6 +89,7 @@ export class FormaCreativeAssistant extends FormaElement {
     const source = this.store.captureSourceOwnership();
     if (!detail || ![401, 403, 404].includes(detail.status) || !source || source.generation !== detail.generation
       || !this.store.sourceOwnershipScopeActive(detail.source) || this.store.sourceOwnershipActive(source)) return;
+    this.#closeMemory();
     // The original request owners survive; no private conversation or saved proposal does.
     const active = this.#specialist, retainedTasks = this.#tasks;
     if (active) this.#rememberSpecialistExecution(active);
@@ -72,13 +107,165 @@ export class FormaCreativeAssistant extends FormaElement {
     this.requestUpdate();
   };
 
-  override connectedCallback() { super.connectedCallback(); window.addEventListener("forma-event-source-retired", this.#sourceRetired); }
+  override connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener("forma-event-source-retired", this.#sourceRetired);
+    for (const name of ["forma-route-changed", "forma-authorization-changed"])
+      window.addEventListener(name, this.#memoryInvalidated);
+    document.addEventListener("visibilitychange", this.#memoryVisibility);
+    window.addEventListener("focus", this.#memoryFocus);
+    const unsubscribeMemory = this.store.subscribe(() => {
+      if (this.#memoryOpen && (this.#memoryScope !== this.#memoryContext(this.#scope())
+        || !this.store.sourceOwnershipActive(this.store.captureSourceOwnership()))) this.#closeMemory();
+      this.#pruneMemoryAnswers();
+    });
+    this.#memoryDisconnect = () => {
+      for (const name of ["forma-route-changed", "forma-authorization-changed"])
+        window.removeEventListener(name, this.#memoryInvalidated);
+      document.removeEventListener("visibilitychange", this.#memoryVisibility);
+      window.removeEventListener("focus", this.#memoryFocus);
+      unsubscribeMemory();
+    };
+  }
   override disconnectedCallback() {
     window.removeEventListener("forma-event-source-retired", this.#sourceRetired);
+    this.#memoryDisconnect?.(); this.#memoryDisconnect = undefined;
     window.clearTimeout(this.#taskTimer);
     this.#taskTimer = 0;
     this.#clearPrivateState("");
     super.disconnectedCallback();
+  }
+
+  #closeMemory() {
+    this.#closeMemoryRecall();
+    this.#memoryOpen = false;
+    this.#memoryScope = "";
+    for (const component of this.querySelectorAll<FormaPersonalMemory>("forma-personal-memory")) component.suspendPresentation();
+  }
+
+  #memoryContext(scope: string) {
+    return JSON.stringify([scope, this.i18n.locale, this.store.captureSourceOwnership()?.generation]);
+  }
+
+  #canRecallDocument() {
+    const surface = assistantSurfaceForRoute(this.store.route.get()), projection = this.store.projection.get();
+    return Boolean(this.isConnected && this.#open && this.#memoryOpen && document.visibilityState === "visible"
+      && !this.store.session.get()?.impersonation && surface.documentId && !surface.canvasId
+      && surface.documentId === projection.documentId && projection.projectId === this.#projectId()
+      && this.store.sourceOwnershipActive(this.store.captureSourceOwnership()));
+  }
+
+  #memoryRequestCurrent(request: AssistantGuidanceRequest) {
+    return request.memoryMode === "recall" && !request.controller?.signal.aborted && this.#canRecallDocument()
+      && this.#memoryRecallActive && request.memoryEpoch === this.#memoryRecallEpoch
+      && request.scope === this.#scope() && request.memoryContext === this.#memoryContext(request.scope);
+  }
+
+  #stripMemoryContext(turnId: string) {
+    if (this.#context?.recentTurns) this.#context = { ...this.#context,
+      recentTurns: this.#context.recentTurns.filter(turn => turn.id !== turnId + ":user" && turn.id !== turnId + ":assistant") };
+  }
+
+  #retireMemoryTurn(turnId: string) {
+    this.#memoryMarked.add(turnId); this.#memoryRetired.add(turnId);
+    const lease = this.#memoryAnswers.get(turnId);
+    lease?.elapsed.retire(); lease?.controller.abort(); this.#memoryAnswers.delete(turnId);
+    this.#pending.delete(turnId);
+    if (this.#guidance?.turnId === turnId && this.#guidance.memoryMode === "recall") {
+      this.#guidance.controller?.abort(); this.#guidance = null;
+    }
+    this.#turns = this.#turns.filter(turn => turn.id !== turnId);
+    this.#messages = this.#messages.filter(message => message.id !== turnId + ":user" && message.id !== turnId + ":assistant");
+    this.#proposals = this.#proposals.filter(proposal => proposal.turnId !== turnId);
+    this.#stripMemoryContext(turnId);
+    if (!this.#memoryAnswers.size) { window.clearTimeout(this.#memoryAnswerTimer); this.#memoryAnswerTimer = 0; }
+  }
+
+  #closeMemoryRecall() {
+    this.#memoryRecallActive = false; this.#memoryRecallEpoch++; this.#memoryRecallNotice = "";
+    const pending = this.#guidance?.memoryMode === "recall" ? this.#guidance.turnId : null;
+    for (const id of new Set([...this.#memoryAnswers.keys(), ...(pending ? [pending] : [])])) this.#retireMemoryTurn(id);
+    window.clearTimeout(this.#memoryAnswerTimer); this.#memoryAnswerTimer = 0;
+  }
+
+  #memoryRemaining(lease: MemoryAnswerLease) {
+    const wall = Date.now();
+    return Math.max(0, Math.min(Date.parse(lease.presentation.validUntil) - wall,
+      lease.remainingMs - lease.elapsed.elapsed({ wall, monotonic: performance.now() })));
+  }
+
+  #pruneMemoryAnswers() {
+    let retired = false;
+    for (const [id, lease] of this.#memoryAnswers) {
+      if (this.#canRecallDocument() && this.#memoryRecallActive && lease.epoch === this.#memoryRecallEpoch
+        && lease.context === this.#memoryContext(this.#scope()) && this.store.sourceOwnershipActive(lease.source)
+        && this.#memoryRemaining(lease) > 0) continue;
+      this.#retireMemoryTurn(id); retired = true;
+    }
+    if (retired) this.#memoryRecallNotice = "assistantRecallExpired";
+  }
+
+  #scheduleMemoryDeadline() {
+    window.clearTimeout(this.#memoryAnswerTimer); this.#memoryAnswerTimer = 0;
+    if (!this.#memoryAnswers.size) return;
+    const remaining = Math.min(...[...this.#memoryAnswers.values()].map(lease => this.#memoryRemaining(lease)));
+    this.#memoryAnswerTimer = window.setTimeout(() => {
+      this.#memoryAnswerTimer = 0; this.#pruneMemoryAnswers(); this.requestUpdate(); this.#scheduleMemoryDeadline();
+    }, Math.max(1, remaining));
+  }
+
+  #renderMemoryRecall(scope: string) {
+    const available = this.#canRecallDocument();
+    if (!available) return html`<p>${personalMemoryMessage(this.i18n.locale, "memory.live.assistantRecallDocument")}</p>`;
+    const memoryContext = this.#memoryContext(scope);
+    const busy = Boolean(this.#guidance || this.#pending.size || this.#specialist
+      || this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.navigationBlocked);
+    const lease = this.#memoryAnswers.values().next().value;
+    const status = this.#guidance?.memoryMode === "recall"
+      ? this.#guidance.status === "sending" ? "assistantRecallWorking" : "assistantRecallUncertain"
+      : this.#memoryRecallNotice;
+    return html`<section>
+      <button type="button" data-assistant-memory-recall ?disabled=${busy} @click=${(event: Event) => {
+      const button = event.currentTarget as HTMLButtonElement;
+      if (!button.isConnected || button.closest("forma-creative-assistant") !== this || button.matches(":disabled")
+        || !this.#canRecallDocument() || scope !== this.#scope() || memoryContext !== this.#memoryContext(scope)
+        || this.#guidance || this.#pending.size || this.#specialist
+        || this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.navigationBlocked) return;
+      this.#closeMemoryRecall();
+      this.#memoryRecallActive = true; this.#memoryRecallEpoch++; this.#memoryRecallNotice = "";
+      void this.#send({ message: personalMemoryMessage(this.i18n.locale, "memory.live.assistantRecallPrompt"), memoryMode: "recall" });
+    }}>${personalMemoryMessage(this.i18n.locale, "memory.live.assistantRecall")}</button>
+      <p>${personalMemoryMessage(this.i18n.locale, "memory.live.assistantRecallHelp")}</p>
+      ${status ? html`<p role="status">${personalMemoryMessage(this.i18n.locale, "memory.live." + status)}</p>` : nothing}
+      ${lease ? html`<p role="status">${personalMemoryMessage(this.i18n.locale, "memory.live.assistantRecallReady",
+        { until: "\u2068" + this.i18n.date(new Date(lease.presentation.validUntil), { timeStyle: "medium" }) + "\u2069" })}</p>` : nothing}
+    </section>`;
+  }
+
+  #renderMemory(scope: string) {
+    if (!this.#open || document.visibilityState !== "visible" || this.store.session.get()?.impersonation
+      || !this.store.sourceOwnershipActive(this.store.captureSourceOwnership())) {
+      this.#closeMemory();
+      return nothing;
+    }
+    const memoryScope = this.#memoryContext(scope);
+    if (this.#memoryOpen && this.#memoryScope !== memoryScope) this.#closeMemory();
+    return html`<details class="personal-memory-disclosure" data-assistant-memory lang=${this.i18n.locale} dir=${this.i18n.direction}
+      .open=${this.#memoryOpen} @toggle=${(event: Event) => {
+        const disclosure = event.currentTarget as HTMLDetailsElement;
+        const current = this.isConnected && this.#open && disclosure.isConnected
+          && disclosure.closest("forma-creative-assistant") === this && document.visibilityState === "visible"
+          && scope === this.#scope() && memoryScope === this.#memoryContext(scope)
+          && !this.store.session.get()?.impersonation && this.store.sourceOwnershipActive(this.store.captureSourceOwnership());
+        if (!current || !disclosure.open) {
+          this.#closeMemory(); disclosure.open = false; this.requestUpdate(); return;
+        }
+        if (!this.#memoryOpen) this.#memoryPresentation++;
+        this.#memoryOpen = true; this.#memoryScope = memoryScope; this.requestUpdate();
+      }}>
+      <summary>${personalMemoryMessage(this.i18n.locale, "memory.live.heading")}</summary>
+      ${this.#memoryOpen ? html`${this.#renderMemoryRecall(scope)}${keyed(this.#memoryPresentation, html`<forma-personal-memory></forma-personal-memory>`)}` : nothing}
+    </details>`;
   }
 
   #refreshActiveTasks() {
@@ -116,6 +303,8 @@ export class FormaCreativeAssistant extends FormaElement {
   }
 
   #clearPrivateState(scope: string) {
+    this.#closeMemory();
+    if (scope !== this.#loadedScope) { this.#memoryMarked.clear(); this.#memoryRetired.clear(); }
     this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.clearConversationDrafts();
     this.#loadedScope = scope;
     this.#readRevision += 1;
@@ -123,6 +312,7 @@ export class FormaCreativeAssistant extends FormaElement {
     this.#retentionVersions.clear();
     this.#retentionVersions.set("withdrawal:scope", ++this.#withdrawalRevision);
     this.#context = null;
+    this.#contextUnavailable = false;
     this.#turns = [];
     this.#messages = [];
     this.#localToolMessages = [];
@@ -152,6 +342,7 @@ export class FormaCreativeAssistant extends FormaElement {
   }
 
   #canSpecialist(turnId?: string) {
+    if (turnId && this.#memoryMarked.has(turnId)) return false;
     const session = this.store.session.get();
     const permissions = session?.projectContext?.permissions ?? session?.capabilities ?? [];
     const surface = assistantSurfaceForRoute(this.store.route.get());
@@ -188,26 +379,57 @@ export class FormaCreativeAssistant extends FormaElement {
   }
 
   #refreshTranscript() {
-    this.#messages = this.#turns.flatMap((turn) => [
+    this.#pruneMemoryAnswers();
+    this.#messages = this.#turns.filter(turn => !this.#memoryMarked.has(turn.id) || this.#memoryAnswers.has(turn.id)).flatMap((turn) => [
       { id: turn.id + ":user", role: "user" as const, text: turn.user },
-      { id: turn.id + ":assistant", role: "assistant" as const, key: turn.reply.key, values: turn.reply.values, text: turn.reply.text, savedTurnId: turn.id, canReviewSpecialist: this.#canSpecialist(turn.id) },
+      { id: turn.id + ":assistant", role: "assistant" as const,
+        key: this.#memoryMarked.has(turn.id) ? undefined : turn.reply.key,
+        values: this.#memoryMarked.has(turn.id) ? undefined : turn.reply.values,
+        text: this.#memoryMarked.has(turn.id)
+          ? personalMemoryMessage(this.i18n.locale, "memory.live.assistantRecallHistorical") + "\n\n" + turn.reply.text : turn.reply.text,
+        savedTurnId: turn.id, canReviewSpecialist: this.#canSpecialist(turn.id) },
     ]);
     if (this.#guidance && !this.#turns.some((turn) => turn.id === this.#guidance?.turnId)) {
       this.#messages.push({ id: this.#guidance.turnId + ":user", role: "user", text: this.#guidance.message });
     }
     this.#messages.push(...this.#localToolMessages);
-    this.#proposals = [...new Map(this.#turns.flatMap((turn) =>
+    if (this.#contextUnavailable) this.#messages.push({ id: "load:unavailable", role: "assistant", key: "assistant.unavailable" });
+    this.#proposals = [...new Map(this.#turns.filter(turn => !this.#memoryMarked.has(turn.id)).flatMap((turn) =>
       (turn.proposals ?? (turn.proposal ? [turn.proposal] : [])).filter((proposal) => proposal.turnId === turn.id)
     ).map((proposal) => [proposal.id, proposal])).values()];
   }
 
-  #mergeTurn(turn: AssistantServerTurn) {
+  #mergeTurn(turn: AssistantServerTurn, memoryRequest?: AssistantGuidanceRequest) {
     if (!turn || typeof turn.id !== "string" || typeof turn.user !== "string" || !turn.reply) return false;
+    if (Object.hasOwn(turn, "memory") || this.#memoryMarked.has(turn.id)) {
+      this.#memoryMarked.add(turn.id); this.#stripMemoryContext(turn.id);
+      const now = Date.now(), presentation = parseMemoryAnswerPresentation(turn.memory, now);
+      if (!memoryRequest) {
+        // Unsolicited history never opens memory. A later GET cannot extend the
+        // original displayed lease, and malformed/downgraded copies retire it.
+        if (!presentation || !this.#memoryAnswers.has(turn.id)) this.#retireMemoryTurn(turn.id);
+        return false;
+      }
+      if (!presentation || this.#memoryRetired.has(turn.id) || memoryRequest.memoryMode !== "recall"
+        || this.#guidance !== memoryRequest || memoryRequest.turnId !== turn.id || memoryRequest.message !== turn.user
+        || !this.#memoryRequestCurrent(memoryRequest) || typeof turn.reply.text !== "string"
+        || turn.proposal !== null || Boolean(turn.proposals?.length) || turn.originalRequest !== undefined) {
+        this.#retireMemoryTurn(turn.id); this.#memoryRecallNotice = "assistantRecallUnavailable"; return false;
+      }
+      this.#memoryAnswers.set(turn.id, { presentation, context: memoryRequest.memoryContext!, epoch: memoryRequest.memoryEpoch!,
+        source: this.store.captureSourceOwnership(), controller: memoryRequest.controller!,
+        elapsed: createMemoryElapsed({ wall: now, monotonic: performance.now() }), remainingMs: Date.parse(presentation.validUntil) - now });
+      this.#scheduleMemoryDeadline();
+      turn = { id: turn.id, user: turn.user, reply: { text: turn.reply.text }, proposal: null, memory: presentation };
+    } else if (memoryRequest?.memoryMode === "recall") {
+      this.#retireMemoryTurn(memoryRequest.turnId); this.#memoryRecallNotice = "assistantRecallUnavailable"; return false;
+    }
     const previous = this.#turns.findIndex((item) => item.id === turn.id);
     if (previous < 0) this.#turns = [...this.#turns, turn];
     else this.#turns = this.#turns.map((item, index) => index === previous ? turn : item);
     if (this.#guidance?.turnId === turn.id && (this.#guidance.sourceRetired || this.#guidance.message === turn.user)) {
-      this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.resolveGuidanceRequest(true, this.#guidance.message);
+      if (this.#guidance.memoryMode !== "recall")
+        this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.resolveGuidanceRequest(true, this.#guidance.message);
       this.#guidance = null;
     }
     this.#refreshTranscript();
@@ -271,7 +493,7 @@ export class FormaCreativeAssistant extends FormaElement {
         }
         throw new Error("assistant_unavailable");
       }
-      const payload = await response.json() as { context: AssistantContext; turns: AssistantServerTurn[]; tasks?: AssistantDisplayedTask[] };
+      const payload = await response.json() as { context: AssistantContext; contextUnavailable?: boolean; turns: AssistantServerTurn[]; tasks?: AssistantDisplayedTask[] };
       if (scope !== this.#scope() || !this.#open || !this.store.sourceOwnershipActive(source) || !this.#withdrawalCurrent("", "", withdrawalRevision)) return;
       const canMerge = revision === this.#readRevision;
       const supplied = payload.tasks ?? [];
@@ -284,9 +506,15 @@ export class FormaCreativeAssistant extends FormaElement {
           quote: null, originalRequest: null, task, working: false, stopping: false, retrievalOnly: true, notice: "unavailable", resultReply: null }, false, withdrawalRevision);
       }
       if (!canMerge) return;
-      this.#context = this.#specialist && this.#privatePresentationHidden(this.#specialist.turnId, this.#specialist.executionId) ? null : payload.context;
-      this.#turns = [];
-      for (const turn of payload.turns) if (this.#withdrawalCurrent(turn.id, "", withdrawalRevision) && !this.#privatePresentationHidden(turn.id)) this.#mergeTurn(turn);
+      // Page context has a separate source proof from retained conversation and
+      // task receipts. Only a current owned GET can restore this presentation.
+      this.#contextUnavailable = payload.contextUnavailable === true;
+      this.#context = this.#contextUnavailable || (this.#specialist && this.#privatePresentationHidden(this.#specialist.turnId, this.#specialist.executionId)) ? null : payload.context;
+      for (const id of this.#memoryMarked) this.#stripMemoryContext(id);
+      this.#pruneMemoryAnswers();
+      this.#turns = this.#turns.filter(turn => this.#memoryAnswers.has(turn.id));
+      for (const turn of payload.turns) if (this.#withdrawalCurrent(turn.id, "", withdrawalRevision) && !this.#privatePresentationHidden(turn.id))
+        this.#mergeTurn(turn, this.#guidance?.memoryMode === "recall" && this.#guidance.turnId === turn.id ? this.#guidance : undefined);
       this.#refreshTranscript();
       const incoming: AssistantDisplayedTask[] = supplied.map((task) => task.executionId
         && (!this.#withdrawalCurrent(task.turnId, task.executionId, withdrawalRevision) || this.#retentionUnavailable(task) || this.#privatePresentationHidden(task.turnId, task.executionId))
@@ -328,19 +556,22 @@ export class FormaCreativeAssistant extends FormaElement {
     } catch {
       if (scope === this.#scope() && this.store.sourceOwnershipActive(source) && revision === this.#readRevision && this.#open) {
         this.#refreshTranscript();
-        this.#messages = [...this.#messages, { id: "load:unavailable", role: "assistant", key: "assistant.unavailable" }];
+        if (!this.#contextUnavailable) this.#messages.push({ id: "load:unavailable", role: "assistant", key: "assistant.unavailable" });
       }
     } finally {
       if (scope === this.#scope()) { this.requestUpdate(); this.#refreshActiveTasks(); }
     }
   }
 
-  async #send(input: { message: string }) {
+  async #send(input: { message: string; memoryMode?: "recall" }) {
     const scope = this.#synchronizeScope();
     if (this.#guidance || !this.#open || !this.store.session.get()?.assistant?.enabled || !this.store.sourceOwnershipActive(this.store.captureSourceOwnership())) return;
+    if (input.memoryMode === "recall" && (!this.#canRecallDocument() || !this.#memoryRecallActive)) return;
     this.#guidance = { turnId: crypto.randomUUID(), message: input.message.trim(), locale: this.i18n.locale,
-      url: this.#url().href, scope, status: "sending" };
+      url: this.#url().href, scope, status: "sending", ...(input.memoryMode === "recall"
+        ? { memoryMode: "recall" as const, memoryEpoch: this.#memoryRecallEpoch, memoryContext: this.#memoryContext(scope), controller: new AbortController() } : {}) };
     if (!this.#guidance.message) { this.#guidance = null; return; }
+    if (this.#guidance.memoryMode === "recall") this.#memoryMarked.add(this.#guidance.turnId);
     this.#refreshTranscript();
     await this.#deliverGuidance();
   }
@@ -349,48 +580,118 @@ export class FormaCreativeAssistant extends FormaElement {
     const request = this.#guidance;
     const source = this.store.captureSourceOwnership();
     if (!request || request.sourceRetired || request.scope !== this.#scope() || this.#pending.has(request.turnId) || !this.store.sourceOwnershipActive(source)) return;
+    if (request.memoryMode === "recall" && !this.#memoryRequestCurrent(request)) return;
     const message = request.message;
     this.#pending.add(request.turnId);
     request.status = "sending";
-    const revision = ++this.#readRevision;
+    const revision = ++this.#readRevision, withdrawalRevision = this.#withdrawalRevision;
     this.requestUpdate();
     try {
       const response = await this.store.guardedFetch(request.url, {
         method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, cache: "no-store",
-        body: JSON.stringify({ turnId: request.turnId, message: request.message, locale: request.locale }),
-      }, this.i18n.t("assistant.send"));
-      if (request.scope !== this.#scope() || !this.store.sourceOwnershipScopeActive(source) || this.#guidance?.turnId !== request.turnId) return;
+        body: JSON.stringify({ turnId: request.turnId, message: request.message, locale: request.locale,
+          ...(request.memoryMode === "recall" ? { memoryMode: request.memoryMode } : {}) }),
+        ...(request.controller ? { signal: request.controller.signal } : {}),
+      }, this.i18n.t("assistant.send"), request.memoryMode === "recall" ? { current: () => this.#memoryRequestCurrent(request) } : undefined);
+      if (request.scope !== this.#scope() || !this.store.sourceOwnershipScopeActive(source)) return;
+      if (request.memoryMode === "recall" && !this.#memoryRequestCurrent(request)) return;
       if (!response.ok) {
+        if (response.status === 409) {
+          const failure = await response.json() as { error?: string; noAutomaticRetry?: boolean; messageNotSaved?: boolean } | null;
+          if (request.scope !== this.#scope() || !this.store.sourceOwnershipActive(source)) return;
+          if (failure?.error === "assistant_turn_unavailable" && failure.noAutomaticRetry === true) {
+            // A GET may already have acknowledged this send. The explicit
+            // negative still owns its old turn, never a newer send or draft.
+            if (this.#withdrawGuidanceTurn(request.turnId, withdrawalRevision, failure.messageNotSaved === true)) {
+              if (request.memoryMode === "recall") this.#memoryRecallNotice = "assistantRecallUnavailable";
+              else this.#messages.push({ id: request.turnId + ":unavailable", role: "assistant", key: "assistant.guidance.unavailable" });
+            }
+            return;
+          }
+        }
+        if (this.#guidance?.turnId !== request.turnId) return;
+        if (request.memoryMode === "recall" && response.status >= 400 && response.status < 500) {
+          this.#retireMemoryTurn(request.turnId); this.#memoryRecallNotice = "assistantRecallUnavailable"; return;
+        }
         if ([401, 403, 404, 410].includes(response.status)) {
           this.#clearPrivateState(request.scope);
           this.#messages = [{ id: "send:unavailable", role: "assistant", key: "assistant.unavailable" }];
         }
         throw new Error("assistant_unavailable");
       }
-      const payload = await response.json() as { context: AssistantContext; turn: AssistantServerTurn };
-      if (request.scope !== this.#scope() || !this.store.sourceOwnershipScopeActive(source) || this.#guidance?.turnId !== request.turnId) return;
+      const payload = await response.json() as { context: AssistantContext; contextUnavailable?: boolean; turn: AssistantServerTurn; retiredTurnIds?: unknown };
+      if (request.scope !== this.#scope() || !this.store.sourceOwnershipScopeActive(source)) return;
+      if (request.memoryMode === "recall" && !this.#memoryRequestCurrent(request)) return;
       if (!this.store.sourceOwnershipActive(source)) {
-        if (payload.turn?.id === request.turnId && payload.turn.user === message) this.#guidance = null;
+        if (this.#guidance?.turnId === request.turnId && payload.turn?.id === request.turnId && payload.turn.user === message) this.#guidance = null;
         return;
       }
+      if (payload.turn?.id !== request.turnId || payload.turn.user !== message) throw new Error("assistant_turn_mismatch");
+      const retired = payload.retiredTurnIds ?? [];
+      if (!Array.isArray(retired) || retired.length > ASSISTANT_CONTEXT_LIMITS.turns
+        || retired.some((id) => typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/u.test(id) || id === request.turnId)
+        || new Set(retired).size !== retired.length) throw new Error("assistant_retirement_invalid");
+      // Capture before retirement increments the read clock. A certified
+      // negative survives an obsolete positive response, but never comes from
+      // absence in the bounded context view or an unbound response identity.
+      const canMerge = revision === this.#readRevision && this.#withdrawalCurrent(request.turnId, "", withdrawalRevision);
+      for (const id of retired) this.#withdrawGuidanceTurn(id, withdrawalRevision);
       if (this.#guidance !== request) return;
-      if (revision !== this.#readRevision) {
+      if (!canMerge) {
         request.status = "uncertain";
-        if (this.#open) void this.#load();
+        if (this.#open && request.memoryMode !== "recall") void this.#load();
         return;
       }
-      if (payload.turn?.id !== request.turnId || payload.turn.user !== request.message) throw new Error("assistant_turn_mismatch");
-      this.#context = payload.context;
-      this.#mergeTurn(payload.turn);
+      if (request.memoryMode !== "recall" && Object.hasOwn(payload.turn, "memory")) {
+        this.#memoryMarked.add(payload.turn.id); this.#memoryRetired.add(payload.turn.id);
+        throw new Error("assistant_memory_mode_mismatch");
+      }
+      // A retained replay can certify its turn without certifying current page
+      // context. Its negative owns only this accepted current response; POST
+      // never clears a context denial established by an earlier request.
+      if (payload.contextUnavailable === true) this.#contextUnavailable = true;
+      this.#context = this.#contextUnavailable ? null : payload.context;
+      for (const id of this.#memoryMarked) this.#stripMemoryContext(id);
+      this.#mergeTurn(payload.turn, request.memoryMode === "recall" ? request : undefined);
     } catch {
       if (request.scope === this.#scope() && this.store.sourceOwnershipActive(source) && this.#guidance === request) {
         request.status = "uncertain";
-        this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.resolveGuidanceRequest(false, request.message);
+        if (request.memoryMode !== "recall")
+          this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.resolveGuidanceRequest(false, request.message);
       }
     } finally {
       this.#pending.delete(request.turnId);
       if (request.scope === this.#scope()) { this.requestUpdate(); this.#refreshActiveTasks(); }
     }
+  }
+
+  #withdrawGuidanceTurn(turnId: string, denialRevision: number, preserveDraft = false) {
+    const active = this.#specialist?.turnId === turnId ? this.#specialist : null;
+    const tasks = this.#tasks.filter((task) => task.turnId === turnId);
+    const executions = new Set([active?.executionId ?? "", ...tasks.map((task) => task.executionId ?? "")]);
+    if ([...executions].some((id) => !this.#negativeReadCurrent(turnId, id, denialRevision))) return false;
+    if (this.#memoryMarked.has(turnId)) this.#retireMemoryTurn(turnId);
+    if (this.#guidance?.turnId === turnId) {
+      // An explicit unsaved receipt ends delivery without discarding the user's
+      // draft. Persisted or uncertain-retention withdrawals still clear only
+      // the matching draft, never a different mode or newer unfinished work.
+      // Empty recovery text also respects an intentional edit to an empty draft.
+      if (this.#guidance.memoryMode !== "recall")
+        this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.resolveGuidanceRequest(!preserveDraft, preserveDraft ? "" : this.#guidance.message);
+      this.#guidance = null;
+    }
+    if (active) this.#withdrawSpecialist(active, false, denialRevision);
+    else {
+      this.#retentionVersions.set("withdrawal:turn:" + turnId, ++this.#withdrawalRevision);
+      this.#readRevision += 1;
+      this.#invalidateSpecialistReceipt(turnId, "");
+    }
+    this.#tasks = this.#tasks.map((task) => task.turnId === turnId ? this.#taskReference(task) : task);
+    this.#turns = this.#turns.filter((turn) => turn.id !== turnId);
+    if (this.#context?.recentTurns) this.#context = { ...this.#context,
+      recentTurns: this.#context.recentTurns.filter((turn) => turn.id !== turnId + ":user" && turn.id !== turnId + ":assistant") };
+    this.#refreshTranscript();
+    return true;
   }
 
   #rememberSpecialistExecution(state: AssistantSpecialistReview) {
@@ -488,7 +789,7 @@ export class FormaCreativeAssistant extends FormaElement {
 
   async #reviewSpecialist(detail: { turnId: string; task?: AssistantDisplayedTask }) {
     const scope = this.#synchronizeScope();
-    if (!this.#open || this.#specialist?.working) return;
+    if (!this.#open || this.#specialist?.working || this.#memoryMarked.has(detail.turnId)) return;
     const task = detail.task && this.#tasks.find((item) => item.id === detail.task?.id
       && item.turnId === detail.turnId && item.executionId === detail.task.executionId);
     if (detail.task ? !task?.executionId : !this.#canSpecialist(detail.turnId)) return;
@@ -516,7 +817,7 @@ export class FormaCreativeAssistant extends FormaElement {
 
   async #requestSpecialist(action: "quote" | "execute" | "retrieve" | "resume" | "stop", model?: string) {
     const state = this.#specialist, source = this.store.captureSourceOwnership();
-    if (!state || state.working || state.scope !== this.#scope() || !this.store.sourceOwnershipScopeActive(source)) return;
+    if (!state || state.working || this.#memoryMarked.has(state.turnId) || state.scope !== this.#scope() || !this.store.sourceOwnershipScopeActive(source)) return;
     if (["quote", "execute", "stop"].includes(action) && !this.store.sourceOwnershipActive(source)) return;
     const refreshUnused = action === "quote" && !state.notice && state.retrievalOnly && state.unusedExecution === true
       && state.quote?.status === "quoted" && state.quote.canExecute === false && state.originalRequest
@@ -579,7 +880,8 @@ export class FormaCreativeAssistant extends FormaElement {
         selectedModel: model, unusedExecution: false } : {}),
       ...(action !== "quote" ? { retrievalOnly: true } : {}) };
     this.requestUpdate();
-    const receiptScope = () => state.scope === this.#scope() && this.#specialist?.id === state.id && this.store.sourceOwnershipScopeActive(source);
+    const receiptScope = () => state.scope === this.#scope() && this.#specialist?.id === state.id
+      && !this.#memoryMarked.has(state.turnId) && this.store.sourceOwnershipScopeActive(source);
     const readable = () => receiptScope() && this.#withdrawalCurrent(state.turnId, state.executionId, withdrawalRevision);
     const current = () => readable() && this.store.sourceOwnershipActive(source) && (revision === this.#reviewRevision
       && retentionVersion === this.#retentionVersion(state.turnId, state.executionId)
@@ -784,6 +1086,7 @@ export class FormaCreativeAssistant extends FormaElement {
   }
 
   #nextContext() {
+    if (this.#contextUnavailable) return null;
     const surface = assistantSurfaceForRoute(this.store.route.get()), projection = this.store.projection.get();
     // Canvas has no implicit global Document. Resolve its existing exact anchor
     // independently; never remove canvasId from a previously captured target.
@@ -826,7 +1129,7 @@ export class FormaCreativeAssistant extends FormaElement {
     if (!this.#open || !panel?.isConnected || !panel.open || panel.navigationBlocked
       || !next || action.target.documentId !== next.document.id) return false;
     const request = ++this.#nextNavigation, origin = this.#nextOrigin();
-    const originCurrent = () => this.isConnected && this.#open && panel.isConnected && panel.open
+    const originCurrent = () => this.isConnected && this.#open && !this.#contextUnavailable && panel.isConnected && panel.open
       && this.querySelector<FormaAssistantPanel>("forma-assistant-panel") === panel
       && request === this.#nextNavigation && origin === this.#nextOrigin() && !panel.navigationBlocked;
     let opened = false, navigationRefusal = "";
@@ -927,6 +1230,7 @@ export class FormaCreativeAssistant extends FormaElement {
       if (!handoff || !handoffCurrent() || !handoff.current()) return;
       closingQuickEdit = true;
       this.#open = false;
+      this.#closeMemory();
       this.requestUpdate();
       await this.updateComplete;
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
@@ -955,6 +1259,7 @@ export class FormaCreativeAssistant extends FormaElement {
     const selector = mode === "plan-document" ? ".adaptive-model-plan" : ".canvas-intent-response";
     if (!document.querySelector<HTMLElement>(selector)) return;
     this.#open = false;
+    this.#closeMemory();
     this.requestUpdate();
     void this.updateComplete.then(() => requestAnimationFrame(() => {
       const review = document.querySelector<HTMLElement>(selector);
@@ -1061,6 +1366,7 @@ export class FormaCreativeAssistant extends FormaElement {
   }
 
   override render() {
+    this.#pruneMemoryAnswers();
     const previousScope = this.#loadedScope;
     const scope = this.#synchronizeScope();
     const session = this.store.session.get();
@@ -1085,18 +1391,18 @@ export class FormaCreativeAssistant extends FormaElement {
     return html`<forma-assistant-panel .open=${this.#open} .conversationScope=${this.#scope()} .context=${this.#context} .messages=${messages} .proposals=${this.#proposals}
       .tasks=${this.#tasks} .models=${session.assistant.models ?? []} .modes=${interaction.modes}
       .busyModes=${busyModes}
-      .continuation=${next ? renderLifecycleNextActionCards(creativeNextActions(next.facts), this.i18n, action => this.#followNextAction(action), {
+      .continuation=${this.#open ? html`${next ? renderLifecycleNextActionCards(creativeNextActions(next.facts), this.i18n, action => this.#followNextAction(action), {
         projectName: next.projectName, documentTitle: next.document.title,
         scopeUnknown: next.facts.lifecycle?.output.state !== "ready" || next.facts.lifecycle?.output.scopeKnown !== true,
         creatorHandoff: surface.application === "canvas",
-      }) : nothing}
+      }) : nothing}${this.#renderMemory(scope)}` : nothing}
       .retainGuidanceDraft=${true} .guidanceDelivery=${this.#guidance?.status ?? ""}
       .canSpecialist=${this.#canSpecialist()} .specialist=${this.#specialist}
       .canReconcile=${false}
       .pending=${this.#pending.size + this.#activeTasks.size + Number(planning)} .readOnly=${!this.#canAuthor()}
       .guidanceOnly=${this.#canAuthor() && (session.assistant.phase !== "actions" || !surface.documentId)}
-      @forma-assistant-toggle=${(event: CustomEvent<{ open: boolean }>) => { this.#nextNavigation += 1; this.#open = event.detail.open; if (!this.#open) { this.#specialist = null; this.#reviewRevision += 1; } this.requestUpdate(); if (this.#open) void this.#load(); }}
-      @forma-assistant-message=${(event: CustomEvent<{ message: string; mode?: Exclude<AssistantInteractionMode, "guidance"> }>) => { if (event.detail.mode) void this.#tool({ message: event.detail.message, mode: event.detail.mode }); else void this.#send(event.detail); }}
+      @forma-assistant-toggle=${(event: CustomEvent<{ open: boolean }>) => { this.#nextNavigation += 1; this.#open = event.detail.open; if (!this.#open) { this.#closeMemory(); this.#specialist = null; this.#reviewRevision += 1; } this.requestUpdate(); if (this.#open) void this.#load(); }}
+      @forma-assistant-message=${(event: CustomEvent<{ message: string; mode?: Exclude<AssistantInteractionMode, "guidance"> }>) => { if (event.detail.mode) void this.#tool({ message: event.detail.message, mode: event.detail.mode }); else void this.#send({ message: event.detail.message }); }}
       @forma-assistant-guidance-recovery=${(event: CustomEvent<{ action: "check" | "retry" }>) => { if (event.detail.action === "check") void this.#load(); else void this.#deliverGuidance(); }}
       @forma-assistant-specialist-review=${(event: CustomEvent<{ turnId: string; task?: AssistantDisplayedTask }>) => { void this.#reviewSpecialist(event.detail); }}
       @forma-assistant-specialist-action=${(event: CustomEvent<AssistantSpecialistControl>) => { void this.#specialistAction(event.detail); }}

@@ -1,5 +1,6 @@
 import type { CreativeEvent } from "./events.ts";
 import { isPhantomAttentionEpisode } from "./attention.ts";
+import { memoryTimestamp, parseMemoryLifetime, type MemoryRecallLifetime } from "./memory-lifetime.ts";
 import {
   memoryKey, memoryScopeGrant, memorySourceEligible, memorySourceMatches, memorySourceRef, memoryTime,
   type MemoryAccess, type MemoryOrigin, type MemoryPurpose, type MemoryScopeGraph, type MemorySource, type MemorySourceRef,
@@ -67,6 +68,58 @@ const ACTIONS: Readonly<Record<string, MemoryAction>> = {
 const ASSISTED = new Set(["ProposalAccepted", "ProposalRejected", "ProposalDeclined", "BriefItemAccepted", "BriefItemIgnored", "BriefDismissed"]);
 /** Used by the disconnected source reader before it requests any private body. */
 export const memoryEventAction = (type: string): MemoryAction | null => ACTIONS[type] ?? null;
+
+type LiveConsumptionAction = Exclude<MemoryAction, "navigate" | "attention">;
+export type LiveConsumptionReference = {
+  eventId: string; type: string; blockId: string | null; recordedAt: string; validUntil: string;
+};
+type LiveConsumptionCounts = { actions: Partial<Record<LiveConsumptionAction, number>>; sourceIndexes: number[] };
+export type LiveMemoryConsumption = {
+  version: "live-reference-consumption-v1"; basis: "selected-source-events"; completeFromStart: false;
+  sourceLimit: 64; sourceLimitReached: boolean;
+  windows: Array<{ windowDays: 7 | 30; since: string; document: LiveConsumptionCounts;
+    /** The anchor resolves blockId through the parent recall's sources; no new resource/revision authority. */
+    blocks: Array<LiveConsumptionCounts & { sourceIndex: number }> }>;
+};
+
+/** Describe only the already-authorized live selection. This does not authorize sources or infer
+ * independent outcomes, episodes, reading time or preferences. Block counts are document subsets;
+ * overlapping windows/resources must not be summed. The parent recall owns scope and expiration. */
+export function rollingLiveMemoryConsumption(sources: readonly LiveConsumptionReference[], lifetime: MemoryRecallLifetime,
+  enrolledSince: string, retentionDays: number): LiveMemoryConsumption {
+  const lease = parseMemoryLifetime(lifetime), enrolled = memoryTimestamp(enrolledSince);
+  const checkedAt = lease ? memoryTimestamp(lease.checkedAt)! : NaN, validUntil = lease ? memoryTimestamp(lease.validUntil)! : NaN;
+  const id = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 512;
+  if (!lease || enrolled === null || enrolled > checkedAt || !Number.isSafeInteger(retentionDays) || retentionDays < 1 || retentionDays > 365
+    || sources.length > 64 || new Set(sources.map(source => source.eventId)).size !== sources.length) throw new Error("Invalid live consumption coverage");
+  const recorded = sources.map(source => {
+    const at = memoryTimestamp(source.recordedAt), until = memoryTimestamp(source.validUntil);
+    if (!id(source.eventId) || typeof source.type !== "string" || source.type.length === 0 || source.type.length > 120
+      || !(source.blockId === null || id(source.blockId)) || at === null || until === null || at < enrolled || at > checkedAt
+      || at + retentionDays * 86_400_000 <= checkedAt || until > at + retentionDays * 86_400_000
+      || until <= checkedAt || validUntil > until) throw new Error("Invalid live consumption source");
+    return at;
+  });
+  const actions = sources.map(source => {
+    const action = Object.hasOwn(ACTIONS, source.type) ? memoryEventAction(source.type) : null;
+    return action === "navigate" || action === "attention" ? null : action;
+  });
+  const counts = (sourceIndexes: number[]): LiveConsumptionCounts => {
+    const totals: LiveConsumptionCounts["actions"] = {};
+    for (const index of sourceIndexes) { const action = actions[index]!; totals[action] = (totals[action] ?? 0) + 1; }
+    return { actions: totals, sourceIndexes: [...sourceIndexes] };
+  };
+  return { version: "live-reference-consumption-v1", basis: "selected-source-events", completeFromStart: false,
+    sourceLimit: 64, sourceLimitReached: sources.length === 64, windows: ([7, 30] as const).map(windowDays => {
+      // Enrollment and retention can shorten a requested window; even fewer than 64 rows never prove complete history.
+      const since = Math.max(enrolled, checkedAt - Math.min(windowDays, retentionDays) * 86_400_000);
+      const indexes = sources.flatMap((_source, index) => recorded[index] >= since && actions[index] ? [index] : []);
+      const blocks = new Map<string, number[]>();
+      for (const index of indexes) { const block = sources[index].blockId; if (block !== null) blocks.set(block, [...(blocks.get(block) ?? []), index]); }
+      return { windowDays, since: new Date(since).toISOString(), document: counts(indexes),
+        blocks: [...blocks.values()].map(indices => ({ sourceIndex: indices[0], ...counts(indices) })) };
+    }) };
+}
 const COPY_FIELDS = ["copied_from_block_id", "forked_from_block_id", "copied_from_relation_id", "forked_from_relation_id", "source_block_id", "source_output_id", "source_generation_id", "source_artifact_id", "source_document_id", "source_claim_ref"];
 const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const usableId = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 512;

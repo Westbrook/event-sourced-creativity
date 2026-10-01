@@ -22,7 +22,7 @@ function fixture(permissions=["project.read"]){
   const fetch=async(url,init)=>{calls.push([url,init?.method??"GET"]);if(requestPort)return requestPort(url,init);if(responseGate)await responseGate;const detail=details.get(url);return{ok:true,status:200,json:async()=>detail?{job:detail}:{jobs:responseJobs}};};
   // Actual polling/driver methods; deterministic network and unrelated rendering ports.
   // This proves reader recovery cannot dispatch, not native accessibility.
-  const Probe=eval(stripTypeScriptTypes(`(class {
+  const Probe=eval(stripTypeScriptTypes(`((documentIdFromRoute,routeCapabilities,documentJobTerminal,documentJobIsStale,documentJobCanRecoverPresentation,documentJobHasNoBudgetHold,planningStopBudget,adaptiveJobMatchesRequest,contextConsentFailure,cell,permissions,document,window,fetch)=>(class {
     #jobPollTimer=0;#pendingPassiveJobPath="";#jobsSyncing=false;#jobSyncScope="";#jobResyncRequested=false;
     #jobDetails=new Map();#jobPollFailures=0;#jobPollIssueNotified=false;#pendingJobEventRefresh=false;#pendingJobSessionRefresh=false;
     #dismissedAdaptiveSuggestions=new Set();#pendingJobNotices=[];#jobsDriving=new Set();#presentationRecoveryAttempts=new Set();#adaptiveStructureJobIds=new Map();#pendingAdaptiveIntents=new Map();#planningRecoveryIdentities=new Map();#planningRecoverySequence=0;
@@ -41,7 +41,7 @@ function fixture(permissions=["project.read"]){
     ${methods}
     ${actual("#clearPendingAdaptiveSelection")}
     ${actual("#canPresentAdaptivePlanningJob")}
-  })`));
+  }))`))(documentIdFromRoute,routeCapabilities,documentJobTerminal,documentJobIsStale,documentJobCanRecoverPresentation,documentJobHasNoBudgetHold,planningStopBudget,adaptiveJobMatchesRequest,contextConsentFailure,cell,permissions,document,window,fetch);
   const host=new Probe();return{host,calls,trace,timers,jobs(value){responseJobs=value;},detail(job){details.set("/api/document-jobs/"+encodeURIComponent(job.jobId)+"?inspection=1",job);},gate(promise){responseGate=promise;},respondWith(port){requestPort=port;}};
 }
 const job=(overrides={})=>({jobId:"original-plan",kind:"structure_adaptive",planningExecutionId:"original-plan",documentId:"doc-a",status:"queued",requestedAt:"2026-08-27T00:00:00Z",updatedAt:"2026-08-27T00:00:00Z",notifiedAt:"2026-08-27T00:00:00Z",result:{},...overrides});

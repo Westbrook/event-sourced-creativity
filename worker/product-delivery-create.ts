@@ -1,5 +1,5 @@
-import { PRINCIPAL_WITH_ACCESS_SQL } from "./access-policy.ts";
-import { configuredPilotAdmissionGuard, type PilotUser } from "./pilot-policy.ts";
+import type { PilotUser } from "./pilot-policy.ts";
+import { productDeliveryAuthority as createAuthority } from "./product-delivery-authority.ts";
 import { appendEvents, makeEvent, uuidV7, type WorkerEnv } from "./runtime.ts";
 import { publicEventPayload } from "./event-privacy.ts";
 import { deliveryCreateAcknowledgmentDigest, deliveryCreateDigest, deliveryCreateIntentDigest, deliveryCreateRequestId,
@@ -10,38 +10,6 @@ const headers = { "cache-control": "private, no-store" };
 const failure = (error: string, status = 409) => Response.json({ error }, { status, headers });
 type Owner = { user_id: string; display_name: string };
 type OriginalRow = Record<string, unknown> & { client_event_id: string | null; private_json: string | null };
-
-/** Same admitted Product principal/capability, not Creator authoring or paid execution. */
-function createAuthority(request: Request, env: WorkerEnv, actor: PilotUser) {
-  const snapshot = actor.authorizationSnapshot;
-  if (!snapshot) return { sql: "0", bindings: [] as Array<string | number | null> };
-  const cohort = configuredPilotAdmissionGuard(env, actor);
-  const encoded = request.headers.get("cookie")?.split(";").map((part) => part.trim())
-    .find((part) => part.startsWith("forma_impersonation="))?.slice("forma_impersonation=".length) ?? "";
-  let impersonation = "";
-  try { impersonation = decodeURIComponent(encoded); } catch { /* Same absent-invalid-cookie behavior as requireUser. */ }
-  return {
-    sql: `EXISTS(SELECT 1 FROM(${PRINCIPAL_WITH_ACCESS_SQL}) principal
-      WHERE principal.user_id=? AND principal.email=? AND principal.role=? AND principal.updated_at=?
-        AND COALESCE(principal.permission_epoch,'')=? AND COALESCE(principal.grants_json,'[]')=?
-        AND COALESCE(principal.organizations_json,'[]')=? AND COALESCE(principal.projects_json,'[]')=?
-        AND COALESCE(principal.identity_policies_json,'[]')=? AND COALESCE(principal.approved_canvas_requirements,0)=?
-        AND (principal.role='admin' OR EXISTS(SELECT 1 FROM capability_grants grant_row
-          WHERE grant_row.user_id=principal.user_id AND grant_row.capability='product.delivery.manage'
-            AND grant_row.scope_type='platform' AND grant_row.organization_id IS NULL AND grant_row.project_access_id IS NULL
-            AND grant_row.status='active' AND grant_row.revoked_at IS NULL
-            AND (grant_row.expires_at IS NULL OR grant_row.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))))
-        AND (${cohort.sql})
-        AND NOT EXISTS(SELECT 1 FROM impersonation_sessions acting
-          JOIN replay_personas persona ON persona.persona_id=acting.persona_id AND persona.status='ready'
-          JOIN users fictional ON fictional.user_id=acting.fictional_user_id
-          WHERE acting.impersonation_id=? AND acting.actor_user_id=principal.user_id AND acting.status='active'
-            AND acting.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')))`,
-    bindings: [actor.userId, actor.userId, actor.email, actor.role, snapshot.updatedAt, snapshot.rawEpoch,
-      snapshot.grants, snapshot.organizations, snapshot.projects, snapshot.identityPolicies, snapshot.canvasRequirements,
-      ...cohort.bindings, impersonation] as Array<string | number | null>,
-  };
-}
 
 /** A receipt with a missing/redacted original is not an absent request and must never create again. */
 async function originalCreate(env: WorkerEnv, authority: ReturnType<typeof createAuthority>, key: string,

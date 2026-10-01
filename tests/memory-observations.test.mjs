@@ -1,13 +1,91 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createMemoryRecord, memoryKey } from "../src/model/scoped-memory.ts";
-import { eligibleMemoryObservations, memoryWorkflowPatterns, normalizeMemoryObservation, rollingMemoryConsumption } from "../src/model/memory-observations.ts";
+import { eligibleMemoryObservations, memoryWorkflowPatterns, normalizeMemoryObservation, rollingMemoryConsumption, rollingLiveMemoryConsumption } from "../src/model/memory-observations.ts";
 import { memoryFixture, sourceMap } from "./helpers/scoped-memory.mjs";
 
 function observationView(fixture, receipts, attention) {
   const observations = receipts.map((receipt) => normalizeMemoryObservation(receipt, fixture.access, fixture.graph, attention)).filter(Boolean);
   return { observations, sources: sourceMap(observations.map((observation) => observation.evidenceSource)), access: fixture.access, graph: fixture.graph, attention };
 }
+
+const liveClock = "2026-09-03T12:00:00.000Z", liveSince = "2026-07-01T00:00:00.000Z";
+const liveLifetime = { version: "memory-recall-lifetime-v1", checkedAt: liveClock, validUntil: "2026-09-03T12:01:00.000Z" };
+const liveReference = (index, type, daysAgo, blockId = null) => ({ eventId: `live-${index}`, type, blockId,
+  recordedAt: new Date(Date.parse(liveClock) - daysAgo * 86_400_000).toISOString(), validUntil: liveLifetime.validUntil });
+
+test("live rolling consumption describes document actions and referenced block subsets in fixed windows", () => {
+  const sources = [liveReference(0, "DocumentOpened", 1), liveReference(1, "BlockPropertyEdited", 2, "block-a"),
+    liveReference(2, "ObjectSaved", 8, "block-a"), liveReference(3, "BlockRemoved", 9, "block-b"),
+    liveReference(4, "AssistantReasoned", .1, "block-a"), liveReference(5, "DocumentOpened", 40)];
+  const original = structuredClone(sources), result = rollingLiveMemoryConsumption(sources, liveLifetime, liveSince, 90);
+  assert.deepEqual(result.windows, [
+    { windowDays: 7, since: "2026-08-27T12:00:00.000Z", document: { actions: { encounter: 1, edit: 1 }, sourceIndexes: [0, 1] },
+      blocks: [{ sourceIndex: 1, actions: { edit: 1 }, sourceIndexes: [1] }] },
+    { windowDays: 30, since: "2026-08-04T12:00:00.000Z", document: { actions: { encounter: 1, edit: 1, commit: 1, remove: 1 }, sourceIndexes: [0, 1, 2, 3] },
+      blocks: [{ sourceIndex: 1, actions: { edit: 1, commit: 1 }, sourceIndexes: [1, 2] }, { sourceIndex: 3, actions: { remove: 1 }, sourceIndexes: [3] }] },
+  ]);
+  assert.equal(sources[result.windows[1].blocks[0].sourceIndex].blockId, "block-a");
+  assert.equal(result.completeFromStart, false); assert.equal(result.basis, "selected-source-events");
+  assert.deepEqual(rollingLiveMemoryConsumption(sources, liveLifetime, liveSince, 90), result);
+  result.windows[0].document.sourceIndexes.push(63); assert.deepEqual(sources, original);
+  assert.equal(/preference|episode|outcome|prose|revision/u.test(JSON.stringify(result)), false);
+});
+
+test("live windows disclose shorter retention and enrollment without claiming complete coverage", () => {
+  const recent = [liveReference(1, "BlockPropertyEdited", .25, "block-a")];
+  const retained = rollingLiveMemoryConsumption(recent, liveLifetime, liveSince, 2);
+  assert.deepEqual(retained.windows.map(window => window.since), ["2026-09-01T12:00:00.000Z", "2026-09-01T12:00:00.000Z"]);
+  const enrolled = rollingLiveMemoryConsumption(recent, liveLifetime, "2026-09-03T00:00:00.000Z", 30);
+  assert.deepEqual(enrolled.windows.map(window => window.since), ["2026-09-03T00:00:00.000Z", "2026-09-03T00:00:00.000Z"]);
+  assert.equal(retained.completeFromStart, false); assert.equal(enrolled.sourceLimitReached, false);
+});
+
+test("live window boundaries are checkedAt anchored and do not promote passive or conversation rows", () => {
+  const sources = [liveReference(0, "DocumentOpened", 7), liveReference(1, "DocumentOpened", 7 + 1 / 86_400_000),
+    liveReference(2, "ObjectViewed", 30), liveReference(3, "ObjectViewed", 30 + 1 / 86_400_000),
+    liveReference(4, "AttentionEpisodeObserved", 1), liveReference(5, "ApplicationViewVisited", 1),
+    liveReference(6, "GenerationCompleted", 1), liveReference(7, "AssistantReasoned", 1),
+    liveReference(8, "toString", 1), liveReference(9, "constructor", 1), liveReference(10, "__proto__", 1)];
+  const result = rollingLiveMemoryConsumption(sources, liveLifetime, liveSince, 90);
+  assert.deepEqual(result.windows[0].document, { actions: { encounter: 1 }, sourceIndexes: [0] });
+  assert.deepEqual(result.windows[1].document, { actions: { encounter: 2, inspect: 1 }, sourceIndexes: [0, 1, 2] });
+});
+
+test("live source removal rebuilds partial counts and an empty selection is not no-history evidence", () => {
+  const source = liveReference(0, "BlockPropertyEdited", 1, "block-a");
+  assert.equal(rollingLiveMemoryConsumption([source], liveLifetime, liveSince, 30).windows[0].document.actions.edit, 1);
+  const empty = rollingLiveMemoryConsumption([], liveLifetime, liveSince, 30);
+  assert.ok(empty.windows.every(window => window.document.sourceIndexes.length === 0 && Object.keys(window.document.actions).length === 0 && window.blocks.length === 0));
+  assert.equal(empty.completeFromStart, false); assert.equal(empty.sourceLimitReached, false);
+});
+
+test("live selection limit remains explicit and duplicate or oversized source sets fail closed", () => {
+  const sources = Array.from({ length: 64 }, (_, index) => liveReference(index, "BlockPropertyEdited", 1, `block-${index}`));
+  const result = rollingLiveMemoryConsumption(sources, liveLifetime, liveSince, 30);
+  assert.equal(result.sourceLimitReached, true); assert.equal(result.completeFromStart, false);
+  assert.ok(result.windows.every(window => window.document.actions.edit === 64 && window.blocks.length === 64));
+  assert.deepEqual(result.windows[0].blocks[63], { sourceIndex: 63, actions: { edit: 1 }, sourceIndexes: [63] });
+  assert.throws(() => rollingLiveMemoryConsumption([...sources, liveReference(64, "ObjectViewed", 1)], liveLifetime, liveSince, 30), /coverage/);
+  assert.throws(() => rollingLiveMemoryConsumption([sources[0], sources[0]], liveLifetime, liveSince, 30), /coverage/);
+});
+
+test("live consumption refuses missing coverage, expired sources and deadlines shorter than the parent lease", () => {
+  const source = liveReference(0, "DocumentOpened", 1);
+  for (const changed of [{ recordedAt: "2026-09-03T12:00:00.001Z" }, { recordedAt: "2026-06-30T23:59:59.999Z" },
+    { recordedAt: "2026-08-04T12:00:00.001Z" },
+    { validUntil: liveClock }, { validUntil: "2026-09-03T12:00:59.999Z" }, { validUntil: "not-a-time" }]) {
+    assert.throws(() => rollingLiveMemoryConsumption([{ ...source, ...changed }], liveLifetime, liveSince, 30), /source/);
+  }
+  assert.throws(() => rollingLiveMemoryConsumption([source], liveLifetime, liveSince, 1), /source/, "retention expires at the exact boundary");
+  for (const since of [undefined, "not-a-time", "2026-09-03T12:00:00.001Z"]) {
+    assert.throws(() => rollingLiveMemoryConsumption([], liveLifetime, since, 30), /coverage/);
+  }
+  assert.throws(() => rollingLiveMemoryConsumption([], { ...liveLifetime, validUntil: liveClock }, liveSince, 30), /coverage/);
+  const nearExpiry = { ...liveLifetime, validUntil: "2026-09-03T12:00:00.001Z" };
+  assert.equal(rollingLiveMemoryConsumption([{ ...source, recordedAt: "2026-08-04T12:00:00.001Z", validUntil: nearExpiry.validUntil }],
+    nearExpiry, liveSince, 30).windows[1].document.actions.encounter, 1);
+});
 
 test("non-chat views, edits, critiques, commitments and deferred suggestions have distinct meanings", () => {
   const f = memoryFixture();

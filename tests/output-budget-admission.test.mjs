@@ -3,7 +3,7 @@ import {DatabaseSync} from 'node:sqlite';
 import test from 'node:test';
 import {registerOutputSourceImports} from './output-execution-test-helpers.mjs';
 registerOutputSourceImports();
-const {prepareBudgetReservation,prepareCostBudgetReservation,readCostBudgets,settleBudget,settleCostBudget}=await import('../worker/pilot-policy.ts');
+const {prepareBudgetReservation,prepareCostBudgetReservation,settleBudget,settleCostBudget}=await import('../worker/pilot-policy.ts');
 
 function fixture(){
  const sqlite=new DatabaseSync(':memory:');

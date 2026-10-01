@@ -8,6 +8,7 @@ import { FORMA_CONTEXT_CONTROL_MESSAGES } from "./context-controls-messages.ts";
 import { FORMA_MODEL3D_MESSAGES } from "./model3d-messages.ts";
 import { FORMA_MODEL3D_VIEWER_MESSAGES } from "./model3d-viewer-messages.ts";
 import { REFERENCE_COMPOSITION_MESSAGES } from "./reference-composition-messages.ts";
+import { FORMA_EXPERIENCE_REVIEW_MESSAGES } from "./experience-review-messages.ts";
 
 const messages: Record<string, string> = {
   "sessions.blank.originalCreated": "元のドキュメントを作成しました。この名前で別のドキュメントはまだ作成していません。",
@@ -31,6 +32,7 @@ const messages: Record<string, string> = {
   ...FORMA_MODEL3D_MESSAGES.ja,
   ...FORMA_MODEL3D_VIEWER_MESSAGES.ja,
   ...REFERENCE_COMPOSITION_MESSAGES.ja,
+  ...FORMA_EXPERIENCE_REVIEW_MESSAGES.ja,
   ...FORMA_RESPONSIVE_MESSAGES.ja,
   ...FORMA_OUTPUT_DELIVERY_MESSAGES.ja,
   ...FORMA_OUTPUT_REQUIREMENT_MESSAGES.ja,

@@ -1,0 +1,105 @@
+forma-experience-review,
+forma-experience-review [data-experience-review-mount] {
+  display: block;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+.experience-review {
+  box-sizing: border-box;
+  margin-block: 2rem;
+  padding-block: 1.5rem;
+  padding-inline: clamp(.75rem, 3vw, 2rem);
+  color: var(--ink);
+  background: var(--paper);
+  border-block-start: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.experience-review *, .experience-review *::before, .experience-review *::after { box-sizing: border-box; }
+.experience-review :is(header, .experience-review-order li, .experience-review-order-actions) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .75rem;
+  min-inline-size: 0;
+}
+.experience-review :is(h2, h3, h4, p) { margin-block: 0 1rem; }
+.experience-review :is(h2, h3, h4, span, bdi, label, form, article, section, div) { min-inline-size: 0; }
+.experience-review :is(button, input, select, textarea, summary) {
+  min-block-size: 44px;
+  max-inline-size: 100%;
+  font: inherit;
+  font-size: max(1rem, 16px);
+  touch-action: manipulation;
+}
+.experience-review :is(button, input, select, textarea) {
+  border: 1px solid var(--line);
+  border-radius: .5rem;
+  padding-block: .625rem;
+  padding-inline: .75rem;
+  color: inherit;
+  background: var(--paper);
+}
+.experience-review button { white-space: normal; overflow-wrap: anywhere; text-align: start; cursor: pointer; }
+.experience-review button:disabled { opacity: .55; cursor: default; }
+.experience-review button[aria-pressed="true"] { border-color: currentColor; outline: 1px solid currentColor; outline-offset: 2px; }
+.experience-review :is(button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+.experience-review :is(ul, ol) { padding-inline-start: 1.5rem; }
+.experience-review :is(dl, dd) { margin: 0; }
+.experience-review dl { display: grid; gap: .75rem; margin-block-end: 1rem; }
+.experience-review dl > div { display: grid; gap: .25rem; }
+.experience-review dt { font-weight: 600; }
+.experience-review dd { overflow-wrap: anywhere; }
+.experience-review code { white-space: normal; overflow-wrap: anywhere; font-size: .875rem; }
+.experience-review-definition { max-inline-size: 100%; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .875rem; }
+.experience-review .experience-review-facts { grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); }
+.experience-review .experience-review-candidates {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: .75rem;
+  margin-block: 0 1.5rem;
+}
+.experience-review-candidates button { display: grid; gap: .5rem; inline-size: 100%; block-size: 100%; }
+.experience-review-selected { border-block-start: 1px solid var(--line); padding-block-start: 1.5rem; }
+.experience-review details { border-block: 1px solid var(--line); padding-block: .5rem; margin-block-end: 1rem; }
+.experience-review summary {
+  display: list-item;
+  list-style: revert;
+  align-content: center;
+  padding-block: .5rem;
+  cursor: pointer;
+}
+.experience-review form { display: grid; gap: 1rem; margin-block: 1rem; }
+.experience-review label { display: grid; gap: .5rem; }
+.experience-review :is(input, select, textarea) { inline-size: 100%; }
+.experience-review textarea { min-block-size: 6rem; resize: vertical; }
+.experience-review-order { display: grid; gap: .75rem; }
+.experience-review-order li { padding-block: .75rem; border-block-end: 1px solid var(--line); }
+.experience-review-order li > span { flex: 1 1 12rem; }
+.experience-review-order-actions { flex: 0 1 auto; }
+.experience-review-preview { padding-block: 1rem; padding-inline: 1rem; border: 1px dashed var(--line); }
+.experience-review-proposal { margin-block: 1.5rem; }
+@media (min-width: 48rem) {
+  .experience-review-proposal form { grid-template-columns: 1fr 1fr; }
+  .experience-review-proposal form > :nth-child(n+3) { grid-column: 1 / -1; }
+}
+@media (forced-colors: active) {
+  .experience-review button[aria-pressed="true"] { border-color: Highlight; outline-color: Highlight; }
+  .experience-review button:disabled { opacity: 1; color: GrayText; }
+}
+
+.experience-review-actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: stretch; }
+.experience-review-actions > button { flex: 1 1 12rem; }
+.experience-review-decision, .experience-review-publication { border-block-start: 1px solid var(--line); padding-block: 1rem; }
+.experience-review-publication > button { inline-size: 100%; }
+.experience-review [data-experience-acknowledgment]:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+
+.experience-review-maintenance { margin-block: 1rem; }
+.experience-review-maintenance [data-experience-maintenance-status] { margin-block: .75rem; min-block-size: 1.5em; }
+.experience-review-maintenance .experience-review-actions > button { min-inline-size: 44px; }
+.experience-review-maintenance .experience-review-preview { margin-block-start: 1rem; }

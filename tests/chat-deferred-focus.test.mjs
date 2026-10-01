@@ -31,12 +31,29 @@ async function chatPage(t) {
   await registerCalmFullPageComponents(f, ["forma-chat-studio"]);
   const native = installOutputNavigationFocusNative(t, f, ports), projection = f.store.projection.get();
   const href = withDocumentInRoute("/studio/chat", projection.documentId, projection.documentTitle);
-  const link = f.find("a", node => node.owner.tag === "forma-studio-mode-nav" && node.attributes.href === href);
+  const navigators = f.components().filter(owner => owner.tag === "forma-studio-mode-nav" && owner.isConnected);
+  assert.equal(navigators.length, 1); const navigator = navigators[0];
+  const menus = f.components().filter(owner => owner.tag === "forma-ui-popover" && owner.parentElement === navigator
+    && owner.isConnected && classed(owner, "studio-view-menu"));
+  assert.equal(menus.length, 1); const menu = menus[0];
+  const trigger = f.find("button", node => node.owner === menu && classed(node, "ui-popover-trigger"));
+  const panel = menu.querySelector(".ui-popover-panel");
+  assert.ok(panel?.isConnected); assert.equal(panel.owner, menu);
+  assert.equal(trigger.attributes.popovertarget, panel.attributes.id);
+  assert.equal(trigger.port.matches(":disabled"), false); assert.equal(panel.matches(":popover-open"), false);
+  native.emit("pointerdown", trigger.port); native.focus(trigger.port);
+  // Existing native port executes the real click handler and popovertarget default.
+  // f.act alone deliberately does not implement that browser default action.
+  trigger.port.click(); await f.settle();
+  assert.equal(menu.querySelector(".ui-popover-panel")?.matches(":popover-open"), true);
+  const link = f.find("a", node => node.owner === menu && node.attributes["data-studio-view"] === "chat"
+    && node.attributes.href === href);
+  assert.equal(menu.contains(link.port), true); assert.equal(link.port.closest("forma-ui-popover"), menu);
   // Observe only this actual link's original public navigation call. Preserve
   // its exact return Promise, scheduler, owner checks, and all focus assertions.
   const routeBefore = f.store.route.get(), navigationCalls = [], navigateFrom = f.host.navigateFrom;
   const navigationObserver = t.mock.method(f.host, "navigateFrom", function (...args) {
-    const call = { origin: args[0]?.tag, exactOwner: args[0] === link.owner, sameHost: this === f.host, settled: false };
+    const call = { origin: args[0]?.tag, exactOwner: args[0] === navigator, sameHost: this === f.host, settled: false };
     navigationCalls.push(call);
     const pending = Reflect.apply(navigateFrom, this, args);
     void Promise.resolve(pending).then(value => { call.settled = true; call.result = value; },

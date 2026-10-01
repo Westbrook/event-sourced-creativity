@@ -266,10 +266,11 @@ const wait = (delay: number, signal?: AbortSignal) => new Promise<void>((resolve
   signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new DOMException("The operation was aborted.", "AbortError")); }, { once: true });
 });
 
-async function openAIRequest(input: string, init: RequestInit) {
+async function openAIRequest(input: string, init: RequestInit, beforeDispatch?:()=>Promise<void>) {
   const endpoint=new URL(input);
   const paidProviderSubmission=(init.method??"GET").toUpperCase()==="POST"&&(endpoint.hostname==="queue.fal.run"||endpoint.hostname==="api.openai.com"&&["/v1/responses","/v1/images/generations","/v1/images/edits"].includes(endpoint.pathname));
   for (let attempt = 1; attempt <= OPENAI_REQUEST_MAX_ATTEMPTS; attempt += 1) {
+    if(beforeDispatch)await beforeDispatch();
     let response: Response;
     try {
       response = await fetch(input, init);
@@ -486,7 +487,7 @@ function assistantResponseLocale(value?: string) {
   }
 }
 
-export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{documentTitle:string;blocks:Array<Record<string,unknown>>;relationships?:Array<Record<string,unknown>>;history:Array<{role:"user"|"assistant";text:string}>;message:string;locale?:string;signal?:AbortSignal}) {
+export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{documentTitle:string;blocks:Array<Record<string,unknown>>;relationships?:Array<Record<string,unknown>>;history:Array<{role:"user"|"assistant";text:string}>;message:string;locale?:string;signal?:AbortSignal;beforeDispatch?:()=>Promise<void>}) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const started=Date.now();
   const responseLocale=assistantResponseLocale(input.locale);
@@ -495,7 +496,7 @@ export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{d
     instructions:`You are Forma, a concise creative collaborator inside a chat-only document view. Write every user-facing assistant reply in the user's selected language (${responseLocale}). Preserve user-authored titles, quoted text, names, and creative decisions verbatim; never translate machine identifiers, enum values, or structured field names. Speak about the user's creative plan and intended image, never about blocks, events, schemas, metadata, adapters, or hidden machinery. Interpret the newest message against the existing plan and recent conversation. Return a helpful reply plus the smallest accurate set of plan mutations. Create adds a new durable decision; edit changes one existing decision and must name its target_block_id; remove deletes one existing decision and must name its target_block_id. Never target a missing item. For create, target_block_id is null. Never create a reference item through chat because an actual uploaded image is required. The reference_pixel_mode field is unchanged for ordinary mutations. When the user says to use a named existing reference image, edit the matching reference and choose inspiration unless they explicitly ask to preserve its composition, subject, or visual style. Choose context_only when they say not to send or use its pixels. Never change reference_pixel_mode on a non-reference item. When the user asks for an image size, resolution, dimensions, orientation, or aspect ratio, create or edit a format item and provide image_format with coherent pixel dimensions and their reduced aspect ratio; otherwise image_format is null. For unused mutation fields return sensible empty strings, but type must always be a valid vocabulary value. If the creative image meaningfully changes, preview_worthy is true and preview_direction is a standalone visual instruction incorporating the whole current intention after your proposed changes. If the user is only asking a question or chatting without changing visual intent, do not mutate and set preview_worthy false. ${creativePromptGuardrails()}`,
     input:JSON.stringify({...providerFacingAssistantContext(input),block_vocabulary:BLOCK_TYPES.map((item)=>({type:item.type,subtypes:item.subtypes})),mutation_rules:{create:"target_block_id must be null",edit:"target_block_id must match an existing id",remove:"target_block_id must match an existing id"}}),
     text:{verbosity:"low",format:{type:"json_schema",name:"forma_creative_chat",strict:true,schema:creativeChatSchema}},reasoning:{effort:"low"},max_output_tokens:1600,store:false,safety_identifier:await safetyIdentifier(userId),
-  })});
+  })},input.beforeDispatch);
   const body=await response.json() as OpenAIResponse;if(!response.ok)throw providerErrorFromResponse(response,body,`openai_${response.status}`);
   const text=responseText(body);if(!text)throw new Error("provider_returned_no_output");
   let parsed:CreativeChatResponse;try{parsed=JSON.parse(text) as CreativeChatResponse;}catch{throw new Error("provider_returned_invalid_json");}

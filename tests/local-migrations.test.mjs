@@ -128,15 +128,28 @@ test("local migrations: an existing schema without receipts is verified without 
 test("local migrations: Sites version 170 retains its 19-migration baseline when newer migrations are added", {
   skip: !actualMigrations.some(migration => migration.tag === assistantTags[1]),
 }, t => {
-  const additions = new Set(["0018_consequential_consent", "0019_authoring_commits", ...assistantTags, ...(model3dMigration ? [model3dTag] : [])]);
-  const baseline = actualMigrations.filter(migration => !additions.has(migration.tag));
+  const baselineTags = [
+    "0000_lively_owl", "0001_slimy_dragon_lord", "0002_cooing_paladin",
+    "0003_skinny_hammerhead", "0004_pink_titanium_man", "0005_large_energizer",
+    "0006_high_talisman", "0007_dizzy_bruce_banner", "0008_shocking_joshua_kane",
+    "0009_rainy_sir_ram", "0010_simple_alex_wilder", "0011_swift_redwing",
+    "0012_green_james_howlett", "0013_long_midnight", "0014_perfect_robbie_robertson",
+    "0015_true_lila_cheney", "0016_living_tarantula", "0017_previous_pixie",
+    "0018_output_requirements",
+  ];
+  const baseline = baselineTags.map(tag => {
+    const migration = actualMigrations.find(candidate => candidate.tag === tag);
+    assert.ok(migration, `Missing original Sites version 170 migration: ${tag}`);
+    return migration;
+  });
+  const additions = actualMigrations.filter(migration => !baselineTags.includes(migration.tag));
   assert.equal(baseline.length, 19);
   const sqlite = database(t);
   migrateLocalDatabase(sqlite, { migrations: baseline });
   seedEvent(sqlite);
   const events = rows(sqlite, "events"), receipts = rows(sqlite, receiptTable);
   const result = migrateLocalDatabase(sqlite, { migrations: actualMigrations });
-  assert.deepEqual(result.migrations.filter(migration => migration.status === "applied").map(migration => migration.tag), [...additions]);
+  assert.deepEqual(result.migrations.filter(migration => migration.status === "applied").map(migration => migration.tag), additions.map(migration => migration.tag));
   assert.deepEqual(rows(sqlite, "events"), events);
   for (const original of receipts) assert.deepEqual(rows(sqlite, receiptTable).find(row => row.tag === original.tag), original);
   const upgradedSchema = schema(sqlite), upgradedReceipts = rows(sqlite, receiptTable);
@@ -725,3 +738,123 @@ test("local migrations: quoted names, literal values and comments containing def
   assert.deepEqual(rows(sqlite, "keyword_text"), original);
   assert.deepEqual(rows(sqlite, receiptTable), beforeReceipts);
 });
+
+// Populated continuation across the three current additive checkpoint migrations.
+// These tests use the real journal SQL; they do not run recovery or adopt consent.
+const checkpointExtraTables = ["document_jobs", "delivery_experience_bindings", "experience_release_heads",
+  "document_job_recovery_scan", "delivery_experience_maintenance_bindings", "experience_maintenance_heads",
+  "document_job_terminal_recovery_scan"];
+const checkpointStateInserts = [
+  ["document_job_recovery_scan", "INSERT INTO document_job_recovery_scan VALUES('image-output-v1','2026-07-14T12:00:00Z','retained-active-job',7)"],
+  ["delivery_experience_maintenance_bindings", "INSERT INTO delivery_experience_maintenance_bindings(decision_id,proposal_event_id,binding_hash,subject_hash,experience_id,channel,release_hash,source_hash,build_hash,evaluation_hash,binding_json,expected_head_revision,expected_head_event_id,created_at) VALUES('adoption-decision','adoption-proposal','adoption-binding','subject','model3d','managed-fixture','release','source','build','evaluation','{\"private\":\"Preserve 日本語\"}',0,NULL,'2026-07-14')"],
+  ["experience_maintenance_heads", "INSERT INTO experience_maintenance_heads(subject_hash,experience_id,channel,material_selection_hash,revision,adoption_event_id,decision_id,binding_hash,baseline_observation_hash,profile_ref,profile_hash,inventory_hash,updated_at) VALUES('subject','model3d','managed-fixture','material',3,'adoption-event','adoption-decision','adoption-binding','observation','model3d.code-declarations@1','profile','inventory','2026-07-14')"],
+  ["document_job_terminal_recovery_scan", "INSERT INTO document_job_terminal_recovery_scan VALUES('image-terminal-v1','2026-07-14T13:00:00Z','retained-terminal-job',11)"],
+];
+function checkpointPlanThrough(tag) {
+  const index = actualMigrations.findIndex(migration => migration.tag === tag);
+  assert.ok(index >= 0, "Required actual checkpoint migration: " + tag);
+  return actualMigrations.slice(0, index + 1);
+}
+function seedCheckpointRows(sqlite) {
+  seedValidGraph(sqlite);
+  for (const status of ["queued", "running", "committing", "failed", "completed", "canceled"]) {
+    sqlite.prepare("INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,attempt_count,requested_at,expires_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run("job-" + status, "owner", "creative:owner", "document", "generate", status, "document",
+        "correlation-" + status, 1, '{"retained":"Private 日本語"}', '{"retained":"already-paid result"}', 2,
+        "2026-07-14T12:00:00Z", "2027-07-14T12:00:00Z", "2026-07-14T12:00:00Z");
+  }
+  sqlite.exec("INSERT INTO delivery_experience_bindings(decision_id,proposal_event_id,binding_hash,experience_id,channel,operation,release_hash,source_hash,build_hash,evaluation_hash,expected_head_revision,expected_head_event_id,rollback_event_id,created_at) VALUES('publication-decision','publication-proposal','publication-binding','slides','managed-fixture','publish','release','source','build','evaluation',0,NULL,NULL,'2026-07-14')");
+  sqlite.exec("INSERT INTO experience_release_heads VALUES('slides','managed-fixture',2,'publication-event','publication-decision','publication-binding','release','2026-07-14')");
+  const present = new Set(schema(sqlite).filter(object => object.type === "table").map(object => object.name));
+  for (const [table, sql] of checkpointStateInserts) if (present.has(table)) sqlite.exec(sql);
+}
+function assertCheckpointRetained(sqlite, before) {
+  const afterSchema = schema(sqlite);
+  for (const object of before.schema) assert.deepEqual(
+    afterSchema.find(current => current.type === object.type && current.name === object.name), object, object.name);
+  for (const [table, original] of Object.entries(before.rows)) {
+    const after = rows(sqlite, table, { bigints: true });
+    if (table === receiptTable) {
+      for (const receipt of original) assert.deepEqual(after.find(row => row.tag === receipt.tag), receipt, receipt.tag);
+    } else assert.deepEqual(after, original, table);
+  }
+  assert.deepEqual(sqlite.prepare("PRAGMA foreign_key_check").all(), []);
+  assertModel3dConnectionReady(sqlite);
+}
+
+for (const prefix of ["0028_memory_document_profile", "0029_image_recovery_scan", "0030_experience_maintenance_adoption"]) {
+  test("local migrations: populated " + prefix + " continues through 0031 without resetting history or state", t => {
+    const sqlite = database(t), previous = checkpointPlanThrough(prefix), current = checkpointPlanThrough("0031_image_recovery_terminal_scan");
+    migrateLocalDatabase(sqlite, { migrations: previous });
+    seedCheckpointRows(sqlite);
+    const before = model3dSnapshot(sqlite, checkpointExtraTables);
+    const pending = current.slice(previous.length).map(migration => migration.tag);
+    assert.ok(pending.length > 0);
+    const preview = migrateLocalDatabase(sqlite, { migrations: current, dryRun: true });
+    assert.equal(preview.dryRun, true);
+    assert.deepEqual(preview.migrations.filter(migration => migration.status === "applied").map(migration => migration.tag), pending);
+    assert.deepEqual(model3dSnapshot(sqlite, checkpointExtraTables), before);
+
+    const applied = migrateLocalDatabase(sqlite, { migrations: current });
+    assert.ok(applied.migrations.slice(0, previous.length).every(migration => migration.status === "already-applied"));
+    assert.deepEqual(applied.migrations.filter(migration => migration.status === "applied").map(migration => migration.tag), pending);
+    assertCheckpointRetained(sqlite, before);
+    assert.equal(rows(sqlite, receiptTable).length, current.length);
+    // Index construction must include eligible pre-existing jobs without rewriting them.
+    assert.deepEqual(sqlite.prepare("SELECT job_id FROM document_jobs INDEXED BY idx_document_jobs_image_recovery_scan WHERE kind='generate' AND status IN('queued','running') ORDER BY requested_at,job_id").all().map(row => row.job_id), ["job-queued", "job-running"]);
+    assert.deepEqual(sqlite.prepare("SELECT job_id FROM document_jobs INDEXED BY idx_document_jobs_image_terminal_recovery_scan WHERE kind='generate' AND status IN('committing','failed') ORDER BY requested_at,job_id").all().map(row => row.job_id), ["job-committing", "job-failed"]);
+    // Newly introduced state is empty, not silently initialized or adopted.
+    for (const [table, sql] of checkpointStateInserts) if (!(table in before.rows)) {
+      assert.deepEqual(rows(sqlite, table), [], table + " has no migration backfill");
+      sqlite.exec(sql);
+    }
+    const populated = model3dSnapshot(sqlite, checkpointExtraTables);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const repeated = migrateLocalDatabase(sqlite, { migrations: current });
+      assert.ok(repeated.migrations.every(migration => migration.status === "already-applied"));
+      assert.deepEqual(model3dSnapshot(sqlite, checkpointExtraTables), populated);
+      assertModel3dConnectionReady(sqlite);
+    }
+    for (const table of ["delivery_experience_bindings", "delivery_experience_maintenance_bindings"]) {
+      assert.throws(() => sqlite.exec("UPDATE " + table + " SET binding_hash=binding_hash"), /immutable/i);
+      assert.throws(() => sqlite.exec("DELETE FROM " + table), /immutable/i);
+    }
+    assert.deepEqual(model3dSnapshot(sqlite, checkpointExtraTables), populated);
+  });
+}
+
+for (const [tag, indexName, cursorTable] of [
+  ["0029_image_recovery_scan", "idx_document_jobs_image_recovery_scan", "document_job_recovery_scan"],
+  ["0031_image_recovery_terminal_scan", "idx_document_jobs_image_terminal_recovery_scan", "document_job_terminal_recovery_scan"],
+]) {
+  test("local migrations: partial unreceipted " + tag + " completes only its index; recorded damage is refused", t => {
+    const current = checkpointPlanThrough(tag), migration = current.at(-1), sqlite = database(t);
+    migrateLocalDatabase(sqlite, { migrations: current.slice(0, -1) });
+    seedCheckpointRows(sqlite);
+    const statements = migration.sql.split("--> statement-breakpoint").filter(sql => sql.trim());
+    assert.equal(statements.length, 2, "Use the exact two-statement cursor migration");
+    sqlite.exec(statements[0]);
+    sqlite.exec(checkpointStateInserts.find(([table]) => table === cursorTable)[1]);
+    const before = model3dSnapshot(sqlite, checkpointExtraTables);
+    assert.equal(rows(sqlite, receiptTable).some(row => row.tag === tag), false);
+    assert.equal(schema(sqlite).some(object => object.name === indexName), false);
+    const expected = { tag, status: "applied", executedStatements: 1, skippedStatements: 1 };
+    assert.deepEqual(migrateLocalDatabase(sqlite, { migrations: current, dryRun: true }).migrations.at(-1), expected);
+    assert.deepEqual(model3dSnapshot(sqlite, checkpointExtraTables), before);
+    assert.deepEqual(migrateLocalDatabase(sqlite, { migrations: current }).migrations.at(-1), expected);
+    assertCheckpointRetained(sqlite, before);
+    assert.equal(rows(sqlite, receiptTable).length, current.length);
+    const completed = model3dSnapshot(sqlite, checkpointExtraTables);
+    assert.equal(migrateLocalDatabase(sqlite, { migrations: current }).migrations.at(-1).status, "already-applied");
+    assert.deepEqual(model3dSnapshot(sqlite, checkpointExtraTables), completed);
+
+    sqlite.exec('DROP INDEX "' + indexName + '"');
+    const damaged = model3dSnapshot(sqlite, checkpointExtraTables);
+    for (const dryRun of [true, false]) {
+      assert.throws(() => migrateLocalDatabase(sqlite, { migrations: current, dryRun }), /migration_schema_mismatch/);
+      assert.deepEqual(model3dSnapshot(sqlite, checkpointExtraTables), damaged);
+      assert.equal(schema(sqlite).some(object => object.name === indexName), false, "Do not repair receipt-backed drift");
+      assertModel3dConnectionReady(sqlite);
+    }
+  });
+}

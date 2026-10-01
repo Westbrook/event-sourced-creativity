@@ -3,10 +3,59 @@ import test from "node:test";
 import fs from "node:fs";
 import ts from "typescript";
 import {registerHooks} from "node:module";
+import {setTimeout as setWatchdog,clearTimeout as clearWatchdog} from "node:timers";
 import {sceneDeferred,untilScene} from "./helpers/scene-cost-store-host.mjs";
+// A missing expected callback must fail this case, not hold the whole file open.
+// Native test deadlines also bound setup and the post-entry continuation.
+async function expectEntry(t,entry,operation,label){
+ let timer,onAbort;
+ const failure=()=>new Error("Phase5 "+label+": expected entry was not observed within 30 seconds");
+ const expired=new Promise((_,reject)=>{
+  timer=setWatchdog(()=>reject(failure()),30_000);
+  onAbort=()=>reject(new Error("Phase5 "+label+": case canceled before expected entry"));
+  t.signal.addEventListener("abort",onAbort,{once:true});
+  if(t.signal.aborted)onAbort();
+ });
+ const candidates=[entry,expired];
+ // Native card Save dispatches an event synchronously and returns void. Its
+ // real downstream callback is still required, under the same finite watchdog.
+ try{
+  if(operation!==undefined){
+   assert.equal(typeof operation?.then,"function","expected actual async operation: "+label);
+   candidates.push(Promise.resolve(operation).then(
+    ()=>{throw new Error("Phase5 "+label+": initiating operation completed before expected entry");},
+    cause=>{throw new Error("Phase5 "+label+": initiating operation rejected before expected entry",{cause});}));
+  }
+  return await Promise.race(candidates);
+ }finally{clearWatchdog(timer);t.signal.removeEventListener("abort",onAbort);}
+}
+function heldFixtureGate(t){
+ const gate=sceneDeferred();
+ // Observe cancellation even if an earlier assertion prevented the callback
+ // from reaching its gate. Callers still await the original rejecting promise.
+ void gate.promise.catch(()=>{});
+ t.after(()=>gate.reject(new Error("Phase5 held fixture response canceled during case cleanup")));
+ return gate;
+}
 async function fixtureDeclarations(file,names){
  const url=new URL(file,import.meta.url),raw=fs.readFileSync(url,"utf8"),tree=ts.createSourceFile(url.pathname,raw,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
- const source=tree.statements.filter(node=>ts.isImportDeclaration(node)||ts.isVariableStatement(node)||ts.isFunctionDeclaration(node)||ts.isClassDeclaration(node)).map(node=>node.getFullText(tree)).join("\n")+"\nexport {"+names.join(",")+"};";
+ let source=tree.statements.filter(node=>ts.isImportDeclaration(node)||ts.isVariableStatement(node)||ts.isFunctionDeclaration(node)||ts.isClassDeclaration(node)).map(node=>node.getFullText(tree)).join("\n")+"\nexport {"+names.join(",")+"};";
+ if(file==="./assistant-specialist-consent-host.test.mjs"){
+  // This donor's document is lexical to fixture(), not the ambient global.
+  // Retain its real query/activeElement ports and native EventTarget semantics.
+  const start="  const document = {",end="    activeElement: null,\n  };";
+  assert.equal(source.split(start).length,2,"one existing assistant document port");
+  assert.equal(source.split(end).length,2,"one existing assistant document end");
+  source=source.replace(start,"  const document = Object.assign(new EventTarget(), {")
+   .replace(end,"    activeElement: null, visibilityState: \"visible\",\n  });");
+  // Complete the current Host/Panel lexical dependencies through the donor's
+  // existing actual-module boundary; no substitute navigation or Memory logic.
+  source+="\nconst {navigateInApp,navigationPresentationClosing}=await lifecyclePorts.loadActual(\"src/components/command-departure.ts\");"
+   +"\nconst {captureOutputNavigationFocus}=await lifecyclePorts.loadActual(\"src/components/output-navigation-focus.ts\");"
+   +"\nconst {personalMemoryMessage}=await lifecyclePorts.loadActual(\"src/components/design-system/locales/personal-memory-messages.ts\");"
+   +"\nconst {parseMemoryAnswerPresentation}=await lifecyclePorts.loadActual(\"src/model/memory-answer.ts\");"
+   +"\nconst {createMemoryElapsed}=await lifecyclePorts.loadActual(\"src/model/memory-lifetime.ts\");\n";
+ }
  url.search="?phase5-private-consumer-existing-fixture";
  const hook=registerHooks({load(request,context,next){return request===url.href?{format:"module",source,shortCircuit:true}:next(request,context);}});
  try{return await import(url.href);}finally{hook.deregister();}
@@ -61,7 +110,7 @@ async function sourceFixture(t,options){
  return f;
 }
 const sourcePath=request=>request.url.startsWith("/api/events?")&&(request.init.method??"GET")==="GET";
-test("a current generic source denial retires the actual warm Output client and complete controller",async t=>{
+test("a current generic source denial retires the actual warm Output client and complete controller",{timeout:60_000},async t=>{
  const f=await sourceFixture(t,{retained:true});
  await f.refresh();await f.flush();f.draw();
  const doc=existing.workers.doc,initial=f.store.outputRequirements.resource(doc).snapshot;
@@ -75,13 +124,13 @@ test("a current generic source denial retires the actual warm Output client and 
  assert.equal(denied,1);assert.equal(resource.snapshot,null,"general source403 must hide cached Output private data");
  assert.ok(!f.visible().includes(content),"mounted complete Output controller must hide retired private text");
 });
-test("a pending old Output body cannot publish after source denial followed by an actual fresh source restoration",async t=>{
+test("a pending old Output body cannot publish after source denial followed by an actual fresh source restoration",{timeout:60_000},async t=>{
  const f=await sourceFixture(t,{retained:true});await f.refresh();await f.flush();f.draw();
  const doc=existing.workers.doc,saved=structuredClone(f.store.outputRequirements.resource(doc).snapshot);
- const pendingBody=sceneDeferred(),entered=sceneDeferred();let outputReads=0,sourceDenials=0;
+ const pendingBody=heldFixtureGate(t),entered=sceneDeferred();let outputReads=0,sourceDenials=0;
  f.storeHost.intercept=request=>existing.outputPath(request)?(outputReads++,{status:200,ok:true,headers:new Headers(),json:async()=>{entered.resolve();return pendingBody.promise;}})
   :sourcePath(request)?(sourceDenials++,new Response("{",{status:403})):undefined;
- const old=f.store.outputRequirements.ensure(doc,{force:true});await entered.promise;
+ const old=f.store.outputRequirements.ensure(doc,{force:true});await expectEntry(t,entered.promise,old,"old Output response body");
  await f.store.refreshEvents().catch(()=>{});
  f.storeHost.intercept=undefined;await f.store.refreshEvents();await tick();
  const before=f.store.outputRequirements.resource(doc);
@@ -96,14 +145,19 @@ async function actualSourceAssistant(t,{selected=true,quoted=false}={}){
  const source=await sourceFixture(t,{retained:selected,selected});if(selected)await source.refresh();await source.flush();source.draw();
  source.store.route.set("/document/"+existing.workers.doc+"/retirement-proof");
  const a=assistantExisting.fixture(t);a.host.store=source.store;a.host.connectedCallback();
+ t.after(()=>{a.host.closeForTest();for(const call of a.calls)call.gate.reject(new Error("Phase5 assistant response canceled during case cleanup"));});
  const retireAssistant=event=>a.window.dispatchEvent(event);source.storeHost.window.addEventListener("forma-event-source-retired",retireAssistant);t.after(()=>source.storeHost.window.removeEventListener("forma-event-source-retired",retireAssistant));
  const assistantTransport=request=>new URL(request.url,"https://forma.invalid").pathname.startsWith("/api/assistant")?a.store.guardedFetch(new URL(request.url,"https://forma.invalid"),request.init,"free existing specialist receipt"):undefined;
  source.storeHost.intercept=assistantTransport;source.assistantTransport=assistantTransport;
  Object.assign(a.context.scope,{projectId:existing.workers.project,documentId:existing.workers.doc,actorUserId:source.store.session.get().user.userId});
  const turn=assistantExisting.sampleTurn();turn.originalRequest={...turn.originalRequest,projectId:existing.workers.project,documentId:existing.workers.doc,route:source.store.route.get()};
  const task=assistantExisting.savedTask({id:"approval-a"});
- await a.open([turn],quoted?[]:[task]);
- const opening=a.host.reviewForTest({turnId:turn.id,...(quoted?{}:{task})}),call=await a.take();
+ // The unchanged donor open() steps, exposed here only to observe its loading
+ // promise if the real host refuses the expected GET.
+ const loading=a.host.openForTest(),initialCall=await expectEntry(t,a.take(),loading,"assistant initial GET");
+ assert.equal(initialCall.body,null);
+ await a.reply(initialCall,{context:a.context,turns:[turn],tasks:quoted?[]:[task]});await loading;
+ const opening=a.host.reviewForTest({turnId:turn.id,...(quoted?{}:{task})}),call=await expectEntry(t,a.take(),opening,"assistant "+(quoted?"quote":"resume")+" request");
  assert.equal(call.body.action,quoted?"quote":"resume","only a free preview or existing exact FREE specialist lookup");
  const payload=assistantExisting.specialistResponse(assistantExisting.preview({status:quoted?"quoted":"uncertain",canExecute:quoted,projectId:existing.workers.project,documentId:existing.workers.doc}),quoted?{}:{task});
  payload.originalRequest.route=source.store.route.get();
@@ -112,7 +166,7 @@ async function actualSourceAssistant(t,{selected=true,quoted=false}={}){
  a.host.render();assert.equal(a.host.snapshotForTest().specialist?.executionId,payload.executionId,"healthy same-route actual render retains original review");
  return{source,a,payload};
 }
-test("actual assistant keeps only original recovery IDs after a generic source403",async t=>{
+test("actual assistant keeps only original recovery IDs after a generic source403",{timeout:60_000},async t=>{
  const {source,a}=await actualSourceAssistant(t),before=a.host.snapshotForTest().specialist;
  source.storeHost.intercept=request=>sourcePath(request)?new Response("{",{status:403}):source.assistantTransport(request);
  await source.store.refreshEvents().catch(()=>{});a.host.render();
@@ -122,10 +176,10 @@ test("actual assistant keeps only original recovery IDs after a generic source40
  assert.equal(after.specialist?.quote,null,"a source denial must retire private specialist input");
  assert.equal(after.turns.length,0,"source-owned transcript bytes retire");
 });
-test("actual assistant older exact response cannot restore private bytes after actual source restoration",async t=>{
+test("actual assistant older exact response cannot restore private bytes after actual source restoration",{timeout:60_000},async t=>{
  const {source,a,payload}=await actualSourceAssistant(t);
- const pending=a.host.requestForTest("resume"),call=await a.take(),entered=sceneDeferred(),body=sceneDeferred();
- call.gate.resolve({status:200,ok:true,json:async()=>{entered.resolve();return body.promise;}});await entered.promise;
+ const pending=a.host.requestForTest("resume"),call=await expectEntry(t,a.take(),pending,"older assistant resume request"),entered=sceneDeferred(),body=heldFixtureGate(t);
+ call.gate.resolve({status:200,ok:true,json:async()=>{entered.resolve();return body.promise;}});await expectEntry(t,entered.promise,pending,"older assistant resume body");
  source.storeHost.intercept=request=>sourcePath(request)?new Response("{",{status:403}):source.assistantTransport(request);
  await source.store.refreshEvents().catch(()=>{});
  source.storeHost.intercept=source.assistantTransport;await source.store.refreshEvents();
@@ -138,6 +192,9 @@ test("actual assistant older exact response cannot restore private bytes after a
 const {png}=await import("./output-asset-fixtures.mjs");
 const {instrumentD1Contract}=await import("./output-d1-test-contract.mjs");
 const {enforceD1ExpressionDepth}=await import("./helpers/d1-expression-depth.mjs");
+const {inheritRuntimeSchemaReadiness}=await import("../worker/runtime.ts");
+// Contract instrumentation preserves the initialized SQLite binding, not its
+// object identity. Inherit only the runtime's proven readiness before depth checks.
 const formEvent=node=>({currentTarget:node,target:node,preventDefault(){},stopPropagation(){}});
 const nodes=(f,owner,tag)=>f.renderer.ownNodes(owner,tag);
 async function warm(t,locale="en"){
@@ -192,7 +249,7 @@ async function stage(f,action){
  rights.handlers.change.call(f.controller,{currentTarget:{checked:true},target:{checked:true}});await f.flush();
  assert.ok(f.controller.retirementStateForTest().file);return()=>form.handlers.submit.call(f.controller,formEvent(form));
 }
-for(const locale of["en","fr","ar","ja"])test("source403 clears real raw card and plan editors, retaining localized recovery: "+locale,async t=>{
+for(const locale of["en","fr","ar","ja"])test("source403 clears real raw card and plan editors, retaining localized recovery: "+locale,{timeout:60_000},async t=>{
  const f=await warm(t,locale),card=await openCard(f);
  const field=nodes(f,card,"textarea").find(node=>node.attributes.name==="originalText");assert.ok(field);
  field.value="PRIVATE_UNSAVED_PROSE";field.handlers.input.call(card,{currentTarget:field,target:field,isComposing:false});await f.flush();
@@ -209,17 +266,21 @@ for(const locale of["en","fr","ar","ja"])test("source403 clears real raw card an
  assert.ok(f.visible().includes(f.i18n.t(descriptor.id,labels.FORMA_OUTPUT_DELIVERY_RUNTIME_MESSAGES.en[descriptor.id],descriptor.values)),"existing localized withdrawal notice");
  assert.deepEqual(bookkeeping(f),before);assert.equal(f.storeHost.requests.filter(row=>row.init.method==="POST").length,0);
 });
-for(const action of["save","confirm","adopt"])for(const restore of[false,true])test("actual "+action+" acknowledgment survives source retirement"+(restore?" and later restored source":""),async t=>{
- const f=await warm(t),before=bookkeeping(f),contract=instrumentD1Contract(f.db),depth=enforceD1ExpressionDepth(f.db);
- const bodyGate=sceneDeferred(),entered=sceneDeferred();let original=null,wire=null,writes=0;
+for(const action of["save","confirm","adopt"])for(const restore of[false,true])test("actual "+action+" acknowledgment survives source retirement"+(restore?" and later restored source":""),{timeout:60_000},async t=>{
+ const f=await warm(t),before=bookkeeping(f),originalDb=f.db.env.DB,contract=instrumentD1Contract(f.db);
+ inheritRuntimeSchemaReadiness(originalDb,f.db.env.DB);
+ const depth=enforceD1ExpressionDepth(f.db);
+ const bodyGate=heldFixtureGate(t),entered=sceneDeferred();let original=null,wire=null,writes=0;
  f.storeHost.intercept=async request=>{
   if(request.init.method!=="POST")return undefined;
+  try{
   writes++;assert.equal(writes,1,"no automatic write/retry");
   const response=await actualOutput(f,request);assert.equal(response.status,200,await response.clone().text());
   wire=await response.json();original={request,wire};
   return{ok:true,status:200,headers:response.headers,json:async()=>{entered.resolve();return bodyGate.promise;}};
+  }catch(error){entered.reject(error);throw error;}
  };
- const submit=await stage(f,action),pending=submit();await entered.promise;
+ const submit=await stage(f,action),pending=submit();await expectEntry(t,entered.promise,pending,action+" acknowledgment body");
  const owner=f.controller.retirementStateForTest();
  const id=action==="save"?owner.editors[0][1].clientMutationId:action==="adopt"?owner.uploadId:owner.uncertain.id;
  const requestId=action==="adopt"?new Headers(original.request.init.headers).get("x-output-client-mutation-id"):original.request.body.clientMutationId;
@@ -240,7 +301,7 @@ for(const action of["save","confirm","adopt"])for(const restore of[false,true])t
  assert.deepEqual(contract.violations,[]);depth.assertVerified();depth.restore();
 });
 
-for(const selected of[true,false])for(const status of[401,403,404])test("assistant original IDs survive actual "+status+" source retirement: "+(selected?"selected current project":"cookie-free owner"),async t=>{
+for(const selected of[true,false])for(const status of[401,403,404])test("assistant original IDs survive actual "+status+" source retirement: "+(selected?"selected current project":"cookie-free owner"),{timeout:60_000},async t=>{
  const {source,a,payload}=await actualSourceAssistant(t,{selected}),original=a.host.snapshotForTest().specialist;
  const authority=source.store.captureAuthorizationScope().key;
  await retire(source,status);a.host.render();
@@ -252,7 +313,7 @@ for(const selected of[true,false])for(const status of[401,403,404])test("assista
  const count=a.calls.length;
  await a.host.requestForTest("execute");await a.host.requestForTest("quote");await a.host.sendForTest("no new private request");
  assert.equal(a.calls.length,count,"withdrawal cannot initiate a new command or purchase");
- const recovery=a.host.requestForTest("resume"),call=await a.take();
+ const recovery=a.host.requestForTest("resume"),call=await expectEntry(t,a.take(),recovery,"retired assistant resume request");
  assert.deepEqual(call.body,{action:"resume",turnId:"turn-a",executionId:"approval-a"});
  await a.reply(call,payload);await recovery;
  const recovered=a.host.snapshotForTest().specialist;
@@ -260,10 +321,10 @@ for(const selected of[true,false])for(const status of[401,403,404])test("assista
  assert.equal(recovered.working,false);assert.equal(recovered.quote,null,"a source-inactive exact lookup retains metadata only");
  assert.equal(recovered.retrievalOnly,true);
 });
-for(const corruption of["none","wrong-turn","wrong-execution","wrong-hash","wrong-task","body-error"])test("late original specialist receipt after source403: "+corruption,async t=>{
- const {source,a,payload}=await actualSourceAssistant(t,{quoted:true}),gate=sceneDeferred(),entered=sceneDeferred();
- const executing=a.host.requestForTest("execute"),call=await a.take();assert.equal(call.body.action,"execute");
- call.gate.resolve({status:200,ok:true,json:async()=>{entered.resolve();return gate.promise;}});await entered.promise;
+for(const corruption of["none","wrong-turn","wrong-execution","wrong-hash","wrong-task","body-error"])test("late original specialist receipt after source403: "+corruption,{timeout:60_000},async t=>{
+ const {source,a,payload}=await actualSourceAssistant(t,{quoted:true}),gate=heldFixtureGate(t),entered=sceneDeferred();
+ const executing=a.host.requestForTest("execute"),call=await expectEntry(t,a.take(),executing,"original assistant execute request");assert.equal(call.body.action,"execute");
+ call.gate.resolve({status:200,ok:true,json:async()=>{entered.resolve();return gate.promise;}});await expectEntry(t,entered.promise,executing,"original assistant execute body");
  await retire(source);a.host.render();
  const before=a.host.snapshotForTest().specialist;assert.equal(before.executionId,"approval-a");assert.equal(before.task.bindingHash,"hash-a");
  const task=assistantExisting.savedTask({id:"approval-a",status:"completed",submission:"settled"});
@@ -328,18 +389,22 @@ async function fullStageSave(f){
  const form=nodes(f,card,"form").find(node=>node.handlers.submit);assert.ok(form);
  return()=>form.handlers.submit.call(card,formEvent(form));
 }
-for(const action of["save","confirm","adopt"])for(const late of["committed","lost"])test("actual Shell retains original "+action+" transport ID across genuine source403 and fresh200: "+late,async t=>{
+for(const action of["save","confirm","adopt"])for(const late of["committed","lost"])test("actual Shell retains original "+action+" transport ID across genuine source403 and fresh200: "+late,{timeout:60_000},async t=>{
  const f=await fullSourceShell(t),h=f.storeHost,doc=existing.workers.doc,paidBefore=bookkeeping(f);
- const contract=instrumentD1Contract(f.db),depth=enforceD1ExpressionDepth(f.db);
- const gate=sceneDeferred(),entered=sceneDeferred();let wire=null,writes=0,sourceStatus=[];
+ const originalDb=f.db.env.DB,contract=instrumentD1Contract(f.db);
+ inheritRuntimeSchemaReadiness(originalDb,f.db.env.DB);
+ const depth=enforceD1ExpressionDepth(f.db);
+ const gate=heldFixtureGate(t),entered=sceneDeferred();let wire=null,writes=0,sourceStatus=[];
  h.intercept=async request=>{
   if(sourcePath(request)){const response=await h.worker.request(request.url,request.init);sourceStatus.push(response.status);return response;}
   if(request.init.method!=="POST")return undefined;
+  try{
   writes++;assert.equal(writes,1,"no replacement or automatic write");
   const response=await actualOutput(f,request);assert.equal(response.status,200,await response.clone().text());wire=await response.json();
   return{ok:true,status:200,headers:response.headers,json:async()=>{entered.resolve();await gate.promise;if(late==="lost")throw new Error("deliberately lost original response");return wire;}};
+  }catch(error){entered.reject(error);throw error;}
  };
- const submit=action==="save"?await fullStageSave(f):await stage(f,action),pending=submit();await entered.promise;
+ const submit=action==="save"?await fullStageSave(f):await stage(f,action),pending=submit();await expectEntry(t,entered.promise,pending,"Shell "+action+" response body");
  const original=h.store.outputRequirements.retainedWrite?.(doc);
  assert.ok(original,"existing Store-owned transport retains original ID before its component can unmount");
  assert.equal(original.status,"pending");assert.equal(original.action,action);assert.match(original.digest,/^[a-f0-9]{64}$/u);
@@ -370,8 +435,10 @@ for(const action of["save","confirm","adopt"])for(const late of["committed","los
 });
 
 
-test("healthy exact native confirmation retry reuses the real command and never creates another event",async t=>{
- const f=await warm(t),before=bookkeeping(f),contract=instrumentD1Contract(f.db),depth=enforceD1ExpressionDepth(f.db),requests=[];
+test("healthy exact native confirmation retry reuses the real command and never creates another event",{timeout:60_000},async t=>{
+ const f=await warm(t),before=bookkeeping(f),originalDb=f.db.env.DB,contract=instrumentD1Contract(f.db);
+ inheritRuntimeSchemaReadiness(originalDb,f.db.env.DB);
+ const depth=enforceD1ExpressionDepth(f.db),requests=[];
  let eventId="";
  f.storeHost.intercept=async request=>{
   if(request.init.method!=="POST")return undefined;
@@ -392,7 +459,7 @@ test("healthy exact native confirmation retry reuses the real command and never 
  const final=f.store.outputRequirements.retainedWrite(existing.workers.doc);assert.equal(final.status,"acknowledged");assert.equal(final.receipt.eventId,eventId);
  assert.deepEqual(bookkeeping(f),before);assert.deepEqual(contract.violations,[]);depth.assertVerified();depth.restore();
 });
-for(const locale of["en","fr","ar","ja"])test("neutral no-dispatch reply releases the actual card waiting state without discarding newer typing: "+locale,async t=>{
+for(const locale of["en","fr","ar","ja"])test("neutral no-dispatch reply releases the actual card waiting state without discarding newer typing: "+locale,{timeout:60_000},async t=>{
  const f=await warm(t,locale),before=bookkeeping(f);let writes=0;
  f.storeHost.intercept=async request=>{
   if(request.init.method!=="POST")return undefined;writes++;assert.equal(writes,1);
@@ -417,17 +484,21 @@ for(const locale of["en","fr","ar","ja"])test("neutral no-dispatch reply release
 });
 
 
-test("one Document write owner fences a second real preflight while allowing its authorized read, then its separate explicit command",async t=>{
- const f=await warm(t),doc=existing.workers.doc,before=bookkeeping(f),contract=instrumentD1Contract(f.db),depth=enforceD1ExpressionDepth(f.db);
- const gate=sceneDeferred(),entered=sceneDeferred(),requests=[];let firstBody;
+test("one Document write owner fences a second real preflight while allowing its authorized read, then its separate explicit command",{timeout:60_000},async t=>{
+ const f=await warm(t),doc=existing.workers.doc,before=bookkeeping(f),originalDb=f.db.env.DB,contract=instrumentD1Contract(f.db);
+ inheritRuntimeSchemaReadiness(originalDb,f.db.env.DB);
+ const depth=enforceD1ExpressionDepth(f.db);
+ const gate=heldFixtureGate(t),entered=sceneDeferred(),requests=[];let firstBody;
  f.storeHost.intercept=async request=>{
   if(request.init.method!=="POST")return undefined;requests.push(request);
+  try{
   const response=await actualOutput(f,request);assert.equal(response.status,200,await response.clone().text());
   const body=await response.json();
   if(requests.length===1){firstBody=body;return{status:200,ok:true,headers:response.headers,json:async()=>{entered.resolve();await gate.promise;return body;}};}
   return Response.json(body);
+  }catch(error){entered.reject(error);throw error;}
  };
- const pending=(await stage(f,"confirm"))();await entered.promise;
+ const pending=(await stage(f,"confirm"))();await expectEntry(t,entered.promise,pending,"first native confirmation body");
  const original=f.store.outputRequirements.retainedWrite(doc);
  const observed=await f.store.outputRequirements.ensure(doc,{force:true});assert.equal(observed.state,"ready");assert.ok(observed.snapshot.confirmedPlan);
  assert.equal(f.store.outputRequirements.retainedWrite(doc).clientMutationId,original.clientMutationId);
@@ -444,9 +515,11 @@ test("one Document write owner fences a second real preflight while allowing its
  assert.equal(f.store.outputRequirements.retainedWrite(doc).status,"acknowledged");assert.deepEqual(bookkeeping(f),before);
  assert.deepEqual(contract.violations,[]);depth.assertVerified();depth.restore();
 });
-for(const kind of["stale-revision","atomic-rollback"])test("only real "+kind+" noncommit proof releases the original slot for a new explicit edit",async t=>{
+for(const kind of["stale-revision","atomic-rollback"])test("only real "+kind+" noncommit proof releases the original slot for a new explicit edit",{timeout:60_000},async t=>{
  const f=await warm(t),doc=existing.workers.doc,initial=f.store.outputRequirements.resource(doc).snapshot,before=bookkeeping(f);
- const contract=instrumentD1Contract(f.db),depth=enforceD1ExpressionDepth(f.db);let requests=0;
+ const originalDb=f.db.env.DB,contract=instrumentD1Contract(f.db);
+ inheritRuntimeSchemaReadiness(originalDb,f.db.env.DB);
+ const depth=enforceD1ExpressionDepth(f.db);let requests=0;
  const command={action:"save",documentId:doc,expectedRevision:kind==="stale-revision"?"output:"+String(Number(initial.revision.slice("output:".length))-1):initial.revision,clientMutationId:"positively-rejected-edit",blockId:initial.requirements[0].blockId,spec:initial.requirements[0].spec};
  if(kind==="atomic-rollback")f.db.sqlite.exec("CREATE TEMP TRIGGER reject_current_output_write BEFORE INSERT ON output_commands WHEN NEW.command_key='positively-rejected-edit' BEGIN SELECT RAISE(ABORT,'CHECK constraint failed'); END");
  f.storeHost.intercept=request=>{if(request.init.method!=="POST")return undefined;requests++;return actualOutput(f,request);};
@@ -462,13 +535,13 @@ for(const kind of["stale-revision","atomic-rollback"])test("only real "+kind+" n
 });
 
 
-for(const restore of[false,true])test("actual source ownership captured before digest prevents a late dispatch"+(restore?" even after fresh source200":""),async t=>{
+for(const restore of[false,true])test("actual source ownership captured before digest prevents a late dispatch"+(restore?" even after fresh source200":""),{timeout:60_000},async t=>{
  const f=await warm(t),doc=existing.workers.doc,snapshot=f.store.outputRequirements.resource(doc).snapshot,before=bookkeeping(f);
- const digest=crypto.subtle.digest.bind(crypto.subtle),gate=sceneDeferred(),entered=sceneDeferred();let held=false,posts=0;
+ const digest=crypto.subtle.digest.bind(crypto.subtle),gate=heldFixtureGate(t),entered=sceneDeferred();let held=false,posts=0;
  t.mock.method(crypto.subtle,"digest",async(...args)=>{const value=await digest(...args);if(!held){held=true;entered.resolve();await gate.promise;}return value;});
  f.storeHost.intercept=async request=>{if(request.init.method==="POST"){posts++;return actualOutput(f,request);}return undefined;};
  const pending=f.store.outputRequirementCommand({action:"save",documentId:doc,blockId:snapshot.requirements[0].blockId,spec:snapshot.requirements[0].spec,expectedRevision:snapshot.revision,clientMutationId:"digest-prepared-original"});
- await entered.promise;
+ await expectEntry(t,entered.promise,pending,"captured source command digest");
  f.db.sqlite.prepare("UPDATE organization_memberships SET status='revoked',revoked_at=? WHERE organization_id=? AND user_id=?").run(new Date().toISOString(),f.db.organizationId,existing.workers.owner);
  await f.store.refreshEvents().catch(()=>{});
  assert.equal(f.store.sourceOwnershipActive(f.store.captureSourceOwnership()),false);
@@ -478,7 +551,7 @@ for(const restore of[false,true])test("actual source ownership captured before d
  assert.equal(f.store.outputRequirements.retainedWrite(doc),null,"an unsubmitted digest never becomes an unknown attempted operation");
  assert.deepEqual(bookkeeping(f),before);
 });
-test("unknown actual upload binds every original byte and header; only its unchanged explicit retry can recover",async t=>{
+test("unknown actual upload binds every original byte and header; only its unchanged explicit retry can recover",{timeout:60_000},async t=>{
  const f=await warm(t),doc=existing.workers.doc,snapshot=f.store.outputRequirements.resource(doc).snapshot,requests=[],before=bookkeeping(f);
  const file=new File([png({width:2,height:2})],"PRIVATE_ORIGINAL_UPLOAD.png",{type:"image/png"});let originalWire;
  f.storeHost.intercept=async request=>{
@@ -504,14 +577,16 @@ test("unknown actual upload binds every original byte and header; only its uncha
  assert.equal(f.db.sqlite.prepare("SELECT COUNT(*) AS count FROM output_commands WHERE command_key=?").get(original.clientMutationId).count,1);
  assert.deepEqual(bookkeeping(f),before);
 });
-test("true sign-out and return clears content-free Output ownership and cannot adopt its old held response",async t=>{
- const f=await warm(t),doc=existing.workers.doc,session=f.store.session.get(),gate=sceneDeferred(),entered=sceneDeferred();let posts=0,wire;
+test("true sign-out and return clears content-free Output ownership and cannot adopt its old held response",{timeout:60_000},async t=>{
+ const f=await warm(t),doc=existing.workers.doc,session=f.store.session.get(),gate=heldFixtureGate(t),entered=sceneDeferred();let posts=0,wire;
  f.storeHost.intercept=async request=>{
   if(request.init.method!=="POST")return undefined;posts++;
+  try{
   const response=await actualOutput(f,request);assert.equal(response.status,200,await response.clone().text());wire=await response.json();
   return{status:200,ok:true,headers:response.headers,json:async()=>{entered.resolve();await gate.promise;return wire;}};
+  }catch(error){entered.reject(error);throw error;}
  };
- const pending=(await stage(f,"confirm"))();await entered.promise;assert.ok(f.store.outputRequirements.retainedWrite(doc));
+ const pending=(await stage(f,"confirm"))();await expectEntry(t,entered.promise,pending,"sign-out confirmation body");assert.ok(f.store.outputRequirements.retainedWrite(doc));
  f.store.session.set(null);assert.equal(f.store.outputRequirements.retainedWrite(doc),null);
  f.store.session.set(session);gate.resolve();await pending;await f.flush();
  assert.equal(f.store.outputRequirements.retainedWrite(doc),null);assert.equal(f.store.outputRequirements.resource(doc).snapshot,null);assert.equal(posts,1);
@@ -547,7 +622,7 @@ async function inspectedFileFixture(t){
  assert.ok(download,"existing exact-file review button");assert.notEqual(download.properties.disabled,true);
  return{f,download,counts:()=>({posts,downloads})};
 }
-test("a completed exact-file download object URL is revoked by actual generic source403",async t=>{
+test("a completed exact-file download object URL is revoked by actual generic source403",{timeout:60_000},async t=>{
  const{f,download,counts}=await inspectedFileFixture(t),anchors=nativeDownloadAnchors(t,f.controller),created=[],revoked=[],create=URL.createObjectURL.bind(URL),revoke=URL.revokeObjectURL.bind(URL),before=bookkeeping(f);
  t.mock.method(URL,"createObjectURL",blob=>{const url=create(blob);created.push(url);return url;});
  t.mock.method(URL,"revokeObjectURL",url=>{revoked.push(url);revoke(url);});
@@ -559,15 +634,17 @@ test("a completed exact-file download object URL is revoked by actual generic so
  assert.deepEqual(revoked,created);assert.deepEqual(f.controller.retirementStateForTest().urls,[]);assert.equal(f.controller.retirementStateForTest().file,null);
  assert.equal(counts().posts,3);assert.equal(counts().downloads,1);assert.deepEqual(bookkeeping(f),before);
 });
-test("held exact-file bytes cannot create an object URL after actual403 and fresh authorized200",async t=>{
- const{f,download,counts}=await inspectedFileFixture(t),gate=sceneDeferred(),entered=sceneDeferred(),prior=f.storeHost.intercept,created=[],before=bookkeeping(f);
+test("held exact-file bytes cannot create an object URL after actual403 and fresh authorized200",{timeout:60_000},async t=>{
+ const{f,download,counts}=await inspectedFileFixture(t),gate=heldFixtureGate(t),entered=sceneDeferred(),prior=f.storeHost.intercept,created=[],before=bookkeeping(f);
  t.mock.method(URL,"createObjectURL",()=>{created.push("not-allowed");return"blob:should-not-be-created";});
  f.storeHost.intercept=async request=>{
   if(!request.url.startsWith("/api/output-requirements/assets/"))return prior(request);
+  try{
   const response=await prior(request);assert.equal(response.status,200);
   return{status:200,ok:true,headers:response.headers,blob:async()=>{entered.resolve();await gate.promise;return response.blob();}};
+  }catch(error){entered.reject(error);throw error;}
  };
- const pending=download.handlers.click.call(f.controller,formEvent(download));await entered.promise;
+ const pending=download.handlers.click.call(f.controller,formEvent(download));await expectEntry(t,entered.promise,pending,"exact-file download body");
  f.db.sqlite.prepare("UPDATE organization_memberships SET status='revoked',revoked_at=? WHERE organization_id=? AND user_id=?").run(new Date().toISOString(),f.db.organizationId,existing.workers.owner);
  await f.store.refreshEvents().catch(()=>{});assert.equal(f.store.sourceOwnershipActive(f.store.captureSourceOwnership()),false);
  f.db.sqlite.prepare("UPDATE organization_memberships SET status='active',revoked_at=NULL WHERE organization_id=? AND user_id=?").run(f.db.organizationId,existing.workers.owner);
@@ -577,7 +654,7 @@ test("held exact-file bytes cannot create an object URL after actual403 and fres
 });
 
 
-test("unbranded source-retirement details cannot clear the current actual Output editor",async t=>{
+test("unbranded source-retirement details cannot clear the current actual Output editor",{timeout:60_000},async t=>{
  const f=await warm(t),card=await openCard(f),before=card.retirementStateForTest().session,source=f.store.captureSourceOwnership();
  const copied={authorization:source.authorization,generation:source.generation};
  assert.equal(f.store.sourceOwnershipScopeActive(copied),false,"the actual Store owns the token, not matching client fields");
@@ -585,7 +662,7 @@ test("unbranded source-retirement details cannot clear the current actual Output
  for(const handler of f.listeners.get(event.type)??[])handler(event);
  await f.flush();assert.equal(card.retirementStateForTest().session,before);assert.equal(f.store.sourceOwnershipActive(source),true);
 });
-test("an old branded retirement event cannot erase the new authorized editor after source recovery",async t=>{
+test("an old branded retirement event cannot erase the new authorized editor after source recovery",{timeout:60_000},async t=>{
  const f=await warm(t);let previous=null;
  const capture=event=>{previous=event.detail;};existing.ui.windowPort.addEventListener("forma-event-source-retired",capture);t.after(()=>existing.ui.windowPort.removeEventListener("forma-event-source-retired",capture));
  f.db.sqlite.prepare("UPDATE organization_memberships SET status='revoked',revoked_at=? WHERE organization_id=? AND user_id=?").run(new Date().toISOString(),f.db.organizationId,existing.workers.owner);
@@ -599,8 +676,8 @@ test("an old branded retirement event cannot erase the new authorized editor aft
  await f.flush();assert.equal(card.retirementStateForTest().session,before);assert.equal(f.store.sourceOwnershipActive(f.store.captureSourceOwnership()),true);
 });
 
-for(const action of["confirm","adopt"])for(const moved of[true,false])test("real client "+action+" digest "+(moved?"must not dispatch after actual Shell route departure":"keeps the still-current native operation working"),async t=>{
- const f=await fullSourceShell(t),doc=existing.workers.doc,digest=crypto.subtle.digest.bind(crypto.subtle),gate=sceneDeferred(),entered=sceneDeferred();
+for(const action of["confirm","adopt"])for(const moved of[true,false])test("real client "+action+" digest "+(moved?"must not dispatch after actual Shell route departure":"keeps the still-current native operation working"),{timeout:60_000},async t=>{
+ const f=await fullSourceShell(t),doc=existing.workers.doc,digest=crypto.subtle.digest.bind(crypto.subtle),gate=heldFixtureGate(t),entered=sceneDeferred();
  let held=false,posts=0;
  t.mock.method(crypto.subtle,"digest",async(...args)=>{
   const value=await digest(...args);let parsed=null;try{parsed=JSON.parse(new TextDecoder().decode(args[1]));}catch{/* Other digest inputs are not JSON request descriptors. */}
@@ -609,7 +686,7 @@ for(const action of["confirm","adopt"])for(const moved of[true,false])test("real
   return value;
  });
  f.storeHost.intercept=request=>{if(request.init.method!=="POST")return undefined;posts++;return actualOutput(f,request);};
- const original=f.controller,pending=(await stage(f,action))();await entered.promise;
+ const original=f.controller,pending=(await stage(f,action))();await expectEntry(t,entered.promise,pending,"Shell "+action+" client digest");
  const prepared=original.retirementStateForTest();assert.ok(action==="adopt"?prepared.uploadId:prepared.uncertain?.id,"controller prepared its own original ID before the client digest await");
  assert.equal(f.store.outputRequirements.retainedWrite(doc),null,"the transport is still before claim/dispatch");
  const source=f.store.captureSourceOwnership();assert.equal(f.store.sourceOwnershipActive(source),true);
@@ -619,14 +696,14 @@ for(const action of["confirm","adopt"])for(const moved of[true,false])test("real
  assert.equal(posts,moved?0:1,"only an actually current original view may dispatch after digest preparation");
  assert.equal(f.store.outputRequirements.retainedWrite(doc)?.status,moved?undefined:"acknowledged");
 });
-test("closing the original native plan during client digest prevents submission while retaining its local choices",async t=>{
- const f=await fullSourceShell(t),doc=existing.workers.doc,digest=crypto.subtle.digest.bind(crypto.subtle),gate=sceneDeferred(),entered=sceneDeferred();let held=false,posts=0;
+test("closing the original native plan during client digest prevents submission while retaining its local choices",{timeout:60_000},async t=>{
+ const f=await fullSourceShell(t),doc=existing.workers.doc,digest=crypto.subtle.digest.bind(crypto.subtle),gate=heldFixtureGate(t),entered=sceneDeferred();let held=false,posts=0;
  t.mock.method(crypto.subtle,"digest",async(...args)=>{
   const value=await digest(...args);let parsed=null;try{parsed=JSON.parse(new TextDecoder().decode(args[1]));}catch{/* Other digest inputs are not JSON request descriptors. */}
   if(!held&&parsed?.documentId===doc&&parsed?.action==="confirm"){held=true;entered.resolve();await gate.promise;}return value;
  });
  f.storeHost.intercept=request=>{if(request.init.method!=="POST")return undefined;posts++;return actualOutput(f,request);};
- const pending=(await stage(f,"confirm"))();await entered.promise;await f.settle();
+ const pending=(await stage(f,"confirm"))();await expectEntry(t,entered.promise,pending,"cancelable native plan digest");await f.settle();
  const before=f.controller.retirementStateForTest(),form=nodes(f,f.controller,"form").find(node=>node.handlers.submit?.name==="#confirm");assert.ok(form);
  const cancel=nodes(f,f.controller,"button").find(node=>node.handlers.click?.toString().includes("() => this.#closePlan()"));assert.ok(cancel,"actual native Cancel control");
  await cancel.handlers.click.call(f.controller,formEvent(cancel));await f.settle();

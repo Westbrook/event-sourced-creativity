@@ -196,7 +196,7 @@ test("retained work leads failures and retains explicit, scoped, paid-once recov
   assert.match(artifacts, /documentJobCanRecoverPresentation\(job\)/,"only validated or safely repairable paid slideshow responses advertise free recovery");
   assert.match(artifacts, /documentJobCanRecoverProviderRender/);
   assert.match(artifacts, /session&&!session\.impersonation/);
-  assert.match(artifacts, /productionOwner&&\(artifact\.kind==="slides"\|\|artifact\.kind==="audio"\|\|artifact\.kind==="storyboard"\|\|artifact\.kind==="video"\|\|artifact\.kind==="short_story"\|\|artifact\.kind==="scene"\)/, "settled generation costs remain owner-only across all six artifact families, including Story and Scene");
+  assert.match(artifacts, /productionOwner&&\(artifact\.kind==="slides"\|\|artifact\.kind==="audio"\|\|artifact\.kind==="storyboard"\|\|artifact\.kind==="video"\|\|artifact\.kind==="short_story"\|\|artifact\.kind==="scene"\|\|artifact\.kind==="model3d"\)/, "settled generation costs remain owner-only across all seven artifact families, including Story, Scene and 3D");
 });
 
 test("independent approval freshness resolves the exact artifact source document, not an identically named block elsewhere", () => {
@@ -433,4 +433,89 @@ test("actual-content readiness rejects chrome-only shells and every priority wor
   assert.match(workspace, /class="blank-context" data-forma-empty-state/);
   assert.match(workspace, /class="empty-output" data-forma-empty-state/);
   assert.match(deliver, /class="forma-responsive-empty" data-forma-empty-state/);
+});
+
+// Source-contract assertion only. The unchanged governance browser lifecycle
+// remains the behavioral newer-focus and painted acknowledgment-envelope gate.
+test("SOURCE: Experience acknowledgment recovery follows decision and parent rendering under the original focus owner", async () => {
+  const review = await read("../src/apps/product/experience-review.ts");
+  const original = review.split("  async #runOriginal(checkOnly = false) {")[1]?.split("\n  #retry(")[0] ?? "";
+  assert.match(original, /const focus = this\.#captureFocusRecovery\(focusOrigin\)/);
+  assert.match(original, /this\.#acknowledgment = acknowledgment = Object\.freeze/);
+  assert.match(original, /await this\.updateComplete;\s*if \(currentOwner\(\) && this\.#acknowledgment === acknowledgment\) \{\s*const expectedRead = this\.#readVersion \+ 1;\s*await this\.openDecision\(reopen\);\s*const refreshSucceeded = await refreshed;\s*const readVersion = this\.#readVersion, actionEpoch = this\.#actionEpoch, context = this\.#context, decision = this\.#decision;\s*await this\.updateComplete;/,
+    "Recovery follows both registered parent work and the final child render, not the intermediate removed-form render");
+  assert.match(original, /currentOwner\(\) && refreshValid && refreshSucceeded && this\.#acknowledgment === acknowledgment/);
+  assert.match(original, /readVersion === expectedRead && readVersion === this\.#readVersion && actionEpoch === this\.#actionEpoch/);
+  assert.match(original, /context === this\.#context && decision === this\.#decision && decision\?\.decision\.decisionId === reopen/);
+  assert.match(original, /focusOwned && focusOrigin instanceof HTMLElement && !this\.contains\(focusOrigin\)/);
+  assert.match(original, /target === this\.querySelector\("\[data-experience-acknowledgment\]"\)/);
+  assert.match(original, /if \(target && ownsFocus\(\)\) focus\.restore\(target, ownsFocus\)/);
+  assert.match(original, /finally \{\s*focus\.dispose\(\)/);
+  assert.doesNotMatch(original, /target\.focus\(/, "The shared recovery must guard native focus and the subsequent reveal together");
+});
+
+test("SOURCE: Experience operation refresh registration is synchronous, singular and distinct from proposal notification", async () => {
+  const review = await read("../src/apps/product/experience-review.ts");
+  const original = review.split("  async #runOriginal(checkOnly = false) {")[1]?.split("\n  #retry(")[0] ?? "";
+  const listener = delivery.split("@experience-operation-saved=")[1]?.split("</forma-experience-review>")[0] ?? "";
+  assert.match(original, /Promise\.resolve\(completion\)\.then\(\(\) => true, \(\) => false\)/,
+    "A rejected parent completion is consumed and only suppresses focus recovery");
+  assert.match(original, /if \(!refreshOpen \|\| refreshRegistered\) \{ refreshValid = false; return; \}/);
+  assert.match(original, /refreshRegistered = true; refreshed = settled/);
+  assert.match(original, /refreshOpen = true;\s*try \{[\s\S]*?detail: \{ registerDeliveryRefresh \}[\s\S]*?finally \{ refreshOpen = false; \}/);
+  assert.match(listener, /if \(event\.target !== event\.currentTarget \|\| event\.currentTarget !== this\.#experienceReview\(\)\) return/);
+  assert.equal((listener.match(/this\.refresh\(\)/g) ?? []).length, 1, "The parent joins its one existing refresh, without a second request");
+  assert.match(listener, /const completion = this\.refresh\(\)\.then\(\(\) => this\.updateComplete\)/);
+  assert.match(listener, /event\.detail\.registerDeliveryRefresh\(completion\)/);
+  assert.match(listener, /void completion\.catch/);
+  assert.ok(listener.indexOf("void completion.catch") < listener.indexOf("event.detail.registerDeliveryRefresh(completion)"),
+    "The existing refresh is rejection-safe even if a synthetic completion recipient throws");
+  assert.ok(delivery.includes("@experience-proposal-saved=${() => this.refresh()}"), "Proposal notifications keep their existing nonblocking listener");
+});
+
+test("SOURCE: Maintenance focus recovery retains request and patch ownership without reenabling or replacing triggers", async () => {
+  const review = await read("../src/apps/product/experience-review.ts");
+  const load = review.split("  async #loadMaintenance(")[1]?.split("\n  async #previewMaintenance(")[0] ?? "";
+  const preview = review.split("  async #previewMaintenance(")[1]?.split("\n  #maintenanceView(")[0] ?? "";
+  for (const [source, attribute] of [[load, "load"], [preview, "preview"]]) {
+    assert.ok(source.indexOf("this.#captureFocusRecovery(control)") < source.indexOf("this.#busy = true"), "Native active-trigger ownership is captured before disabling");
+    assert.match(source, /if \(currentOwner\(\) && version === this\.#readVersion\) \{\s*this\.#busy = false; this\.requestUpdate\(\);\s*try \{\s*await this\.updateComplete;/);
+    assert.ok(source.includes(`control === section.querySelector("[data-experience-maintenance-${attribute}]") && section.contains(control)`));
+    assert.match(source, /focus\.restore\(control, \(\) => current\(\) && version === this\.#readVersion/);
+    assert.match(source, /!this\.#busy && !this\.#saving && !this\.#uncertain && !this\.#composing\?\.isConnected/);
+    assert.match(source, /finally \{ focus\.dispose\(\); \}/);
+    assert.doesNotMatch(source, /control\.disabled\s*=|\.focus\(/);
+  }
+  const loadCurrent = load.split("const current =")[1]?.split("const control =")[0] ?? "";
+  assert.doesNotMatch(loadCurrent, /maintenancePatchVersion/, "Patch retirement changes only GET focus eligibility, not accepted observation semantics");
+  assert.match(load, /focusPatchVersion === this\.#maintenancePatchVersion/);
+  assert.match(preview, /maintenanceVersion === this\.#maintenanceVersion && patchVersion === this\.#maintenancePatchVersion/);
+  assert.match(preview, /retained === this\.#maintenance && selected === this\.#selected && detail === this\.#detail/);
+  assert.match(preview, /this\.#clearMaintenance\(\); this\.#maintenanceNotice = true/,
+    "An invalidated pair still disables Preview; full current() prevents automatic fallback focus");
+});
+
+test("SOURCE: Experience recovery yields to newer intent and reveals the current outline below the actual shell header", async () => {
+  const review = await read("../src/apps/product/experience-review.ts");
+  const lease = review.split("  #captureFocusRecovery(")[1]?.split("\n  #revealFocus(")[0] ?? "";
+  const reveal = review.split("  #revealFocus(")[1]?.split("\n  #writable(")[0] ?? "";
+  assert.match(lease, /document\.activeElement === origin \? origin : null/);
+  assert.match(lease, /event\.target !== focusedOrigin && event\.target !== document\.body && event\.target !== recoveryTarget\) superseded = true/);
+  assert.doesNotMatch(lease, /superseded = false/);
+  for (const intent of ["pointerdown", "keydown", "beforeinput", "input", "change", "compositionstart", "wheel", "touchstart"]) assert.ok(lease.includes(`"${intent}"`));
+  assert.match(lease, /document\.hasFocus\(\) && document\.visibilityState !== "hidden"/);
+  assert.match(lease, /target\.isConnected && this\.contains\(target\) && !target\.closest\("\[hidden\], \[inert\], details:not\(\[open\]\)"\)/);
+  assert.match(lease, /target instanceof HTMLButtonElement && target\.disabled/);
+  assert.match(lease, /recoveryTarget = target;\s*target\.focus\(\);\s*if \(owns\(\) && document\.activeElement === target\) this\.#revealFocus/,
+    "Own native focus does not cancel its reveal, but redirected focus does");
+  assert.match(lease, /window\.removeEventListener\("blur", newerInput\)/);
+  assert.match(lease, /document\.removeEventListener\("visibilitychange", hidden\)/);
+  assert.match(reveal, /if \(!current\(\)\) return;[\s\S]*?target\.scrollIntoView\([\s\S]*?if \(!current\(\)\) return/);
+  assert.match(reveal, /const viewport = window\.visualViewport/);
+  assert.match(reveal, /header\?\.getBoundingClientRect\(\)/);
+  assert.match(reveal, /parseFloat\(style\.outlineWidth\)[\s\S]*?parseFloat\(style\.outlineOffset\)/);
+  assert.match(reveal, /rect\.left - outline, rect\.right \+ outline, left, right/);
+  assert.match(reveal, /rect\.top - outline, rect\.bottom \+ outline, clearTop, bottom/);
+  assert.match(reveal, /if \(current\(\) && \(x \|\| y\)\) scroller\.scrollBy/);
+  assert.doesNotMatch(reveal, /devicePixelRatio|setTimeout|requestAnimationFrame|behavior: "smooth"/);
 });

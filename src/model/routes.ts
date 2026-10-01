@@ -48,6 +48,10 @@ export function projectTaskDocumentIdFromRoute(route: string): string | null {
 
 /** A view address only. An unavailable current task address may be carried, never promoted to authority. */
 export function withProjectTaskDocumentInRoute(route: string, documentId: string, currentTaskRoute?: string) {
+  // Setup/recovery and retained-reader identities must never inherit a current Document.
+  if (/^(?:https?:\/\/[^/?#]+)?\/make(?:\/|[?#]|$)/iu.test(route)) return route;
+  const path = routePathname(route);
+  if (path === "/make" || path.startsWith("/make/")) return route;
   if (!isProjectTaskRoute(route)) return route;
   const url = routeUrl(route);
   if (documentId) url.searchParams.set("document", documentId);

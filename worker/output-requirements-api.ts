@@ -4,7 +4,7 @@ import { compileOutputPlan, summarizeOutputPlan, type OutputPlan, type OutputPla
 import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES, MAX_OUTPUT_MODEL3D_ASSET_BYTES, validOutputAssetName, type OutputAssetInspection } from "../src/model/output-asset-inspection.ts";
 import { createOutputDeliveryArchive, createOutputDeliveryArchiveStream, outputDeliveryScopeForPlan, planOutputDeliveryParts, type OutputDeliveryManifestInput, type OutputDeliveryScopeInput, type OutputDeliveryPart, type OutputDeliveryScopeAmendmentInput } from "../src/model/output-delivery-archive.ts";
 import { OUTPUT_PREFLIGHT_TARGET_MAX_COUNT } from "../src/model/output-delivery-contract.ts";
-import type { OutputAssetRow, OutputCommandResponse, OutputConfirmedPlan, OutputConfirmationOptions, OutputPlanSuggestions, OutputGrantRow, OutputNativeTargetPreflight, OutputPreflight, OutputRequirementRow, OutputRequirementsSnapshot, OutputResultRow } from "../src/model/output-delivery-contract.ts";
+import type { OutputAssetRow, OutputCommandResponse, OutputConfirmedPlan, OutputConfirmationOptions, OutputPlanSuggestions, OutputNativeTargetPreflight, OutputPreflight, OutputRequirementRow, OutputRequirementsSnapshot, OutputResultRow } from "../src/model/output-delivery-contract.ts";
 import { outputScopeAmendmentReasonIssue } from "../src/model/output-scope-amendment.ts";
 import { authoritativeCreativeContext, ContextIntegrityError } from "./context-authority.ts";
 import { captureOutputGovernanceAssertions } from "./output-requirement-governance-assertions.ts";
@@ -13,13 +13,15 @@ import { claimOutputAssetStorage, acknowledgeOutputAssetStorage, cleanupOutputAs
 import { outputAssetDocumentPrefix, outputAssetObjectKeys, outputAssetStorageCustodyMatches } from "./output-asset-storage-identity.ts";
 import { verifyOutputSourceEvidence, outputExtractedSourceReferences, type OutputSourceEvidenceCheck } from "./output-source-evidence-capacity.ts";
 import { hasCapability, requireConsent, requireUser, type PilotUser } from "./pilot-policy.ts";
-import { readProjectRequestContext, prepareProjectSourceEventsStatement, projectSourceProjectionCurrentAssertion, type ProjectRequestContext } from "./project-access.ts";
+import { readProjectRequestContext, prepareProjectSourceEventsStatement, projectSourceProjectionCurrentAssertion, projectSourceProjectionPublicationAssertion, type ProjectRequestContext } from "./project-access.ts";
 import { readEvents, serializeEvent, streamHead, uuidV7, type EventRow, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
-import { commitOutputCommand, ensureOutputRequirementsSchema, outputAssertionStatements, outputScopeAuthority, outputSourceEpochAssertion, outputRevision, parseOutputRevision, OutputConflictError, readOutputCommand, readOutputSlots, outputSlotFromRow,
+import { commitOutputCommand, ensureOutputRequirementsSchema, outputAssertionStatements, outputScopeAuthority, outputSourceEpochAssertion, outputRevision, parseOutputRevision, OutputConflictError, readOutputCommand, outputSlotFromRow,
   retainedOutputBodyAssertions, rememberOutputPrivateBody, resetRetainedOutputPrivateBodies, inheritRetainedOutputPrivateBodies, outputCommandReceiptAssertion,
   type OutputCommandReceipt, type OutputCommandPermission, type OutputOperationSlot, type OutputScope, type OutputSqlAssertion, type OutputCommandWrite } from "./output-requirements-ledger.ts";
 
 import { readOutputReadModel, outputBulkDeliveryAssertion, outputAssetReadAssertions, MAX_OUTPUT_DELIVERY_PART_READS, type OutputReadModel, type OutputBulkAssetEvidence } from "./output-requirements-read-model.ts";
+import type { DocumentJobRow } from "./document-jobs-api.ts";
+import type { OutputEventExecution } from "./output-execution-control.ts";
 
 const BASE = "/api/output-requirements";
 const RESOLVER_VERSION = "output-plan-v1";
@@ -126,7 +128,21 @@ function outputProofReadStatements(env: WorkerEnv, assertions: readonly OutputSq
   });
 }
 function assertOutputProofRead(results: Array<D1Result<Record<string, unknown>>>, expected: number) {
-  if (results.length !== expected || results.some((result) => result.success === false || Number(result.results[0]?.current) !== 1)) fail("output_source_changed_during_read", 409);
+  if (results.length !== expected) fail("output_source_changed_during_read", 409);
+  for (let index = 0; index < expected; index++) {
+    const result = results[index];
+    if (!result || result.success !== true || Number(result.results?.[0]?.current) !== 1) fail("output_source_changed_during_read", 409);
+  }
+}
+/** Internal worker reads only: statements are fixed by trusted callers, never
+ * supplied by an HTTP request or an LLM. Proofs and retained reads share a batch. */
+export async function readOutputProofBatch(env: WorkerEnv, assertions: readonly OutputSqlAssertion[], reads: readonly D1PreparedStatement[] = []): Promise<D1Result<Record<string, unknown>>[]> {
+  const proofs = outputProofReadStatements(env, assertions), proofCount = proofs.length;
+  const statements = [...proofs, ...reads], expected = statements.length;
+  const results = await env.DB.batch<Record<string, unknown>>(statements);
+  if (results.length !== expected || statements.some((_, index) => !results[index] || results[index].success !== true)) fail("output_source_changed_during_read", 409);
+  assertOutputProofRead(results.slice(0, proofCount), proofCount);
+  return results.slice(proofCount);
 }
 async function verifyOutputSourceRead(env: WorkerEnv, scope: OutputScope, expectedHead: number, assertions: readonly OutputSqlAssertion[]) {
   const [head, ...checked] = await env.DB.batch<Record<string, unknown>>([
@@ -209,7 +225,8 @@ async function readOutputProjectSourceSnapshot(env: WorkerEnv, scope: OutputScop
   const row = metadata.results[0];
   if (!Number(row?.permitted)) fail("output_execution_authority_revoked", 403);
   if (!Number(row?.projection_current)) fail("output_target_source_projection_stale", 409);
-  return { head: Number(row.owner_head), projectHead: Number(row.project_head), events: source.results.map(serializeEvent), assertion: projection as OutputSqlAssertion };
+  const publicationAssertion = projectSourceProjectionPublicationAssertion(project);
+  return { head: Number(row.owner_head), projectHead: Number(row.project_head), events: source.results.map(serializeEvent), assertion: projection as OutputSqlAssertion, publicationAssertion };
 }
 
 /** Read the real selected project; no owner-account fallback for a governed Document. */
@@ -385,9 +402,7 @@ function requireCompleteOutputReadModel(model: OutputReadModel) {
   if (!model.complete) fail(model.reasonCodes[0] ?? "output_read_model_unavailable", 503);
   return model;
 }
-async function readAssets(trusted: OutputTrustedContext): Promise<OutputAssetRow[]> { return (await readOutputModel(trusted)).assets; }
 async function readResults(trusted: OutputTrustedContext): Promise<OutputResultRow[]> { return (await readOutputModel(trusted)).results; }
-async function readGrants(trusted: OutputTrustedContext): Promise<OutputGrantRow[]> { return (await readOutputModel(trusted)).grants; }
 
 function retainedOutputAmendments(trusted: OutputTrustedContext) {
   return trusted.events.filter((event) => event.type === "OutputPlanConfirmed" && event.payload.document_id === trusted.scope.documentId && event.payload.project_id === trusted.scope.projectId && event.payload.scope_amendment !== undefined);
@@ -463,7 +478,10 @@ export async function loadOutputCurrentContext(env: WorkerEnv, scope: OutputScop
   const sourceAssertion = await captureOutputPrivateSources(env, scope, events, projection, head, [authority, ...(projectSource ? [projectSource.assertion] : []), ...governanceAssertions]);
   const sourceEvidence = await verifyOutputSourceEvidence(env, scope.ownerUserId, projection.blocks, { maximumDistinctObjects: OUTPUT_NATIVE_SOURCE_OBJECT_CAPACITY });
   if (sourceEvidence.reasonCode) fail(sourceEvidence.reasonCode, 409);
-  return { ...digests, context, head, events, requirements, assertions: [authority, ...(projectSource ? [projectSource.assertion] : []), ...sourceAssertion, ...governanceAssertions, ...outputActiveSourceDeadlineAssertions(context), { sql: "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?", bindings: [`creative:${scope.ownerUserId}`, head] }] as OutputSqlAssertion[] };
+  const sourceAssertions: OutputSqlAssertion[] = [...sourceAssertion, ...governanceAssertions, ...outputActiveSourceDeadlineAssertions(context), { sql: "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?", bindings: [`creative:${scope.ownerUserId}`, head] }];
+  return { ...digests, context, head, events, requirements,
+    assertions: [authority, ...(projectSource ? [projectSource.assertion] : []), ...sourceAssertions],
+    publicationAssertions: [authority, ...(projectSource ? [projectSource.publicationAssertion] : []), ...sourceAssertions] };
 }
 
 /** A time bound for the same currently selected request capability, not new authority. */
@@ -555,7 +573,242 @@ export async function resolveOutputExecutionAuthority(env: WorkerEnv, scope: Out
   const deadlineAssertions: OutputSqlAssertion[] = [{ sql: "EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS ? AND expires_at=?)",
     bindings: [scope.key, slot.grantId, scope.actorUserId, scope.contextId, String(evidence.row.expires_at)], deadlineMs: grantDeadline }];
   if (requestCapture && requestDeadline !== null) deadlineAssertions.push({ sql: `${requestCapture.sql}=?`, bindings: [...(requestCapture.bindings ?? []), String(evidence.row.dispatch_scope)], deadlineMs: requestDeadline });
-  return { ...current, confirmedPlan: evidence.confirmedPlan, target, preflight: evidence.preflight, targetPreflight, assertions: [...current.assertions, ...retainedOutputBodyAssertions(scope), ...deadlineAssertions] };
+  const retainedAssertions = [...retainedOutputBodyAssertions(scope), ...deadlineAssertions];
+  return { ...current, confirmedPlan: evidence.confirmedPlan, target, preflight: evidence.preflight, targetPreflight,
+    assertions: [...current.assertions, ...retainedAssertions],
+    publicationAssertions: [...current.publicationAssertions, ...retainedAssertions] };
+}
+
+export type OutputImageFinalizationPostState = { resultJson: string; completedAt: string; completionEventId: string };
+export type OutputImageFinalizationAuthority = Awaited<ReturnType<typeof resolveOutputImageFinalizationAuthority>>;
+
+/** Provider-free authority for one already-paid, fully retained Image result.
+ * This purpose never changes the normal execution or acknowledgment contracts.
+ * All input primitives are copied before the first await; returned assertions
+ * bind the original attempt and separate pre-state from our exact post-state.
+ */
+export async function resolveOutputImageFinalizationAuthority(env: WorkerEnv, suppliedScope: OutputScope, suppliedSlot: OutputOperationSlot,
+  suppliedJob: DocumentJobRow, payerUserId: string) {
+  const scope = { ...suppliedScope }, slot = { ...suppliedSlot }, job = { ...suppliedJob }, admittedAt = nowIso();
+  const maximumEvidenceBytes = 2_000_000, encoder = new TextEncoder();
+  const boundedText = (value: unknown): value is string => typeof value === "string" && value.length <= maximumEvidenceBytes && encoder.encode(value).byteLength <= maximumEvidenceBytes;
+  if (!boundedText(job.request_json) || !boundedText(job.result_json)) fail("output_image_finalization_evidence_too_large", 413);
+  const iso = (value: unknown): value is string => typeof value === "string" && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+  let request: Record<string, unknown>, checkpoint: Record<string, unknown>;
+  try { request = record(JSON.parse(job.request_json)); checkpoint = record(JSON.parse(job.result_json ?? "null")); }
+  catch { return fail("output_image_finalization_evidence_invalid", 409); }
+  const reference = { scopeKey: scope.key, grantId: slot.grantId, slotId: slot.slotId, planRevisionId: slot.planRevisionId,
+    targetId: slot.targetId, targetContractDigest: slot.targetContractDigest, sourceDigest: slot.sourceDigest };
+  if (scope.key !== slot.scopeKey || slot.jobId !== job.job_id || job.output_slot_id !== slot.slotId || job.kind !== "generate"
+    || job.owner_id !== scope.actorUserId || job.stream_id !== `creative:${scope.ownerUserId}` || job.document_id !== scope.documentId
+    || job.source_surface !== "outputs" || !payerUserId || !Number.isSafeInteger(job.attempt_count) || job.attempt_count < 1
+    || job.correlation_id !== `${job.job_id}:attempt:${job.attempt_count}` || !iso(job.expires_at) || job.expires_at <= admittedAt
+    || canonicalOutputJson(request.outputExecution) !== canonicalOutputJson(reference)
+    || record(checkpoint.imageRecovery).stage !== "rendered" || ["force_failed_by_admin", "canceled_by_user"].includes(String(record(checkpoint.errorDetail).code))
+    || ["force_failed_by_admin", "canceled_by_user"].includes(String(job.error_message))
+    || !(job.status === "committing" && slot.status === "running" && iso(job.lease_expires_at) && job.lease_expires_at <= admittedAt
+      || job.status === "failed" && slot.status === "failed" && (job.lease_expires_at === null || iso(job.lease_expires_at) && job.lease_expires_at <= admittedAt)))
+    fail("output_image_finalization_ineligible", 409);
+
+  const current = await loadOutputCurrentContext(env, scope);
+  // Retain the existing scoped grant predicates and decoder for this purpose,
+  // with byte ceilings before any private JSON crosses the read boundary.
+  const grantRequestCapture = outputRequestDeadlineCapture(scope);
+  const [grantRead] = await readOutputProofBatch(env, current.assertions, [env.DB.prepare(`SELECT grant_row.*,plan.confirmed_event_id,plan.source_digest AS plan_source_digest,plan.requirements_digest AS plan_requirements_digest,
+      preflight.event_id AS preflight_event_id,preflight.terms_digest,plan_body.private_json AS plan_private_json,preflight_body.private_json AS preflight_private_json,
+      authorization_body.private_json AS authorization_private_json,
+      ${grantRequestCapture?.sql ?? "NULL"} AS dispatch_scope,
+      grant_row.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AS deadline_current
+    FROM output_execution_grants grant_row JOIN output_plan_revisions plan ON plan.scope_key=grant_row.scope_key AND plan.plan_revision_id=grant_row.plan_revision_id
+    JOIN output_preflights preflight ON preflight.scope_key=grant_row.scope_key AND preflight.preflight_id=grant_row.preflight_id
+    LEFT JOIN event_private_payloads plan_body ON plan_body.private_event_id=plan.confirmed_event_id AND plan_body.owner_id=plan.owner_user_id AND plan_body.project_id=plan.project_id AND plan_body.document_id=plan.document_id AND plan_body.redacted_at IS NULL
+      AND length(CAST(plan_body.private_json AS BLOB))<=2000000
+    LEFT JOIN event_private_payloads preflight_body ON preflight_body.private_event_id=preflight.event_id AND preflight_body.owner_id=plan.owner_user_id AND preflight_body.project_id=plan.project_id AND preflight_body.document_id=plan.document_id AND preflight_body.redacted_at IS NULL
+      AND length(CAST(preflight_body.private_json AS BLOB))<=2000000
+    LEFT JOIN event_private_payloads authorization_body ON authorization_body.private_event_id=grant_row.authorization_event_id AND authorization_body.owner_id=plan.owner_user_id AND authorization_body.project_id=plan.project_id AND authorization_body.document_id=plan.document_id AND authorization_body.redacted_at IS NULL
+      AND length(CAST(authorization_body.private_json AS BLOB))<=2000000
+    WHERE grant_row.scope_key=? AND grant_row.grant_id=? AND grant_row.actor_user_id=? AND plan.document_id=? AND plan.project_id=? AND plan.owner_user_id=?`)
+    .bind(...(grantRequestCapture?.bindings ?? []), scope.key, slot.grantId, scope.actorUserId, scope.documentId, scope.projectId, scope.ownerUserId)]);
+  const grantRow = grantRead?.results[0];
+  if (!grantRow) fail("output_execution_grant_not_found", 404);
+  if (grantRow.context_id !== scope.contextId) fail("output_execution_context_changed", 403);
+  if (!boundedText(grantRow.plan_private_json) || !boundedText(grantRow.preflight_private_json) || !boundedText(grantRow.authorization_private_json)) fail("output_private_evidence_unavailable", 410);
+  const confirmedPlan = record(rememberOutputPrivateBody(scope, String(grantRow.confirmed_event_id), grantRow.plan_private_json).confirmed_plan) as OutputConfirmedPlan;
+  const preflight = record(rememberOutputPrivateBody(scope, String(grantRow.preflight_event_id), grantRow.preflight_private_json).preflight) as OutputPreflight;
+  const authorization = rememberOutputPrivateBody(scope, String(grantRow.authorization_event_id), grantRow.authorization_private_json);
+  if (confirmedPlan.id !== scope.documentId || confirmedPlan.revisionId !== grantRow.plan_revision_id || confirmedPlan.sourceDigest !== grantRow.plan_source_digest || confirmedPlan.requirementsDigest !== grantRow.plan_requirements_digest
+    || preflight.id !== grantRow.preflight_id || preflight.planRevisionId !== confirmedPlan.revisionId || preflight.termsDigest !== grantRow.terms_digest || authorization.grant_id !== grantRow.grant_id) fail("output_execution_contract_changed", 409);
+  const evidence: OutputGrantEvidence = { row: grantRow, confirmedPlan, preflight, slots: [] };
+  const grantStatus = String(evidence.row.status);
+  if (evidence.row.payer_user_id !== payerUserId || !Number(evidence.row.deadline_current)
+    || !(grantStatus === "active" || job.status === "failed" && grantStatus === "completed")) fail("output_image_finalization_grant_inactive", 403);
+  const { target, targetPreflight } = await validateOutputExecutionTarget(current, evidence, slot);
+  const settings = record(targetPreflight.settings);
+  if (target.media_kind !== "image" || settings.kind !== "generate" || !settings.payload || typeof settings.payload !== "object" || Array.isArray(settings.payload))
+    fail("output_image_finalization_route_invalid", 409);
+  const targets = authorization.authorized_targets;
+  if (authorization.grant_id !== slot.grantId || authorization.plan_revision_id !== slot.planRevisionId
+    || authorization.preflight_id !== evidence.row.preflight_id || authorization.source_digest !== slot.sourceDigest
+    || authorization.maximum_microusd !== evidence.row.maximum_microusd || authorization.maximum_calls !== evidence.row.maximum_calls
+    || !Array.isArray(targets) || targets.filter(value => record(value).operation_slot_id === slot.slotId).length !== 1
+    || !targets.some(value => { const entry = record(value); return entry.operation_slot_id === slot.slotId && entry.target_id === slot.targetId
+      && entry.job_id === job.job_id && entry.route_digest === slot.routeDigest; })) fail("output_image_finalization_authorization_changed", 409);
+
+  const slotColumns = ["scope_key", "slot_id", "grant_id", "plan_revision_id", "target_id", "target_contract_digest", "source_digest", "provider", "model", "route_digest",
+    "job_id", "cost_reservation_id", "token_reservation_id", "maximum_microusd", "maximum_calls", "maximum_tokens", "attempt_ordinal", "previous_slot_id", "created_at"];
+  const grantColumns = ["scope_key", "grant_id", "plan_revision_id", "actor_user_id", "payer_user_id", "context_id", "preflight_id", "authorization_event_id", "maximum_microusd", "maximum_calls", "expires_at", "created_at"];
+  const jobColumns = ["job_id", "owner_id", "stream_id", "document_id", "kind", "source_surface", "correlation_id", "requested_sequence", "request_json", "attempt_count", "requested_at", "started_at", "notified_at", "expires_at"];
+  const values = (row: Record<string, unknown>, columns: readonly string[]) => columns.map(column => {
+    const value = row[column];
+    if (value !== null && typeof value !== "string" && !(typeof value === "number" && Number.isFinite(value))) fail("output_image_finalization_evidence_invalid", 409);
+    return value as string | number | null;
+  });
+  // Column names are worker-owned constants, never decoded request data.
+  const exact = (table: string, columns: readonly string[], bindings: Array<string | number | null>): OutputSqlAssertion => ({
+    sql: `EXISTS(SELECT 1 FROM ${table} WHERE ${columns.map(column => `${column} IS ?`).join(" AND ")})`, bindings,
+  });
+  const jobIdentity = values(job, jobColumns), grantIdentity = values(evidence.row, grantColumns);
+  const originalJobAssertion = exact("document_jobs", [...jobColumns, "status", "result_json", "error_message", "completed_at", "lease_expires_at", "updated_at"],
+    [...jobIdentity, job.status, job.result_json, job.error_message, job.completed_at, job.lease_expires_at, job.updated_at]);
+  const originalGrantAssertion = exact("output_execution_grants", [...grantColumns, "status"], [...grantIdentity, grantStatus]);
+  const siblingSql = `(SELECT json_group_array(json_array(slot_id,status,outcome_event_id,updated_at)) FROM
+    (SELECT slot_id,status,outcome_event_id,updated_at FROM output_operation_slots WHERE scope_key=? AND grant_id=? AND slot_id<>? ORDER BY slot_id))`;
+  const contractSql = `EXISTS(SELECT 1 FROM output_plan_revisions plan
+    JOIN output_plan_targets target ON target.scope_key=plan.scope_key AND target.plan_revision_id=plan.plan_revision_id
+    JOIN output_preflights preflight ON preflight.scope_key=plan.scope_key AND preflight.plan_revision_id=plan.plan_revision_id
+    WHERE plan.scope_key=? AND plan.plan_revision_id=? AND plan.scope_kind=? AND plan.owner_user_id=? AND plan.project_id=? AND plan.document_id=?
+      AND plan.organization_id IS ? AND plan.project_access_id IS ? AND plan.confirmed_event_id=? AND plan.source_digest=? AND plan.requirements_digest=?
+      AND target.target_id=? AND target.target_contract_digest=? AND target.media_kind='image' AND target.selected=1
+      AND preflight.preflight_id=? AND preflight.actor_user_id=? AND preflight.event_id=? AND preflight.terms_digest=?)`;
+  const contract: OutputSqlAssertion = { sql: contractSql, bindings: [scope.key, slot.planRevisionId, scope.kind, scope.ownerUserId, scope.projectId, scope.documentId,
+    scope.organizationId, scope.projectAccessId, String(evidence.row.confirmed_event_id), slot.sourceDigest, current.requirementsDigest, slot.targetId,
+    slot.targetContractDigest, String(evidence.row.preflight_id), scope.actorUserId, String(evidence.row.preflight_event_id), String(evidence.row.terms_digest)] };
+  const contractSnapshotSql = `(SELECT json_array(plan.scope_key,plan.scope_kind,plan.owner_user_id,plan.project_id,plan.document_id,plan.organization_id,plan.project_access_id,
+    plan.plan_revision_id,plan.plan_id,plan.revision,plan.confirmed_event_id,plan.requirements_digest,plan.source_digest,plan.resolver_version,plan.source_head,plan.target_count,plan.created_at,
+    target.target_id,target.target_contract_digest,target.media_kind,target.required,target.selected,target.ordinal,
+    preflight.preflight_id,preflight.actor_user_id,preflight.terms_digest,preflight.event_id,preflight.expires_at,preflight.created_at)
+    FROM output_plan_revisions plan JOIN output_plan_targets target ON target.scope_key=plan.scope_key AND target.plan_revision_id=plan.plan_revision_id
+    JOIN output_preflights preflight ON preflight.scope_key=plan.scope_key AND preflight.plan_revision_id=plan.plan_revision_id
+    WHERE plan.scope_key=? AND plan.plan_revision_id=? AND target.target_id=? AND preflight.preflight_id=?)`;
+  const contractBindings = [scope.key, slot.planRevisionId, slot.targetId, String(evidence.row.preflight_id)];
+  const queueCustody: OutputSqlAssertion = scope.kind === "project" ? {
+    sql: `EXISTS(SELECT 1 FROM project_resource_scopes custody WHERE custody.resource_kind='job' AND custody.resource_id=?
+      AND custody.project_access_id=? AND custody.organization_id=? AND custody.project_id=? AND custody.owner_user_id=? AND custody.actor_user_id=?
+      AND custody.visibility='actor_private' AND custody.source_event_id=anchor.event_id)
+      AND EXISTS(SELECT 1 FROM project_resource_scopes document WHERE document.resource_kind='document' AND document.resource_id=?
+        AND document.project_access_id=? AND document.organization_id=? AND document.project_id=? AND document.owner_user_id=?)`,
+    bindings: [job.job_id, scope.projectAccessId, scope.organizationId, scope.projectId, scope.ownerUserId, scope.actorUserId,
+      scope.documentId, scope.projectAccessId, scope.organizationId, scope.projectId, scope.ownerUserId],
+  } : { sql: "NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='job' AND resource_id=?)", bindings: [job.job_id] };
+  const [slotRead, siblingRead, authorizationRead, contractRead, queueRead] = await readOutputProofBatch(env,
+    [...current.assertions, ...retainedOutputBodyAssertions(scope), originalJobAssertion, originalGrantAssertion, contract], [
+    env.DB.prepare("SELECT * FROM output_operation_slots WHERE scope_key=? AND slot_id=?").bind(scope.key, slot.slotId),
+    env.DB.prepare(`SELECT siblings FROM (SELECT ${siblingSql} AS siblings) WHERE length(CAST(siblings AS BLOB))<=?`).bind(scope.key, slot.grantId, slot.slotId, maximumEvidenceBytes),
+    env.DB.prepare("SELECT * FROM events WHERE event_id=? AND stream_id=? AND actor=? AND type='OutputExecutionAuthorized'")
+      .bind(String(evidence.row.authorization_event_id), job.stream_id, `user:${scope.actorUserId}`),
+    env.DB.prepare(`SELECT contract FROM (SELECT ${contractSnapshotSql} AS contract) WHERE length(CAST(contract AS BLOB))<=?`).bind(...contractBindings, maximumEvidenceBytes),
+    env.DB.prepare(`SELECT anchor.*,body.private_json AS queue_private_json FROM events anchor
+      JOIN events authorization ON authorization.event_id=? AND authorization.stream_id=anchor.stream_id AND authorization.correlation_id=anchor.correlation_id AND authorization.sequence>anchor.sequence
+      JOIN event_private_payloads body ON body.private_event_id=anchor.event_id AND body.owner_id=? AND body.project_id=? AND body.document_id=? AND body.redacted_at IS NULL
+        AND length(CAST(body.private_json AS BLOB))<=?
+      WHERE anchor.stream_id=? AND anchor.actor=? AND anchor.client_id='server:output-requirements' AND anchor.type=?
+        AND json_extract(CASE WHEN json_valid(body.private_json) THEN body.private_json ELSE '{}' END,'$.job_id')=? AND (${queueCustody.sql}) LIMIT 2`)
+      .bind(String(evidence.row.authorization_event_id), scope.ownerUserId, scope.projectId, scope.documentId, maximumEvidenceBytes, job.stream_id, `user:${scope.actorUserId}`,
+        scope.kind === "project" ? "ProjectDocumentJobQueued" : "OutputOperationJobQueued", job.job_id, ...(queueCustody.bindings ?? [])),
+  ]);
+  const slotRow = slotRead.results[0], siblingRaw = siblingRead.results[0]?.siblings;
+  if (!slotRow || canonicalOutputJson(outputSlotFromRow(scope.key, slotRow)) !== canonicalOutputJson(slot)
+    || !boundedText(siblingRaw)) fail("output_image_finalization_slot_changed", 409);
+  const siblings: unknown = JSON.parse(siblingRaw);
+  if (!Array.isArray(siblings) || siblings.some(row => !Array.isArray(row) || row.length !== 4 || typeof row[0] !== "string"
+    || !["authorized", "queued", "running", "uncertain", "succeeded", "failed", "cancelled", "unavailable"].includes(String(row[1]))))
+    fail("output_image_finalization_slot_changed", 409);
+  const pendingSibling = siblings.some(row => ["authorized", "queued", "running", "uncertain"].includes((row as unknown[])[1] as string));
+  if (grantStatus === "completed" && pendingSibling) fail("output_image_finalization_grant_incoherent", 409);
+  const expectedGrantStatus: "active" | "completed" = pendingSibling ? "active" : "completed";
+  const slotIdentity = values(slotRow, slotColumns);
+  const authorizationEvent = authorizationRead.results[0];
+  const contractRaw = contractRead.results[0]?.contract;
+  if (!authorizationEvent || !boundedText(contractRaw)) fail("output_image_finalization_authorization_changed", 409);
+  const eventColumns = ["event_id", "stream_id", "sequence", "occurred_at", "recorded_at", "actor", "client_id", "correlation_id", "causation_id", "compensates_event_id", "schema_version", "type", "payload"];
+  const queueEvent = queueRead.results[0];
+  if (queueRead.results.length !== 1 || !queueEvent || !boundedText(queueEvent.queue_private_json)) fail("output_image_finalization_queue_changed", 409);
+  const queue = rememberOutputPrivateBody(scope, String(queueEvent.event_id), queueEvent.queue_private_json);
+  if (queue.job_id !== job.job_id || queue.document_id !== scope.documentId || queue.project_id !== scope.projectId || queue.actor_user_id !== scope.actorUserId
+    || queue.kind !== "generate" || queue.output_slot_id !== slot.slotId || queue.output_grant_id !== slot.grantId
+    || scope.kind === "project" && (queue.organization_id !== scope.organizationId || queue.project_access_id !== scope.projectAccessId || queue.history_owner_user_id !== scope.ownerUserId))
+    fail("output_image_finalization_queue_changed", 409);
+  const immutable = [exact("output_operation_slots", slotColumns, slotIdentity), exact("output_execution_grants", grantColumns, grantIdentity), contract,
+    { sql: "(SELECT COUNT(*) FROM output_operation_slots WHERE job_id=?)=1", bindings: [job.job_id] } satisfies OutputSqlAssertion,
+    exact("events", eventColumns, values(authorizationEvent, eventColumns)),
+    exact("events", eventColumns, values(queueEvent, eventColumns)),
+    { sql: `EXISTS(SELECT 1 FROM events anchor WHERE anchor.event_id=? AND (${queueCustody.sql}))`, bindings: [String(queueEvent.event_id), ...(queueCustody.bindings ?? [])] } satisfies OutputSqlAssertion,
+    { sql: `${contractSnapshotSql}=?`, bindings: [...contractBindings, contractRaw] } satisfies OutputSqlAssertion,
+    { sql: `${siblingSql}=?`, bindings: [scope.key, slot.grantId, slot.slotId, siblingRaw] } satisfies OutputSqlAssertion];
+  const grantDeadline = Date.parse(String(evidence.row.expires_at));
+  if (!iso(evidence.row.expires_at)) fail("output_image_finalization_grant_inactive", 403);
+  const requestCapture = outputRequestDeadlineCapture(scope), requestDeadline = outputRequestDeadline(scope, evidence.row.dispatch_scope);
+  const deadlines: OutputSqlAssertion[] = [{ sql: "EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND expires_at=? AND expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))",
+    bindings: [scope.key, slot.grantId, String(evidence.row.expires_at), admittedAt], deadlineMs: grantDeadline },
+    { sql: "EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND expires_at=? AND expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))",
+      bindings: [job.job_id, job.expires_at, admittedAt], deadlineMs: Date.parse(job.expires_at) }];
+  if (requestCapture && requestDeadline !== null) deadlines.push({ sql: `${requestCapture.sql}=?`, bindings: [...(requestCapture.bindings ?? []), String(evidence.row.dispatch_scope)], deadlineMs: requestDeadline });
+  const source = prepareOutputExecutionProof(scope, { ...current, confirmedPlan: evidence.confirmedPlan, target, preflight: evidence.preflight, targetPreflight });
+  const retained = [...retainedOutputBodyAssertions(scope), ...immutable, ...deadlines];
+  const preState: OutputSqlAssertion[] = [originalJobAssertion,
+    exact("output_operation_slots", ["scope_key", "slot_id", "status", "outcome_event_id", "updated_at"], values(slotRow, ["scope_key", "slot_id", "status", "outcome_event_id", "updated_at"])),
+    exact("output_execution_grants", ["scope_key", "grant_id", "status"], [scope.key, slot.grantId, grantStatus]),
+    { sql: "EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND (lease_expires_at IS NULL OR lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now')))", bindings: [job.job_id] }];
+  const assertions = [...source.assertions, ...retained, ...preState];
+  const [verifiedHead] = await readOutputProofBatch(env, assertions,
+    [env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(`creative:${scope.ownerUserId}`)]);
+  if (Number(verifiedHead?.results[0]?.head ?? -1) !== current.head) fail("output_revision_or_authority_changed", 409);
+  return { ...source, scope: { ...scope }, slot: { ...slot }, originalJob: { ...job }, reference: { ...reference }, settings: settings.payload as Record<string, unknown>, imageRender: settings.imageRender as OutputEventExecution["imageRender"],
+    grantStatus: grantStatus as "active" | "completed", expectedGrantStatus, payerUserId, assertions,
+    lateAssertions: [...source.publicationAssertions, ...retained, ...preState],
+    publicationAssertions(post: OutputImageFinalizationPostState): OutputSqlAssertion[] {
+      if (!boundedText(post.resultJson)) fail("output_image_finalization_evidence_too_large", 413);
+      let result: Record<string, unknown>;
+      try { result = record(JSON.parse(post.resultJson)); } catch { return fail("output_image_finalization_result_invalid", 409); }
+      if (!idPattern.test(post.completionEventId) || !iso(post.completedAt) || post.completedAt < admittedAt
+        || ["reservationId", "costReservationId", "costReservationPeriod", "costReservationMicrousd", "providerSubmissionProtocol", "providerSubmissions", "imageRecovery"]
+          .some(key => canonicalOutputJson(result[key]) !== canonicalOutputJson(checkpoint[key]))) fail("output_image_finalization_result_invalid", 409);
+      return [...source.publicationAssertions, ...retained,
+        exact("document_jobs", [...jobColumns, "status", "result_json", "error_message", "completed_at", "lease_expires_at", "updated_at"],
+          [...jobIdentity, "completed", post.resultJson, null, post.completedAt, null, post.completedAt]),
+        exact("output_operation_slots", ["scope_key", "slot_id", "status", "outcome_event_id"], [scope.key, slot.slotId, "succeeded", post.completionEventId]),
+        exact("output_execution_grants", ["scope_key", "grant_id", "status"], [scope.key, slot.grantId, expectedGrantStatus]),
+        { sql: `EXISTS(SELECT 1 FROM events event WHERE event.event_id=? AND event.stream_id=? AND event.correlation_id=? AND event.type='GenerationCompleted'
+          AND event.actor='worker:generator' AND event.client_id='server:document-job:generate')
+          AND NOT EXISTS(SELECT 1 FROM output_provider_calls calls WHERE calls.scope_key=? AND calls.slot_id=? AND calls.status IN('pending','uncertain'))`,
+          bindings: [post.completionEventId, job.stream_id, job.correlation_id, scope.key, slot.slotId] }];
+    },
+  };
+}
+
+/** Read-only proof for acknowledging an already published native Image result.
+ * A completed original grant is not reopened and no execution capability escapes. */
+export async function resolveOutputImageAcknowledgmentAuthority(env: WorkerEnv, scope: OutputScope, slot: OutputOperationSlot, payerUserId: string): Promise<OutputSqlAssertion[]> {
+  if (scope.key !== slot.scopeKey) fail("output_execution_scope_mismatch", 403);
+  const current = await loadOutputCurrentContext(env, scope);
+  const evidence = await readOutputGrantEvidence(env, scope, slot.grantId);
+  const status = String(evidence.row.status), expiresAt = String(evidence.row.expires_at);
+  if (evidence.row.payer_user_id !== payerUserId || !["authorized", "active", "completed"].includes(status) || !Number(evidence.row.deadline_current)
+    || !Number.isFinite(Date.parse(expiresAt))) fail("output_execution_grant_inactive", 403);
+  await validateOutputExecutionTarget(current, evidence, slot);
+  const requestCapture = outputRequestDeadlineCapture(scope), requestDeadline = outputRequestDeadline(scope, evidence.row.dispatch_scope);
+  if (requestDeadline !== null && (!Number.isFinite(requestDeadline) || requestDeadline <= Date.now())) fail("output_execution_authority_revoked", 403);
+  const grantKeys = ["scope_key", "grant_id", "plan_revision_id", "actor_user_id", "payer_user_id", "context_id", "preflight_id", "authorization_event_id", "maximum_microusd", "maximum_calls", "status", "expires_at", "created_at"] as const;
+  const grant: OutputSqlAssertion = {
+    sql: `EXISTS(SELECT 1 FROM output_execution_grants WHERE ${grantKeys.map(key => `${key} IS ?`).join(" AND ")} AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+    bindings: grantKeys.map(key => {
+      const value = evidence.row[key];
+      if (value === null || typeof value === "string" || typeof value === "number" && Number.isFinite(value)) return value;
+      return fail("output_execution_grant_inactive", 403);
+    }),
+  };
+  return [...current.assertions, ...retainedOutputBodyAssertions(scope), grant,
+    ...(requestCapture ? [{ sql: `${requestCapture.sql}=?`, bindings: [...(requestCapture.bindings ?? []), String(evidence.row.dispatch_scope)] }] : [])];
 }
 
 /** Reuse retained evidence only while every later event is proven nonsemantic.
@@ -564,18 +817,21 @@ export async function resolveOutputExecutionAuthority(env: WorkerEnv, scope: Out
 export function prepareOutputExecutionProof(scope: OutputScope, authority: Awaited<ReturnType<typeof resolveOutputExecutionAuthority>>) {
   if (authority.confirmedPlan.id !== scope.documentId || authority.confirmedPlan.sourceDigest !== authority.sourceDigest) fail("output_execution_scope_mismatch", 403);
   const sourceEpoch = { head: authority.head, sourceDigest: authority.sourceDigest };
-  let replaced = 0;
-  const assertions = authority.assertions.map((assertion) => {
-    if (assertion.sql === "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?" && assertion.bindings?.[0] === `creative:${scope.ownerUserId}`) {
-      // The Document and a governed origin can share this owner. Every such
-      // capture must agree on the exact same head before using the same epoch.
-      if (assertion.bindings.length !== 2 || assertion.bindings[1] !== authority.head) fail("output_source_epoch_required", 403);
-      replaced++; return outputSourceEpochAssertion(scope, sourceEpoch);
-    }
-    return assertion;
-  });
-  if (replaced < 1) fail("output_source_epoch_required", 403);
-  return { ...authority, sourceEpoch, assertions };
+  const withSourceEpoch = (sourceAssertions: readonly OutputSqlAssertion[]) => {
+    let replaced = 0;
+    const assertions = sourceAssertions.map((assertion) => {
+      if (assertion.sql === "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?" && assertion.bindings?.[0] === `creative:${scope.ownerUserId}`) {
+        // The Document and a governed origin can share this owner. Every such
+        // capture must agree on the exact same head before using the same epoch.
+        if (assertion.bindings.length !== 2 || assertion.bindings[1] !== authority.head) fail("output_source_epoch_required", 403);
+        replaced++; return outputSourceEpochAssertion(scope, sourceEpoch);
+      }
+      return assertion;
+    });
+    if (replaced < 1) fail("output_source_epoch_required", 403);
+    return assertions;
+  };
+  return { ...authority, sourceEpoch, assertions: withSourceEpoch(authority.assertions), publicationAssertions: withSourceEpoch(authority.publicationAssertions) };
 }
 
 function isGovernancePlanningCapacity(code: string) {
@@ -1258,8 +1514,14 @@ async function discloseOutputResponse(trusted: OutputTrustedContext, prepare: ()
     ...source, ...extra,
   ] as OutputSqlAssertion[];
   const checks = await trusted.env.DB.batch<Record<string, unknown>>(outputProofReadStatements(trusted.env, [...authority, ...bodies, ...metadata]));
-  const current = (start: number, count: number) => checks.length === authority.length + bodies.length + metadata.length
-    && checks.slice(start, start + count).every(result => result.success !== false && Number(result.results[0]?.current) === 1);
+  const current = (start: number, count: number) => {
+    if (checks.length !== authority.length + bodies.length + metadata.length) return false;
+    for (let index = start; index < start + count; index++) {
+      const result = checks[index];
+      if (!result || result.success !== true || Number(result.results?.[0]?.current) !== 1) return false;
+    }
+    return true;
+  };
   if (!current(0, authority.length)) fail("output_execution_authority_revoked", 403);
   if (!current(authority.length, bodies.length)) fail("output_private_evidence_unavailable", 410);
   if (!current(authority.length + bodies.length, metadata.length)) fail("output_source_changed_during_read", 409);

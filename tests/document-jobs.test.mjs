@@ -19,6 +19,12 @@ import {
 import { documentJobCompletionBindings } from "../worker/document-job-sql.ts";
 import { failedGenerationInputInspection } from "../src/model/generation-inputs.ts";
 import { readFile } from "node:fs/promises";
+import {
+  readImageRecoveryPointer,
+  readImageRecoveryStage,
+  classifyImageRecoveryStage,
+  classifyImageRecoveryCandidate,
+} from "../worker/image-server-recovery.ts";
 
 const job = (patch = {}) => ({
   jobId: "job-1",
@@ -50,6 +56,243 @@ const job = (patch = {}) => ({
   stage: "queued",
   progressMessage: "",
   ...patch,
+});
+
+// These fixtures exercise checkpoint shape and exact settled-call linkage only.
+// Candidate triage does not prove a live lease, current authority, or retained private bytes.
+const imageRecoveryFixture = ({ rendered = false, fanCache = false } = {}) => {
+  const planningReceipt = {
+    clientRequestId: "image-plan-request", provider: "openai", operation: "planning", model: "planner-model",
+    status: "completed", providerRequestId: "plan-response", requestDigest: "1".repeat(64), costMicrousd: 120,
+    inputTokens: 8, outputTokens: 4, totalTokens: 12,
+  };
+  const imageReceipt = {
+    clientRequestId: "image-render-request", provider: "openai", operation: "image", model: "image-model",
+    status: "completed", providerRequestId: "image-response", requestDigest: "2".repeat(64), costMicrousd: 42000,
+    inputTokens: 3, outputTokens: 2, totalTokens: 5,
+  };
+  const callFor = (receipt, key) => ({
+    call_key: key, stage_key: key, client_request_id: receipt.clientRequestId,
+    provider: receipt.provider, model: receipt.model, status: "settled",
+    used_microusd: receipt.costMicrousd, provider_response_id: receipt.providerRequestId, request_digest: receipt.requestDigest,
+  });
+  const output = { concept: "Retained direction", prompt: "Retained image prompt" };
+  const stage = {
+    version: 1, generationId: "generation-1", requestedEventId: "requested-1",
+    compiledEventId: "compiled-1", budgetEventId: "budget-1", planningSource: fanCache ? "fan-cache" : "provider",
+    planned: {
+      model: "planner-model", responseId: fanCache ? "" : "plan-response", raw: JSON.stringify(output), output,
+      usage: fanCache ? { inputTokens: 0, outputTokens: 0, totalTokens: 0 } : { inputTokens: 8, outputTokens: 4, totalTokens: 12 },
+      latencyMs: 17,
+    },
+    ...(rendered ? { rendered: {
+      image: {
+        providerSubmissionId: imageReceipt.clientRequestId, providerRequestId: imageReceipt.providerRequestId,
+        provider: imageReceipt.provider, model: imageReceipt.model, adapterId: "image-adapter", adapterVersion: "1",
+        prompt: "Retained image prompt", usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
+        costBreakdown: { totalMicrousd: imageReceipt.costMicrousd }, width: 1024, height: 1024, mimeType: "image/png",
+      },
+      media: { url: "/api/media/retained-image", mimeType: "image/png", contentHash: "c".repeat(64) },
+    } } : {}),
+  };
+  const pointer = {
+    version: 1, stage: rendered ? "rendered" : "planned", inputDigest: "a".repeat(64),
+    contentId: "private-stage-1", contentSha256: "b".repeat(64),
+  };
+  const receipts = [...(fanCache ? [] : [planningReceipt]), ...(rendered ? [imageReceipt] : [])];
+  const calls = [...(fanCache ? [] : [callFor(planningReceipt, "planning:initial")]), ...(rendered ? [callFor(imageReceipt, "image:initial")] : [])];
+  const checkpoint = {
+    providerSubmissionProtocol: 1, providerSubmissions: Object.fromEntries(receipts.map(receipt => [receipt.clientRequestId, receipt])),
+    imageRecovery: pointer, ...(fanCache ? {} : { plannerResponseId: "plan-response", plannerResponseIds: ["plan-response"],
+      plannerModel: "planner-model", plannerUsage: { inputTokens: 8, outputTokens: 4, totalTokens: 12 } }),
+  };
+  return { stage, pointer, checkpoint, calls };
+};
+const imageRecoveryJob = (checkpoint, patch = {}) => ({
+  kind: "generate", status: "running", attempt_count: 1, result_json: JSON.stringify(checkpoint), ...patch,
+});
+
+test("Image recovery pointers and stage bodies reject malformed retained data", () => {
+  const { pointer, stage } = imageRecoveryFixture({ rendered: true });
+  assert.strictEqual(readImageRecoveryPointer(pointer), pointer);
+  assert.strictEqual(readImageRecoveryStage(stage), stage);
+  for (const [label, value] of [
+    ["missing", null], ["array", []], ["version", { ...pointer, version: 2 }],
+    ["stage", { ...pointer, stage: "published" }], ["coerced stage", { ...pointer, stage: ["rendered"] }],
+    ["input digest", { ...pointer, inputDigest: "A".repeat(64) }],
+    ["content digest", { ...pointer, contentSha256: "b".repeat(63) }],
+    ["content ID", { ...pointer, contentId: "" }], ["extra authority", { ...pointer, grantId: "replacement-grant" }],
+  ]) assert.equal(readImageRecoveryPointer(value), null, label);
+  const invalidStage = [
+    ["generation", value => { value.generationId = ""; }],
+    ...["requestedEventId", "compiledEventId", "budgetEventId"].map(key => [key, value => { delete value[key]; }]),
+    ["planning source", value => { value.planningSource = ["provider"]; }],
+    ["raw mismatch", value => { value.planned.raw = '{"prompt":"different"}'; }],
+    ["invalid raw", value => { value.planned.raw = "{"; }],
+    ["usage sum", value => { value.planned.usage.totalTokens++; }],
+    ["negative usage", value => { value.planned.usage.inputTokens = -1; value.planned.usage.totalTokens = 3; }],
+    ["latency", value => { value.planned.latencyMs = Infinity; }],
+    ["inline bytes", value => { value.rendered.image.bytes = []; }],
+    ["provider type", value => { value.rendered.image.provider = ["openai"]; }],
+    ["media type", value => { value.rendered.image.mimeType = ["image/png"]; value.rendered.media.mimeType = value.rendered.image.mimeType; }],
+    ["dimensions", value => { value.rendered.image.width = 0; }],
+    ["external media", value => { value.rendered.media.url = "https://example.invalid/image.png"; }],
+    ["query", value => { value.rendered.media.url += "?replacement=1"; }],
+    ["fragment", value => { value.rendered.media.url += "#replacement"; }],
+    ["MIME mismatch", value => { value.rendered.media.mimeType = "image/webp"; }],
+    ["content hash", value => { value.rendered.media.contentHash = "c".repeat(63); }],
+  ];
+  for (const [label, change] of invalidStage) {
+    const invalid = structuredClone(stage); change(invalid);
+    assert.equal(readImageRecoveryStage(invalid), null, label);
+  }
+});
+
+test("Image recovery recognizes zero calls without treating missing paid evidence as unused work", () => {
+  const empty = { providerSubmissionProtocol: 1, providerSubmissions: {}, generationReceipt: {
+    provider_request_status: "not_submitted", source_transmission_status: "not_transmitted", actual_provider_call_count: 0,
+  } };
+  assert.equal(classifyImageRecoveryStage(null, empty, []), "empty");
+  assert.equal(classifyImageRecoveryCandidate(imageRecoveryJob(empty), []), "undispatched");
+  assert.equal(classifyImageRecoveryCandidate(imageRecoveryJob({}, { status: "queued", attempt_count: 0 }), []), "undispatched");
+  assert.equal(classifyImageRecoveryCandidate(imageRecoveryJob({}), []), "unresolved", "an attempted legacy job has no proven non-submission boundary");
+  for (const [label, checkpoint] of [
+    ["pointer without body", { ...empty, imageRecovery: imageRecoveryFixture().pointer }],
+    ["null pointer", { ...empty, imageRecovery: null }],
+    ...["plannerResponseId", "plannerResponseIds", "plannerUsage", "providerJobId", "providerRequestId", "artifactPlan", "productionAnchor", "productionSceneReceipts", "productionFrameReceipts", "renderedItems", "partialMediaUrl", "mediaUrl"].map(key => [key, { ...empty, [key]: key.endsWith("Ids") || key === "renderedItems" ? [] : key.endsWith("Id") || key.endsWith("Url") ? "retained" : {} }]),
+    ["transmitted", { ...empty, generationReceipt: { source_transmission_status: "transmitted" } }],
+    ["submission unknown", { ...empty, generationReceipt: { provider_request_status: "submission_unknown" } }],
+    ["call count", { ...empty, generationReceipt: { actual_provider_call_count: 1 } }],
+    ["legacy unknown", { ...empty, providerSubmissionLegacyUncertain: true }],
+  ]) assert.equal(classifyImageRecoveryStage(null, checkpoint, []), "blocked", label);
+  assert.equal(classifyImageRecoveryStage(null, empty, imageRecoveryFixture().calls), "blocked", "the exact slot has already recorded a call");
+  for (const generationReceipt of [null, [], "not_submitted", 0]) {
+    const checkpoint = { ...empty, generationReceipt };
+    assert.equal(classifyImageRecoveryStage(null, checkpoint, []), "blocked", "malformed receipt is not non-submission proof");
+    assert.equal(classifyImageRecoveryCandidate(imageRecoveryJob(checkpoint), []), "unresolved");
+  }
+});
+
+test("Image recovery links complete planned and rendered stages to every exact settled call", () => {
+  for (const fanCache of [false, true]) for (const rendered of [false, true]) {
+    const fixture = imageRecoveryFixture({ rendered, fanCache });
+    const before = structuredClone(fixture);
+    assert.equal(classifyImageRecoveryStage(fixture.stage, fixture.checkpoint, fixture.calls), rendered ? "rendered" : "planned");
+    assert.equal(classifyImageRecoveryCandidate(imageRecoveryJob(fixture.checkpoint), fixture.calls), rendered ? "rendered" : "planned");
+    assert.deepEqual(fixture, before, "classification must not rewrite retained stage bytes, receipts, or pointer identity");
+  }
+  for (const rendered of [false, true]) {
+    const resolvedModel = imageRecoveryFixture({ rendered });
+    resolvedModel.stage.planned.model = "planner-model-resolved-version";
+    assert.equal(classifyImageRecoveryStage(resolvedModel.stage, resolvedModel.checkpoint, resolvedModel.calls), rendered ? "rendered" : "planned",
+      "the retained returned model may differ from the requested model recorded by call, receipt, and checkpoint");
+  }
+  const fal = imageRecoveryFixture({ rendered: true });
+  fal.stage.rendered.image.provider = "fal";
+  fal.checkpoint.providerSubmissions["image-render-request"].provider = "fal";
+  fal.calls[1].provider = "fal";
+  assert.equal(classifyImageRecoveryStage(fal.stage, fal.checkpoint, fal.calls), "rendered");
+  const withoutProviderId = imageRecoveryFixture({ rendered: true });
+  delete withoutProviderId.stage.rendered.image.providerRequestId;
+  delete withoutProviderId.checkpoint.providerSubmissions["image-render-request"].providerRequestId;
+  withoutProviderId.calls[1].provider_response_id = null;
+  assert.equal(classifyImageRecoveryStage(withoutProviderId.stage, withoutProviderId.checkpoint, withoutProviderId.calls), "rendered", "absence must agree across image, receipt, and call");
+});
+
+test("Image recovery rejects mismatched provider, stage, request, cost, and usage receipts", () => {
+  const mutations = [
+    ["call stage", value => { value.calls[0].stage_key = "planning:replacement"; }],
+    ["client request", value => { value.calls[0].client_request_id = "replacement-request"; }],
+    ["provider", value => { value.calls[0].provider = "fal"; }],
+    ["model", value => { value.calls[0].model = "replacement-model"; }],
+    ["receipt model", value => { value.checkpoint.providerSubmissions["image-plan-request"].model = "replacement-model"; }],
+    ["requested route model", value => { value.calls[0].model = value.checkpoint.providerSubmissions["image-plan-request"].model = "replacement-model"; }],
+    ["provider response", value => { value.calls[0].provider_response_id = "replacement-response"; }],
+    ["request digest", value => { value.calls[0].request_digest = "3".repeat(64); }],
+    ["missing request digest", value => { delete value.checkpoint.providerSubmissions["image-plan-request"].requestDigest; }],
+    ["malformed request digest", value => { value.calls[0].request_digest = value.checkpoint.providerSubmissions["image-plan-request"].requestDigest = "not-a-digest"; }],
+    ["cost", value => { value.calls[0].used_microusd++; }],
+    ["unknown cost", value => { value.calls[0].used_microusd = null; }],
+    ["fractional cost", value => { value.calls[0].used_microusd = 120.5; }],
+    ["call status", value => { value.calls[0].status = "submitted"; }],
+    ["receipt operation", value => { value.checkpoint.providerSubmissions["image-plan-request"].operation = "image"; }],
+    ["receipt key", value => { value.checkpoint.providerSubmissions.replacement = value.checkpoint.providerSubmissions["image-plan-request"]; delete value.checkpoint.providerSubmissions["image-plan-request"]; }],
+    ["selected planner response", value => { value.checkpoint.plannerResponseId = "replacement-response"; }],
+    ["planner response set", value => { value.checkpoint.plannerResponseIds.push("extra-paid-response"); }],
+    ["checkpoint planner model", value => { value.checkpoint.plannerModel = "replacement-model"; }],
+    ["checkpoint planner usage", value => { value.checkpoint.plannerUsage = { inputTokens: 9, outputTokens: 3, totalTokens: 12 }; }],
+    ["retained planner response", value => { value.stage.planned.responseId = "replacement-response"; }],
+    ["missing returned planner model", value => { value.stage.planned.model = ""; }],
+    ["planner usage", value => { value.stage.planned.usage = { inputTokens: 9, outputTokens: 3, totalTokens: 12 }; }],
+    ["image submission", value => { value.stage.rendered.image.providerSubmissionId = "replacement-request"; }],
+    ["image provider response", value => { value.stage.rendered.image.providerRequestId = "replacement-response"; }],
+    ["image provider", value => { value.stage.rendered.image.provider = "fal"; }],
+    ["image model", value => { value.stage.rendered.image.model = "replacement-model"; }],
+    ["image cost", value => { value.stage.rendered.image.costBreakdown.totalMicrousd++; }],
+    ["image usage", value => { value.stage.rendered.image.usage = { inputTokens: 4, outputTokens: 1, totalTokens: 5 }; }],
+  ];
+  const invalidCallEvidence = new Set(["call stage", "client request", "provider", "model", "provider response",
+    "request digest", "missing request digest", "malformed request digest", "cost", "unknown cost", "fractional cost",
+    "call status", "receipt operation", "receipt key", "receipt model"]);
+  for (const [label, change] of mutations) {
+    const fixture = imageRecoveryFixture({ rendered: true }); change(fixture);
+    assert.equal(classifyImageRecoveryStage(fixture.stage, fixture.checkpoint, fixture.calls), "blocked", label);
+    if (invalidCallEvidence.has(label))
+      assert.equal(classifyImageRecoveryCandidate(imageRecoveryJob(fixture.checkpoint), fixture.calls), "unresolved", label);
+  }
+});
+
+test("Image recovery rejects pending, malformed, missing, duplicated, and additional paid calls", () => {
+  for (const status of ["pending", "accepted", "rejected"]) {
+    const fixture = imageRecoveryFixture(); fixture.checkpoint.providerSubmissions["image-plan-request"].status = status;
+    assert.equal(classifyImageRecoveryStage(fixture.stage, fixture.checkpoint, fixture.calls), "blocked", status);
+    assert.equal(classifyImageRecoveryCandidate(imageRecoveryJob(fixture.checkpoint), fixture.calls), "unresolved", status);
+  }
+  for (const submissions of [[], "unavailable", { broken: {} }]) {
+    const fixture = imageRecoveryFixture(); fixture.checkpoint.providerSubmissions = submissions;
+    assert.equal(classifyImageRecoveryStage(fixture.stage, fixture.checkpoint, fixture.calls), "blocked");
+    assert.equal(classifyImageRecoveryCandidate(imageRecoveryJob(fixture.checkpoint), fixture.calls), "unresolved");
+  }
+  for (const [label, change] of [
+    ["missing call", value => { value.calls.pop(); }],
+    ["missing receipt", value => { delete value.checkpoint.providerSubmissions["image-render-request"]; }],
+    ["duplicate stage", value => { value.calls[1].call_key = value.calls[1].stage_key = "planning:initial"; }],
+    ["unexpected call", value => { value.calls[1].call_key = value.calls[1].stage_key = "image:replacement"; }],
+    ["legacy uncertainty", value => { value.checkpoint.providerSubmissionLegacyUncertain = true; }],
+  ]) {
+    const fixture = imageRecoveryFixture({ rendered: true }); change(fixture);
+    assert.equal(classifyImageRecoveryStage(fixture.stage, fixture.checkpoint, fixture.calls), "blocked", label);
+    assert.equal(classifyImageRecoveryCandidate(imageRecoveryJob(fixture.checkpoint), fixture.calls), "unresolved", label);
+  }
+  const extraImage = imageRecoveryFixture({ rendered: true });
+  delete extraImage.stage.rendered; extraImage.checkpoint.imageRecovery.stage = "planned";
+  assert.equal(classifyImageRecoveryStage(extraImage.stage, extraImage.checkpoint, extraImage.calls), "blocked");
+  assert.equal(classifyImageRecoveryCandidate(imageRecoveryJob(extraImage.checkpoint), extraImage.calls), "unresolved", "a planned pointer cannot discard an existing image call");
+  const cached = imageRecoveryFixture({ fanCache: true });
+  cached.stage.planned.usage = { inputTokens: 1, outputTokens: 0, totalTokens: 1 };
+  assert.equal(classifyImageRecoveryStage(cached.stage, cached.checkpoint, cached.calls), "blocked", "fan-cache does not hide paid planning usage");
+  for (const [key, value] of [["plannerResponseId", "paid-response"], ["plannerResponseIds", ["paid-response"]],
+    ["plannerUsage", { inputTokens: 1, outputTokens: 0, totalTokens: 1 }], ["plannerModel", "paid-model"],
+    ["plannerResponseIds", []]]) {
+    const fixture = imageRecoveryFixture({ fanCache: true }); fixture.checkpoint[key] = value;
+    assert.equal(classifyImageRecoveryStage(fixture.stage, fixture.checkpoint, fixture.calls), "blocked", key);
+  }
+});
+
+test("Image recovery candidate classification is triage, not private-body or execution authority", () => {
+  const fixture = imageRecoveryFixture();
+  for (const patch of [{ kind: "preview" }, { kind: "render_document" }, { status: "committing" }, { status: "completed" }, { status: "failed" }, { status: "canceled" }])
+    assert.equal(classifyImageRecoveryCandidate(imageRecoveryJob(fixture.checkpoint, patch), fixture.calls), "observe");
+  for (const attempt_count of [-1, 1.5, "1", null])
+    assert.equal(classifyImageRecoveryCandidate(imageRecoveryJob(fixture.checkpoint, { attempt_count }), fixture.calls), "unresolved");
+  for (const result_json of ["{", "null", "[]", '"checkpoint"'])
+    assert.equal(classifyImageRecoveryCandidate(imageRecoveryJob({}, { result_json }), []), "unresolved");
+  for (const imageRecovery of [null, {}, { ...fixture.pointer, contentSha256: "wrong" }, { ...fixture.pointer, inputDigest: "wrong" }])
+    assert.equal(classifyImageRecoveryCandidate(imageRecoveryJob({ ...fixture.checkpoint, imageRecovery }), fixture.calls), "unresolved");
+  const unrelatedPointer = { ...fixture.pointer, contentId: "unread-private-stage", inputDigest: "d".repeat(64) };
+  const checkpoint = { ...fixture.checkpoint, imageRecovery: unrelatedPointer };
+  assert.equal(classifyImageRecoveryCandidate(imageRecoveryJob(checkpoint), fixture.calls), "planned", "triage cannot attest that a private body exists or belongs to this input");
+  assert.equal(classifyImageRecoveryStage(null, checkpoint, fixture.calls), "blocked", "a pointer without its verified body is not a recoverable stage");
 });
 
 test("canonical budget evidence proves no hold only for three exact ledger pairs",()=>{
@@ -129,7 +372,8 @@ test("recovers an expired running job before advancing queued document renders",
   assert.match(jobsApi,/if \(!rowIsStale\(running\)\) return;/);
   assert.match(jobsApi,/const recovered = await runDocumentJob\(env, owner, running\.job_id\);/);
   assert.match(jobsApi,/if \(recoveryBlocker&&!requiresForegroundDocumentExecution\(recoveryBlocker\)\) context\?\.waitUntil\(driveDocumentQueue\(env, user\)\);/);
-  assert.match(jobsApi,/if\(requiresForegroundDocumentExecution\(running\)\)\{await failStaleJob\(env,owner,running,unsafePaidRecovery\(running\)\?\?undefined\);continue;\}/);
+  assert.match(jobsApi,/if\(requiresForegroundDocumentExecution\(running\)\)\{if\(await failStaleJob\(env,owner,running,unsafePaidRecovery\(running\)\?\?undefined\)==="held"\)return;continue;\}/,
+    "stale foreground work retains its failure path, while a durable native hold prevents queue advancement");
   assert.match(jobsApi,/if\(requiresForegroundDocumentExecution\(next\)\)return;/);
   assert.match(jobsApi,/if \(context&&!requiresForegroundDocumentExecution\(existing\)\)/);
   assert.match(jobsApi,/stage: "queue-recovery"/);
@@ -153,16 +397,23 @@ test("a manual presentation bypasses only a verified video in another project",a
   const projectExpression=(alias)=>projectTemplate.replaceAll("${alias}",alias);
   const staleHeartbeatTemplate="${outputBinding?'':' OR updated_at<?'}";
   assert.ok(claimTemplate.includes(staleHeartbeatTemplate),"native claims must respect their longer lease without changing legacy heartbeat recovery");
-  const claimSqlFor=(outputBinding)=>claimTemplate.replaceAll('${documentJobProjectSql("active")}',projectExpression("active"))
+  const imageSnapshotTemplate="${imageRecoveryCalls?' AND status=? AND attempt_count=? AND request_json=? AND updated_at=?':''}";
+  assert.ok(claimTemplate.includes(imageSnapshotTemplate),"native Image claims must retain the exact observed job snapshot");
+  const claimSqlFor=(outputBinding,imageRecovery=false)=>claimTemplate.replaceAll('${documentJobProjectSql("active")}',projectExpression("active"))
     .replaceAll('${documentJobProjectSql("document_jobs")}',projectExpression("document_jobs"))
-    .replaceAll(staleHeartbeatTemplate,outputBinding?"":" OR updated_at<?");
-  const legacyClaimSql=claimSqlFor(false),nativeClaimSql=claimSqlFor(true);
-  for(const [sql,bindings]of[[legacyClaimSql,13],[nativeClaimSql,12]]){
+    .replaceAll(staleHeartbeatTemplate,outputBinding?"":" OR updated_at<?")
+    .replaceAll(imageSnapshotTemplate,imageRecovery?" AND status=? AND attempt_count=? AND request_json=? AND updated_at=?":"");
+  const legacyClaimSql=claimSqlFor(false),nativeClaimSql=claimSqlFor(true),nativeImageClaimSql=claimSqlFor(true,true);
+  for(const [sql,bindings]of[[legacyClaimSql,13],[nativeClaimSql,12],[nativeImageClaimSql,16]]){
     assert.doesNotMatch(sql,/\$\{/u,"every trusted SQL-template expression must be resolved before the SQLite proof");
-    assert.equal((sql.match(/\?/gu)??[]).length,bindings,"legacy and native claim parameter layouts differ only by the heartbeat cutoff");
+    assert.equal((sql.match(/\?/gu)??[]).length,bindings,"Image adds four snapshot bindings to the unchanged legacy/native layouts");
   }
   assert.match(legacyClaimSql,/ OR updated_at<\?/u);
   assert.doesNotMatch(nativeClaimSql,/ OR updated_at<\?/u);
+  assert.doesNotMatch(nativeImageClaimSql,/ OR updated_at<\?/u);
+  assert.match(nativeImageClaimSql,/AND status=\? AND attempt_count=\? AND request_json=\? AND updated_at=\?/u);
+  assert.match(jobsApi,/\.\.\.\(imageRecoveryCalls\?\[row\.status,row\.attempt_count,row\.request_json,row\.updated_at\]:\[\]\),Number\(independentPresentation\)/u,
+    "the four Image snapshot bindings must precede the existing presentation-isolation flag");
 
   const sqlite=new DatabaseSync(":memory:");
   context.after(()=>sqlite.close());
@@ -227,6 +478,42 @@ test("a manual presentation bypasses only a verified video in another project",a
   sqlite.prepare("UPDATE document_jobs SET updated_at='2000-01-01T00:00:00.000Z' WHERE job_id='long-native-lease'").run();
   assert.equal(claim("long-native-lease",true,true),0,"an old heartbeat cannot steal a native attempt while its bounded lease is current");
   assert.equal(claim("long-native-lease"),1,"legacy stale-heartbeat recovery is unchanged");
+
+  // Exercise the actual Image claim SQL only; this is not provider or publication coverage.
+  sqlite.prepare("UPDATE document_jobs SET status='completed' WHERE status='running'").run();
+  const imageRow=id=>({...sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(id)});
+  const claimImage=observed=>{
+    const bindings=[`${observed.job_id}:attempt:${observed.attempt_count+1}`,now,"2099-01-01T00:00:00.000Z",'{"stage":"preparing"}',now,
+      observed.job_id,owner,stream,now,observed.correlation_id,observed.result_json,
+      observed.status,observed.attempt_count,observed.request_json,observed.updated_at,0];
+    assert.equal(bindings.length,(nativeImageClaimSql.match(/\?/gu)??[]).length,"native Image claim binds its complete snapshot exactly once");
+    return Number(sqlite.prepare(nativeImageClaimSql).run(...bindings).changes);
+  };
+  for(const [field,value]of[["status","running"],["attempt_count",1],["request_json",'{"artifactKind":"image","requestKey":"changed"}'],["updated_at","2026-08-26T12:00:00.001Z"]]){
+    const id=`image-race-${field}`;
+    add(id,"presentation-one","generate","queued","image");
+    // Keep both queued and running states otherwise claimable, so each assertion isolates its CAS field.
+    sqlite.prepare("UPDATE document_jobs SET lease_expires_at='2000-01-01T00:00:00.000Z' WHERE job_id=?").run(id);
+    const observed=imageRow(id);
+    sqlite.prepare(`UPDATE document_jobs SET ${field}=? WHERE job_id=?`).run(value,id);
+    const current=imageRow(id);
+    assert.equal(claimImage(observed),0,`changed Image ${field} must reject the stale claimant`);
+    assert.deepEqual(imageRow(id),current,`failed Image ${field} comparison must not alter the newer row`);
+    sqlite.prepare("UPDATE document_jobs SET status='completed' WHERE job_id=?").run(id);
+  }
+  add("image-live-lease","presentation-one","generate","running","image");
+  sqlite.prepare("UPDATE document_jobs SET updated_at='2000-01-01T00:00:00.000Z' WHERE job_id='image-live-lease'").run();
+  const liveImage=imageRow("image-live-lease");
+  assert.equal(claimImage(liveImage),0,"Image snapshot matching cannot steal a current native lease");
+  assert.deepEqual(imageRow("image-live-lease"),liveImage);
+  sqlite.prepare("UPDATE document_jobs SET lease_expires_at='2000-01-01T00:00:00.000Z' WHERE job_id='image-live-lease'").run();
+  const expiredImage=imageRow("image-live-lease");
+  assert.equal(claimImage(expiredImage),1,"the exact expired native Image snapshot can be claimed");
+  const claimedImage=imageRow("image-live-lease");
+  assert.equal(claimedImage.attempt_count,expiredImage.attempt_count+1);
+  assert.equal(claimedImage.correlation_id,`${expiredImage.job_id}:attempt:${expiredImage.attempt_count+1}`);
+  assert.equal(claimImage(expiredImage),0,"a second claimant cannot reuse the consumed Image snapshot");
+  assert.deepEqual(imageRow("image-live-lease"),claimedImage);
 });
 
 test("atomically hands both paid-render reservations to the recovered provider attempt", async (context) => {

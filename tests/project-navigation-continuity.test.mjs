@@ -1602,8 +1602,21 @@ test("F intelligence static navigation cannot expose a denied current Source / "
       assert.equal(h.store.routeDataReady(entry.path), false);
       assert.equal(h.store.sourceOwnershipActive(h.store.captureSourceOwnership()), false);
       assert.equal(f.components().some(owner => F_INTELLIGENCE_ENTRIES.some(value => value.tag === owner.tag)), false);
-      const main = f.find("main", node => node.attributes.id === "main-content");
-      assert.equal(main.attributes["aria-busy"], "true");
+      assert.equal(h.store.documentRouteState(entry.path), "unavailable", "The actual denial has settled, not remained a pending read");
+      const tree = f.tree(), mains = tree.visible("main").filter(node => node.owner === f.host && node.attributes.id === "main-content");
+      assert.equal(mains.length, 1); const main = mains[0];
+      assert.equal(main.attributes["aria-busy"], "false", "A terminal unavailable Source is not announced as still loading");
+      const statuses = tree.visible("section").filter(node => node.owner === f.host && node.parent === main
+        && node.attributes.role === "status" && String(node.attributes.class).split(/\s+/u).includes("application-loading"));
+      assert.equal(statuses.length, 1, "One actual owned unavailable placeholder replaces the private route host");
+      const status = statuses[0];
+      assert.ok(status.text.includes(f.i18n.t("shell.documentUnavailable")));
+      assert.ok(status.text.includes(f.i18n.t("shell.documentUnavailableDetail")));
+      const retries = tree.visible("button").filter(node => node.owner === f.host && node.parent?.parent === status
+        && node.text === f.i18n.t("action.retry"));
+      assert.equal(retries.length, 1, "The unavailable view exposes its existing owned Retry control");
+      assert.ok(retries[0].port?.isConnected && f.renderer.nodes.includes(retries[0].port));
+      assert.ok(String(retries[0].handlers.click).includes("this.store.load()"), "Retry retains the actual Store load handler without activating it");
       assert.equal(h.store.eventView.get().length, 0);
       assert.deepEqual(h.store.content.get(), {});
     }
@@ -5238,9 +5251,12 @@ function cLibraryPackageNativeOccurrences(t, f, owner, { resetButtons = false } 
         const first = native.find(predicate);
         if (!first || first.owner !== owner || !queues.has(first.full)) return first;
         const matches = queues.get(first.full);
-        assert.ok(matches.every(predicate), "One actual owner and exact emitted opening token");
+        assert.ok(matches.every(port => port.owner === owner && port.full === first.full), "One actual owner and exact emitted opening token");
         const index = occurrences.get(first.full) ?? 0;
         assert.ok(index < matches.length, "Each parsed occurrence has an actual current native port");
+        // The shared parser now consumes each port once. Its current predicate
+        // must accept the entire remaining queue, not already consumed ports.
+        assert.ok(matches.slice(index).every(predicate), "Every remaining occurrence satisfies the current unused-port lookup");
         const port = matches[index]; occurrences.set(first.full, index + 1);
         assert.equal(used.has(port), false, "Distinct same-token occurrences cannot alias one native port"); used.add(port);
         return port;

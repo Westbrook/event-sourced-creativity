@@ -1,6 +1,6 @@
 import { outputNavigationMatches, type OutputNavigationReference, type OutputNavigationSection } from "../model/output-navigation";
 import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus, type OutputNavigationFocusLease } from "./output-navigation-focus";
-import { html, noChange, nothing, type PropertyValues } from "lit";
+import { html, noChange, nothing } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import { FormaElement } from "./forma-element";
 import { copyInterfaceText } from "./design-system/clipboard";
@@ -166,7 +166,7 @@ export class FormaOutputRequirements extends FormaElement {
     super.disconnectedCallback();
   }
 
-  protected override willUpdate(_changed: PropertyValues) {
+  protected override willUpdate() {
     const sourceScope = this.#sourceRefreshScopeKey();
     if (sourceScope !== this.#sourceRefreshScope) {
       this.#sourceRefreshScope = sourceScope; this.#sourceRefreshEpoch += 1; this.#sourceRefreshing = false;
@@ -727,7 +727,8 @@ export class FormaOutputRequirements extends FormaElement {
     const snapshot = this.#snapshot();
     const target = snapshot?.confirmedPlan?.plan.targets.find((entry) => entry.id === targetId);
     if (!this.#runSelectionEditingAllowed(snapshot, shownScope) || !target?.selected || target.blocking_issues.length) return;
-    (event.target as HTMLInputElement).checked ? this.#selectedTargets.add(targetId) : this.#selectedTargets.delete(targetId);
+    if ((event.target as HTMLInputElement).checked) this.#selectedTargets.add(targetId);
+    else this.#selectedTargets.delete(targetId);
     this.#nativeRequestEpoch += 1; this.#retirePreflight(); this.requestUpdate();
   }
   #clearRunSelection(shownScope: string) {

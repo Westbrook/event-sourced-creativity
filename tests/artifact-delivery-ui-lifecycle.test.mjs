@@ -6,6 +6,7 @@ import ts from "typescript";
 import { webcrypto } from "node:crypto";
 import { foldEvents } from "../src/model/events.ts";
 import { documentArtifactRevision, parseDocumentArtifactContent } from "../src/model/document-artifacts.ts";
+import { DEFAULT_MODEL3D_SETTINGS } from "../src/model/model3d.ts";
 import { artifactDeliveryFor } from "../src/state/artifact-delivery-context.ts";
 import { nextActionFacts } from "../src/state/next-action-context.ts";
 import { creativeActionSourceRevision } from "../src/model/workspace-intelligence.ts";
@@ -84,7 +85,8 @@ const cell = value => ({ get: () => value, set: next => { value = next; } });
 const settle = async () => { await new Promise(setImmediate); };
 
 function fixture({ kind = "short_story" } = {}) {
-  const state = { authority: "scope-A", readable: true, documentId: "A", route: "/library", events: [], content: {}, requests: [], closeQueue: [], digestGate: null, saveGate: null, beforeUpdate: null };
+  const state = { authority: "scope-A", readable: true, documentId: "A", route: "/library", events: [], content: {}, requests: [], closeQueue: [], digestGate: null, saveGate: null, beforeUpdate: null,
+    hotCalls: [], projectContext: null, currentDialog: null, modalOpens: true, afterModal: null, contentGate: null };
   const trace = [];
   const append = (type, payload) => { const row = event(state.events.length + 1, type, payload); state.events.push(row); return row; };
   append("ProjectCreated", { project_id: "project", name: "Exact delivery lifecycle" });
@@ -103,8 +105,9 @@ function fixture({ kind = "short_story" } = {}) {
   };
   const store = {
     ui: { instrumentation: false, libraryView: "outputs" },
-    session: { get: () => ({ user: { userId: "owner" }, capabilities: state.readable ? ["project.read", "project.author", "project.output.request"] : [] }) },
-    captureAuthorizationScope: () => state.readable ? { key: state.authority, shared: false } : null,
+    session: { get: () => ({ user: { userId: "owner" }, capabilities: state.readable ? ["project.read", "project.author", "project.output.request"] : [],
+      ...(state.projectContext ? { projectContext: state.projectContext } : {}) }) },
+    captureAuthorizationScope: () => state.readable ? { key: state.authority, shared: Boolean(state.projectContext) } : null,
     authorizationScopeActive: scope => state.readable && scope?.key === state.authority,
     projection: { get: projection }, events: { get: () => state.events }, eventView: { get: () => state.events }, content: { get: () => state.content }, asOf: cell(Infinity),
     canvasProjection: cell({ selectedCanvasId: "", canvases: [] }), projectNotifications: cell([]), reviewInbox: cell([]), documentJobs: cell([]), loading: cell(false),
@@ -112,11 +115,13 @@ function fixture({ kind = "short_story" } = {}) {
     // These legacy cases set routes directly; no Store-owned focus handoff exists.
     captureWorkspaceNavigationFocus: () => null,
     toast: value => trace.push(["toast", value]),
-    ensurePrivateContent: async id => { state.requests.push(["content", id]); },
+    ensurePrivateContent: async id => { state.requests.push(["content", id]); if (state.contentGate) await state.contentGate.promise; },
+    // Receipt-dispatch observation only: not the hot Store pipeline or server admission.
+    hot: async input => { state.hotCalls.push(structuredClone(input)); trace.push(["hot", input.type]); },
     reviseDocumentArtifact: async (id, input) => { state.requests.push(["save", id, structuredClone(input)]); if (state.saveGate) await state.saveGate.promise; commit(id, input.markdown); return true; },
     restoreDocumentArtifact: async (id, revision, expectedRevision) => { state.requests.push(["restore", id, revision, expectedRevision]); commit(id, "Restored " + id, { restored_from_revision: revision }); return true; },
   };
-  installSourceOwnershipPort(store);
+  const sourceOwnership = installSourceOwnershipPort(store);
   class HTMLElement {
     constructor(name) { this.name = name; this.isConnected = true; }
     focus() { document.activeElement = this; document.dispatchEvent({ type: "focusin", target: this }); trace.push(["focus", this.name]); }
@@ -152,9 +157,10 @@ function fixture({ kind = "short_story" } = {}) {
     },
     classList: { contains: value => value === "document-artifact-view" },
   };
-  const ensureModalDialog = target => { target.open = true; trace.push(["modal", "viewer"]); return true; };
+  state.currentDialog = dialog;
+  const ensureModalDialog = target => { target.open = state.modalOpens; trace.push(["modal", "viewer"]); state.afterModal?.(target); return target.open; };
   const crypto = { subtle: { digest: (...args) => state.digestGate ? state.digestGate.promise : webcrypto.subtle.digest(...args) } };
-  const names = ["#privateSourceCurrent", "openArtifactById", "#openArtifact", "#artifactBinding", "#currentDeliveryBinding", "#refreshDeliveryBinding", "#showArtifactIntent", "#clearPrivateGenerationInputs", "#clearSceneCost", "#closeViewerPopovers", "#clearCreationDraft", "#startArtifactEdit", "#cancelArtifactEdit", "#saveArtifactEdit", "#restoreRevision", "#closeArtifactViewer", "#setViewerFocus", "#cancelViewer", "updated"];
+  const names = ["#privateSourceCurrent", "openArtifactById", "#openArtifact", "#artifactBinding", "#currentDeliveryBinding", "#refreshDeliveryBinding", "#showArtifactIntent", "#clearPrivateGenerationInputs", "#clearSceneCost", "#closeViewerPopovers", "#clearCreationDraft", "#retireRequestReview", "#startArtifactEdit", "#cancelArtifactEdit", "#saveArtifactEdit", "#restoreRevision", "#closeArtifactViewer", "#setViewerFocus", "#cancelViewer", "updated"];
   const code = membersCode(documentTree, names);
   const declared = [...names, "#targetDocumentId", "#revealWorkbenchPane", "#viewDialog", "#createDialog", "#content", "#loadHistory", "#bindCompletedWorkflowStage"];
   const fields = fieldsCode(documentTree, code, declared, closeExpression);
@@ -167,7 +173,7 @@ function fixture({ kind = "short_story" } = {}) {
     'dispatchEvent(event){trace.push(["event",event.type]);return true;}',
     "#targetDocumentId(){return this.documentId;}",
     'async #revealWorkbenchPane(){trace.push(["reveal",this.documentId]);}',
-    "#viewDialog(){return dialog;}", "#createDialog(){return null;}",
+    "#viewDialog(){return state.currentDialog;}", "#createDialog(){return null;}",
     "#content(artifact){return parseDocumentArtifactContent(store.content.get()[artifact.contentRef]);}",
     'async #loadHistory(artifact){trace.push(["history",artifact.id]);}',
     "#bindCompletedWorkflowStage(){}",
@@ -182,16 +188,17 @@ function fixture({ kind = "short_story" } = {}) {
     "restoreForTest(artifact,revision){return this.#restoreRevision(artifact,revision);}",
     "intentForTest(artifact,intent){return this.#showArtifactIntent(artifact,intent);}",
     "currentForTest(){return this.#viewerCurrent?.()??false;}",
+    "openDirectForTest(artifact){return this.#openArtifact(artifact);}",
     "snapshotForTest(){return{activeId:this.#activeId,editingId:this.#editingId,draft:this.#editMarkdown,reviewNote:this.#reviewNote,reviewOpen:this.#reviewPanelOpen,binding:this.#deliveryBinding,bindingLoading:this.#deliveryBindingLoading};}",
     code, "})",
   ].join("\n");
-  const Probe = new Function("store", "state", "dialog", "trace", "document", "HTMLElement", "crypto", "ensureModalDialog", "documentArtifactRevision", "parseDocumentArtifactContent", "artifactDeliveryFor", "nextActionFacts", "captureOutputNavigationFocus", "fetch",
+  const Probe = new Function("store", "state", "dialog", "trace", "document", "HTMLElement", "crypto", "ensureModalDialog", "documentArtifactRevision", "parseDocumentArtifactContent", "artifactDeliveryFor", "nextActionFacts", "captureOutputNavigationFocus", "DEFAULT_MODEL3D_SETTINGS", "fetch",
     "return " + ts.transpileModule(probeSource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText)(
-      store, state, dialog, trace, document, HTMLElement, crypto, ensureModalDialog, documentArtifactRevision, parseDocumentArtifactContent, artifactDeliveryFor, nextActionFacts, captureOutputNavigationFocus,
+      store, state, dialog, trace, document, HTMLElement, crypto, ensureModalDialog, documentArtifactRevision, parseDocumentArtifactContent, artifactDeliveryFor, nextActionFacts, captureOutputNavigationFocus, DEFAULT_MODEL3D_SETTINGS,
       async () => assert.fail("No network or provider operation is authorized by the fixture"),
     );
   const host = new Probe();
-  const f = { state, store, host, dialog, document, opener, trace, artifact, commit, HTMLElement, append };
+  const f = { state, store, host, dialog, document, opener, trace, artifact, commit, HTMLElement, append, sourceOwnership };
   f.flushClose = () => { while (state.closeQueue.length) state.closeQueue.shift()(); };
   f.library = () => {
     // One mounted child identity; forward the same actual viewer operation.
@@ -497,5 +504,178 @@ test("an older opening cannot report ownership of the replacement dialog after i
   assert.equal(await older, false, "opening success belongs to the exact viewer transaction, not any currently open dialog");
   assert.deepEqual(f.trace, []);
   assert.equal(f.dialog.open, true);
+  assert.equal(f.state.requests.length, 0);
+});
+
+const viewedPayload = artifact => ({ type: "DocumentArtifactViewed", payload: {
+  artifact_id: artifact.id, artifact_kind: artifact.kind, document_id: artifact.documentId, source_surface: "library-artifact-gallery",
+} });
+
+test("artifact-open receipt: a successful current connected opening emits the unchanged personal payload once", async () => {
+  const f = fixture(), target = f.artifact("A"); f.store.ui.instrumentation = true;
+  assert.equal(await f.host.openArtifactById(target.id), true);
+  assert.equal(f.dialog.isConnected, true); assert.equal(f.dialog.open, true); assert.equal(f.state.currentDialog, f.dialog);
+  assert.deepEqual(f.state.hotCalls, [viewedPayload(target)]);
+  assert.deepEqual(f.trace.filter(item => item[0] === "modal" || item[0] === "hot"), [["modal", "viewer"], ["hot", "DocumentArtifactViewed"]]);
+  assert.equal(f.state.requests.length, 0);
+  f.host.updated(); f.host.updated();
+  assert.equal(f.state.hotCalls.length, 1, "ordinary rerenders are not new openings");
+  f.commit(target.id, "Later authorized edit"); await f.host.refreshForTest(f.artifact("A"));
+  assert.equal(f.host.currentForTest(), true); assert.equal(f.dialog.open, true);
+  assert.equal(f.state.hotCalls.length, 1, "editing an open viewer is not another opening receipt");
+});
+
+for (const boundary of ["missing dialog", "disconnected dialog", "failed closed", "synchronously closed", "replacement dialog", "throwing modal"]) {
+  test("artifact-open receipt: " + boundary + " never becomes a successful-opening receipt", async () => {
+    const f = fixture(), target = f.artifact("A"); f.store.ui.instrumentation = true;
+    if (boundary === "missing dialog") f.state.currentDialog = null;
+    if (boundary === "disconnected dialog") f.dialog.isConnected = false;
+    if (boundary === "failed closed") f.state.modalOpens = false;
+    if (boundary === "synchronously closed") f.state.afterModal = dialog => { dialog.open = false; };
+    if (boundary === "replacement dialog") f.state.afterModal = () => { f.state.currentDialog = { ...f.dialog, listeners: new Map() }; };
+    if (boundary === "throwing modal") f.state.afterModal = () => { throw new Error("Synthetic modal failure"); };
+    const opening = f.host.openArtifactById(target.id);
+    if (boundary === "throwing modal") await assert.rejects(opening, /Synthetic modal failure/u);
+    else await opening;
+    assert.deepEqual(f.state.hotCalls, [], "the receipt guard must not rely on a captured dialog's open flag alone");
+    assert.equal(f.state.requests.length, 0);
+  });
+}
+
+for (const boundary of ["authorization", "source generation", "component disconnect", "artifact removal", "artifact source identity", "editable revision", "retained bytes", "caller", "selected document"]) {
+  test("artifact-open receipt: synchronous modal callback changes " + boundary + " before observation", async () => {
+    const f = fixture(), target = f.artifact("A"); f.store.ui.instrumentation = true; let caller = true;
+    f.state.afterModal = () => {
+      if (boundary === "authorization") f.state.authority = "scope-B";
+      if (boundary === "source generation") { f.sourceOwnership.retire(); f.sourceOwnership.restore(); }
+      if (boundary === "component disconnect") f.host.isConnected = false;
+      if (boundary === "artifact removal") f.state.events = f.state.events.filter(row => row.eventId !== target.sourceEventId);
+      if (boundary === "artifact source identity") f.state.events = f.state.events.map(row => row.eventId === target.sourceEventId ? { ...row, eventId: "replacement-source" } : row);
+      if (boundary === "editable revision") f.append("DocumentArtifactEdited", { artifact_id: target.id, document_id: target.documentId, revision: 1 });
+      if (boundary === "retained bytes") f.state.content[target.contentRef] += " ";
+      if (boundary === "caller") caller = false;
+      if (boundary === "selected document") f.host.documentId = "B";
+    };
+    await f.host.openArtifactById(target.id, { current: () => caller });
+    assert.deepEqual(f.state.hotCalls, []);
+    assert.equal(f.trace.filter(item => item[0] === "modal").length, 1, "the negative occurs during the actual modal-opening port");
+    assert.equal(f.state.requests.length, 0);
+  });
+}
+
+for (const boundary of ["authorization", "source generation", "component disconnect", "instrumentation", "shared context", "selected document"]) {
+  test("artifact-open receipt: observation-time required callback cannot withdraw " + boundary + " and still emit", async () => {
+    const f = fixture(), target = f.artifact("A"); f.store.ui.instrumentation = true; let armed = false, observed = 0;
+    f.state.afterModal = () => { armed = true; };
+    await f.host.openArtifactById(target.id, { current: () => {
+      if (armed) {
+        armed = false; observed++;
+        if (boundary === "authorization") f.state.authority = "scope-B";
+        if (boundary === "source generation") { f.sourceOwnership.retire(); f.sourceOwnership.restore(); }
+        if (boundary === "component disconnect") f.host.isConnected = false;
+        if (boundary === "instrumentation") f.store.ui.instrumentation = false;
+        if (boundary === "shared context") f.state.projectContext = { organizationId: "org", projectAccessId: "access", permissions: [] };
+        if (boundary === "selected document") f.host.documentId = "B";
+      }
+      return true;
+    } });
+    assert.equal(observed, 1, "the ordinary caller callback is armed only after the dialog opens");
+    assert.deepEqual(f.state.hotCalls, [], "source/auth/personal instrumentation must be checked after invoking caller code");
+  });
+}
+
+test("artifact-open receipt: a synchronous nested opening supersedes the earlier viewer even if its dialog stays open", async () => {
+  const f = fixture(), target = f.artifact("A"); f.store.ui.instrumentation = true; let nested;
+  f.state.afterModal = dialog => {
+    f.state.afterModal = null;
+    nested = f.host.openDirectForTest(target);
+    dialog.open = true;
+  };
+  assert.equal(await f.host.openArtifactById(target.id), false);
+  assert.ok(nested); assert.equal(await nested, true);
+  assert.deepEqual(f.state.hotCalls, [viewedPayload(target)], "only the replacement viewer owns a successful opening receipt");
+  assert.equal(f.host.currentForTest(), true); assert.equal(f.dialog.open, true);
+});
+
+for (const phase of ["content", "digest", "update"]) {
+  for (const boundary of ["authorization", "source generation", "editable revision", "artifact identity"]) {
+    test("artifact-open receipt: stale " + boundary + " during awaited " + phase + " emits nothing", async () => {
+      const f = fixture(), target = f.artifact("A"), retained = f.state.content[target.contentRef], gate = deferred(), entered = deferred();
+      f.store.ui.instrumentation = true; let updates = 0;
+      if (phase === "content") { delete f.state.content[target.contentRef]; f.state.contentGate = gate; }
+      if (phase === "digest") f.state.digestGate = gate;
+      if (phase === "update") f.state.beforeUpdate = () => { if (++updates === 2) { entered.resolve(); return gate.promise; } };
+      const opening = f.host.openArtifactById(target.id);
+      if (phase === "update") await entered.promise; else await settle();
+      if (phase === "content") assert.deepEqual(f.state.requests, [["content", target.contentRef]]);
+      if (phase === "update") assert.equal(updates, 2);
+      assert.equal(f.dialog.open, false); assert.deepEqual(f.state.hotCalls, []);
+      if (boundary === "authorization") f.state.authority = "scope-B";
+      if (boundary === "source generation") { f.sourceOwnership.retire(); f.sourceOwnership.restore(); }
+      if (boundary === "editable revision") f.append("DocumentArtifactEdited", { artifact_id: target.id, document_id: target.documentId, revision: 1 });
+      if (boundary === "artifact identity") f.state.events = f.state.events.map(row => row.eventId === target.sourceEventId ? { ...row, eventId: "new-source" } : row);
+      if (phase === "content") f.state.content[target.contentRef] = retained;
+      gate.resolve(phase === "digest" ? await digest(retained) : undefined);
+      assert.equal(await opening, false);
+      assert.deepEqual(f.state.hotCalls, []); assert.equal(f.trace.some(item => item[0] === "modal"), false);
+    });
+  }
+}
+
+for (const phase of ["digest", "update"]) {
+  test("artifact-open receipt: changed retained bytes during awaited " + phase + " cannot be observed under the earlier opening", async () => {
+    const f = fixture(), target = f.artifact("A"), retained = f.state.content[target.contentRef], gate = deferred(), entered = deferred();
+    f.store.ui.instrumentation = true; let updates = 0;
+    if (phase === "digest") f.state.digestGate = gate;
+    else f.state.beforeUpdate = () => { if (++updates === 2) { entered.resolve(); return gate.promise; } };
+    const opening = f.host.openArtifactById(target.id);
+    if (phase === "update") await entered.promise; else await settle();
+    if (phase === "update") assert.equal(updates, 2);
+    f.state.content[target.contentRef] = retained + " ";
+    gate.resolve(phase === "digest" ? await digest(retained) : undefined);
+    assert.equal(await opening, false); assert.deepEqual(f.state.hotCalls, []);
+  });
+}
+
+test("artifact-open receipt: newly loaded current content may open without persisting content identity metadata", async () => {
+  const f = fixture(), target = f.artifact("A"), retained = f.state.content[target.contentRef], gate = deferred();
+  f.store.ui.instrumentation = true; delete f.state.content[target.contentRef]; f.state.contentGate = gate;
+  const opening = f.host.openArtifactById(target.id); await settle();
+  f.state.content[target.contentRef] = retained; gate.resolve();
+  assert.equal(await opening, true); assert.deepEqual(f.state.hotCalls, [viewedPayload(target)]);
+  assert.deepEqual(f.state.requests, [["content", target.contentRef]]);
+});
+
+for (const condition of ["instrumentation off", "shared context", "instrumentation withdrawn while opening", "shared context during modal"]) {
+  test("artifact-open receipt: " + condition + " does not broaden personal instrumentation", async () => {
+    const f = fixture(), target = f.artifact("A");
+    f.store.ui.instrumentation = condition !== "instrumentation off";
+    if (condition === "shared context") f.state.projectContext = { organizationId: "org", projectAccessId: "access", permissions: [] };
+    if (condition === "instrumentation withdrawn while opening") f.state.afterModal = () => { f.store.ui.instrumentation = false; };
+    if (condition === "shared context during modal") f.state.afterModal = () => { f.state.projectContext = { organizationId: "org", projectAccessId: "access", permissions: [] }; };
+    await f.host.openArtifactById(target.id);
+    assert.deepEqual(f.state.hotCalls, []); assert.equal(f.state.requests.length, 0);
+  });
+}
+
+test("artifact-open receipt: receipt observes opening, not completion of a later pending intent", async () => {
+  const f = fixture({ kind: "slides" }), target = f.artifact("A"), gate = deferred(), entered = deferred();
+  f.store.ui.instrumentation = true; let updates = 0;
+  f.state.beforeUpdate = () => { if (++updates === 3) { entered.resolve(); return gate.promise; } };
+  const older = f.host.openArtifactById(target.id, { intent: "export" }); await entered.promise;
+  assert.deepEqual(f.state.hotCalls, [viewedPayload(target)], "opening is observed before the unrelated intent completes");
+  f.state.beforeUpdate = null; f.dialog.close(); f.flushClose(); gate.resolve();
+  assert.equal(await older, false);
+  assert.deepEqual(f.state.hotCalls, [viewedPayload(target)], "the historical opening is neither replayed nor rewritten as intent completion");
+  assert.equal(f.trace.some(item => item[0] === "click"), false); assert.equal(f.state.requests.length, 0);
+});
+
+test("artifact-open receipt: direct gallery opening preserves an unchanged target document that differs from the artifact document", async () => {
+  const f = fixture(), target = f.artifact("B"); f.store.ui.instrumentation = true;
+  assert.equal(f.host.documentId, "A"); assert.equal(target.documentId, "B");
+  assert.equal(await f.host.openDirectForTest(target), true);
+  assert.equal(f.host.documentId, "A", "gallery opening does not rewrite its unchanged host target");
+  assert.equal(f.host.snapshotForTest().activeId, target.id); assert.equal(f.dialog.open, true);
+  assert.deepEqual(f.state.hotCalls, [viewedPayload(target)], "receipt identifies the opened artifact without forcing target/artifact equality");
   assert.equal(f.state.requests.length, 0);
 });

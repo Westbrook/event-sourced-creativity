@@ -748,7 +748,12 @@ const TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types";
 const PRESENTATION_NAMESPACES = new Set(["http://schemas.openxmlformats.org/presentationml/2006/main", "http://purl.oclc.org/ooxml/presentationml/main"]);
 const OFFICE_NAMESPACES = new Set(["http://schemas.openxmlformats.org/officeDocument/2006/relationships", "http://purl.oclc.org/ooxml/officeDocument/relationships"]);
 function xmlValue(value: string): string {
-  requireFact(!/[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]/u.test(value), "invalid_office_xml_character");
+  for (let index = 0; index < value.length; index += 1) {
+    const point = value.charCodeAt(index);
+    if (point <= 0x08 || point === 0x0b || point === 0x0c || point >= 0x0e && point <= 0x1f || point === 0xfffe || point === 0xffff) {
+      requireFact(false, "invalid_office_xml_character");
+    }
+  }
   return value.replace(/&([^;]*);|&/gu, (whole, entity: string | undefined) => {
     const predefined: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
     if (entity && Object.hasOwn(predefined, entity)) return predefined[entity]!;

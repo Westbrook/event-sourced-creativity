@@ -20,6 +20,7 @@ import { combineAuthoringGuards, prepareAuthoringEventBatch, prepareAuthoringMed
 import { OUTPUT_REQUIREMENT_EVENT_TYPES, isOutputRequirementEvent } from "../src/model/output-requirement-events.ts";
 import { outputAuthoringBlocksFromEvents, outputRequirementHeadGuard, prepareOutputRequirementClientEvents } from "./output-requirement-event-guards.ts";
 import { validateModel3dAssetEvents } from "./model3d-event-guards.ts";
+import { assistantOwnSendGuard, assistantOwnSendProjectIndexGuard, assistantStructuredOwnSendGuard, assistantStructuredOwnSendProjectIndexGuard, type AssistantContextReadObserver, type AssistantContextReadDescriptor, type AssistantOwnSendFootprint, type AssistantStructuredOwnSendFootprint } from "./assistant-context-source.ts";
 
 const CONTEXT_COOKIE="forma_project_context";
 const PROJECT_EVENT_TYPES=new Set([
@@ -249,28 +250,65 @@ export function prepareProjectResourceScopeStatement(env:WorkerEnv,scope:Project
 }
 
 /** Reuse the ordinary event allowlist and document membership predicate. */
-export function projectDocumentPublicationEvents(events:CreativeEvent[],projectId:string,documentId:string){
+export function projectDocumentPublicationEvents(events:CreativeEvent[],projectId:string,documentId:string|null){
   const empty=new Set<string>();
-  const index:ProjectIndex={projectId,documentIds:new Set([documentId]),blockIds:empty,relationIds:empty,collectionIds:empty,outputIds:empty,artifactIds:empty,
+  const index:ProjectIndex={projectId,documentIds:new Set(documentId?[documentId]:[]),blockIds:empty,relationIds:empty,collectionIds:empty,outputIds:empty,artifactIds:empty,
     generationIds:empty,referenceIds:empty,canvasIds:empty,canvasItemIds:empty,arrangementIds:empty,contextSetIds:empty,
     canvasItemBoards:new Map(),arrangementBoards:new Map(),contextSetBoards:new Map()};
-  return events.filter((event)=>event.payload.document_id===documentId&&scopedEvent(event,index));
+  return events.filter((event)=>(documentId?event.payload.document_id===documentId:!event.payload.document_id)&&scopedEvent(event,index));
 }
 
 /** Rebuild an exact manifest from one immutable owner history; ambiguous/private rows never enter it. */
 export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string}){
   const ownerStream=`creative:${input.ownerUserId}`;
+  const ledgerDb=env.DB;
+  const {structuredConversationLedgerSchema}=await import("./memory-live-store.ts");
+  const ledgerSchema=await structuredConversationLedgerSchema(env);
+  const {nativeStructuredOriginSchema,nativeStructuredOriginMinimizedIntegrity}=await import("./memory-native-origin.ts");
+  const originSchema=await nativeStructuredOriginSchema(env);
+  const minimizedIntegrity=originSchema.present?nativeStructuredOriginMinimizedIntegrity():{sql:"1",bindings:[]};
+  const ledgerSchemaAssertion=()=>ledgerDb.prepare(`SELECT CASE WHEN (${ledgerSchema.guard.condition}) AND (${originSchema.guard.condition}) AND (${minimizedIntegrity.sql}) THEN 1
+    ELSE json('memory_structured_schema_changed') END AS verified`).bind(...ledgerSchema.guard.bindings,...originSchema.guard.bindings,...minimizedIntegrity.bindings);
+  const sameLedgerDatabase=()=>{if(env.DB!==ledgerDb)throw new Error("memory_structured_database_changed");};
+  // An incomplete acknowledgement is unconfirmed, not evidence that earlier chunks rolled back.
+  const confirmLedgerBatch=(results:Awaited<ReturnType<WorkerEnv["DB"]["batch"]>>,count:number)=>{
+    if(!Array.isArray(results)||results.length!==count||Array.from(results).some(result=>!result||typeof result!=="object"||Array.isArray(result)
+      ||!Object.hasOwn(result,"success")||result.success!==true||(result as typeof result & {error?: unknown}).error!==undefined
+      ||!Object.hasOwn(result,"results")||!Array.isArray(result.results)))throw new Error("project_scope_sync_unconfirmed");
+    for(const index of [0,count-1]){
+      const rows=results[index]!.results;
+      if(rows.length!==1||!rows[0]||typeof rows[0]!=="object"||Array.isArray(rows[0])
+        ||Object.keys(rows[0]).length!==1||Object.keys(rows[0])[0]!=="verified"
+        ||(rows[0] as Record<string,unknown>).verified!==1)throw new Error("project_scope_sync_unconfirmed");
+    }
+    for(let index=1;index<count-1;index++){
+      const result=results[index]!,meta=result.meta,changes=meta?.changes;
+      if(!Object.hasOwn(result,"meta")||!meta||typeof meta!=="object"||Array.isArray(meta)||!Object.hasOwn(meta,"changes")
+        ||!Number.isSafeInteger(changes)||Number(changes)<0)throw new Error("project_scope_sync_unconfirmed");
+    }
+  };
+  sameLedgerDatabase();
+  // Canonical minimized headers grant no custody, and their removed scope fields
+  // are never interpreted as personal scope. Reject recreated answer/manifest
+  // bodies or sidecars even when the ordinary project fast path would return.
+  // The user's original authored content is deliberately outside this proof.
+  const originIntegrity=await ledgerSchemaAssertion().all();
+  sameLedgerDatabase();
+  confirmLedgerBatch([originIntegrity],1);
   // The fast-path decision and its exact custody counts share one SQLite snapshot.
-  const state=await env.DB.prepare(`SELECT migration.status,migration.last_owner_sequence,
+  const state=await env.DB.prepare(`SELECT CASE WHEN (${ledgerSchema.guard.condition}) AND (${originSchema.guard.condition}) AND (${minimizedIntegrity.sql}) THEN 1
+      ELSE json('memory_structured_schema_changed') END AS origin_integrity,migration.status,migration.last_owner_sequence,
     (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?) AS owner_head,
     (SELECT COALESCE(MAX(project_sequence),0) FROM project_event_scopes WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=?) AS event_count,
     (SELECT COUNT(*) FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND resource_kind='document') AS document_count,
     EXISTS(SELECT 1 FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND resource_kind='manifest_version' AND resource_id='canvas-v1') AS manifest_current
     FROM project_migration_states migration WHERE migration.project_access_id=? AND migration.organization_id=? AND migration.owner_user_id=?`)
-    .bind(ownerStream,input.projectAccessId,input.organizationId,input.projectId,input.ownerUserId,
+    .bind(...ledgerSchema.guard.bindings,...originSchema.guard.bindings,...minimizedIntegrity.bindings,ownerStream,input.projectAccessId,input.organizationId,input.projectId,input.ownerUserId,
       input.projectAccessId,input.organizationId,input.projectId,input.ownerUserId,input.projectAccessId,input.organizationId,input.projectId,input.ownerUserId,
       input.projectAccessId,input.organizationId,input.ownerUserId)
-    .first<{status:string;last_owner_sequence:number;owner_head:number;event_count:number;document_count:number;manifest_current:number}>();
+    .first<{origin_integrity:number;status:string;last_owner_sequence:number;owner_head:number;event_count:number;document_count:number;manifest_current:number}>();
+  sameLedgerDatabase();
+  if(state&&state.origin_integrity!==1)throw new Error("project_scope_sync_unconfirmed");
   if(state?.status==="active"&&Number(state.last_owner_sequence)===Number(state.owner_head)&&Number(state.manifest_current)===1)
     return{eventCount:Number(state.event_count),documentCount:Number(state.document_count)};
   const events=await readEvents(env,ownerStream);
@@ -290,12 +328,156 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
   const referenceIds=new Set(projection.libraryBlocks.flatMap((block)=>[block.properties.reference_id,block.properties.model_reference_id]).map((value)=>String(value??"")).filter(Boolean));
   const referenceMedia=projection.libraryBlocks.flatMap((block)=>[block.properties.media_url,block.properties.model_url]
     .map((url)=>({key:mediaKey(url),sourceEventId:block.sourceEvents.at(-1)??null}))).filter((item)=>item.key);
+  // Preserve custody, not read authority: historical/retiring revision bodies may still await held-data cleanup.
+  // Matching stored hashes are not proof of the body bytes; the ledger reader independently verifies them.
+  const structuredLedgerCustody=ledgerSchema.present?`EXISTS(SELECT 1 FROM memory_structured_conversation_heads ledger_head
+    JOIN memory_structured_conversation_revisions ledger_revision ON ledger_revision.ledger_id=ledger_head.ledger_id
+    JOIN private_content ledger_body ON ledger_body.content_id=ledger_revision.body_ref
+    JOIN private_content_retention_scopes ledger_retention ON ledger_retention.content_id=ledger_body.content_id
+    WHERE resource.resource_kind='content' AND resource.visibility='actor_private'
+      AND (ledger_head.actor_user_id,ledger_head.owner_user_id,ledger_head.organization_id,ledger_head.project_access_id,ledger_head.project_id)
+        IS (resource.actor_user_id,resource.owner_user_id,resource.organization_id,resource.project_access_id,resource.project_id)
+      AND ledger_head.actor_user_id=ledger_head.owner_user_id AND ledger_head.state IN('active','retiring')
+      AND ledger_revision.revision>0 AND ledger_revision.revision<=ledger_head.storage_revision
+      AND ledger_revision.schema_version=1 AND ledger_revision.recipe_version='native-declared-ledger-v1'
+      AND ledger_body.content_id=resource.resource_id AND ledger_body.kind='memory-structured-ledger'
+      AND ledger_body.owner_id=ledger_head.actor_user_id AND ledger_body.created_at=ledger_revision.created_at
+      AND (typeof(ledger_body.expires_at)='text' AND length(ledger_body.expires_at)=24
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',ledger_body.expires_at)=ledger_body.expires_at)
+      AND (typeof(ledger_revision.expires_at)='text' AND length(ledger_revision.expires_at)=24
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',ledger_revision.expires_at)=ledger_revision.expires_at)
+      AND ledger_body.expires_at<=ledger_revision.expires_at
+      AND (ledger_retention.organization_id,ledger_retention.project_access_id,ledger_retention.project_id,ledger_retention.actor_user_id)
+        IS (resource.organization_id,resource.project_access_id,resource.project_id,resource.actor_user_id)
+      AND ledger_retention.classification='transient-private' AND typeof(ledger_retention.policy_version)='integer'
+      AND ledger_retention.policy_version BETWEEN 0 AND 9007199254740991 AND ledger_retention.created_at=ledger_body.created_at
+      AND (typeof(ledger_retention.assigned_expires_at)='text' AND length(ledger_retention.assigned_expires_at)=24
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',ledger_retention.assigned_expires_at)=ledger_retention.assigned_expires_at)
+      AND ledger_retention.assigned_expires_at<=ledger_revision.expires_at)`:'0';
+  // Durable origin headers retain custody independently of removed ledger/enrollment
+  // rows. This does not restore answer visibility or validate manifest prose.
+  const structuredOriginCustody=originSchema.present?`EXISTS(SELECT 1 FROM memory_structured_answer_origins origin
+    JOIN private_content origin_body ON origin_body.content_id IN(origin.answer_content_id,origin.manifest_content_ref)
+    JOIN private_content_retention_scopes origin_retention ON origin_retention.content_id=origin_body.content_id
+    WHERE resource.resource_kind='content' AND resource.visibility='actor_private'
+      AND (origin.actor_user_id,origin.owner_user_id,origin.organization_id,origin.project_access_id,origin.project_id)
+        IS (resource.actor_user_id,resource.owner_user_id,resource.organization_id,resource.project_access_id,resource.project_id)
+      AND origin.schema_version=1 AND origin.recipe_version='native-structured-answer-origin-v1' AND origin.status IN('active','withdrawn')
+      AND origin_body.content_id=resource.resource_id AND origin_body.owner_id=origin.actor_user_id
+      AND origin_body.kind=CASE WHEN origin_body.content_id=origin.manifest_content_ref THEN 'memory-structured-origin' ELSE 'chat-assistant-memory' END
+      AND origin_body.created_at=origin.created_at AND resource.created_at=origin.created_at AND resource.source_event_id IS NULL
+      AND typeof(origin.created_at)='text' AND length(origin.created_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',origin.created_at)=origin.created_at
+      AND typeof(origin_body.expires_at)='text' AND length(origin_body.expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',origin_body.expires_at)=origin_body.expires_at
+      AND typeof(origin.source_retention_ceiling)='text' AND length(origin.source_retention_ceiling)=24
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',origin.source_retention_ceiling)=origin.source_retention_ceiling
+      AND typeof(origin.answer_expires_at)='text' AND length(origin.answer_expires_at)=24
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',origin.answer_expires_at)=origin.answer_expires_at
+      AND typeof(origin.manifest_expires_at)='text' AND length(origin.manifest_expires_at)=24
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',origin.manifest_expires_at)=origin.manifest_expires_at
+      AND origin_body.expires_at<=origin.source_retention_ceiling
+      AND origin_body.expires_at<=CASE WHEN origin_body.content_id=origin.manifest_content_ref THEN origin.manifest_expires_at ELSE origin.answer_expires_at END
+      AND (origin_retention.organization_id,origin_retention.project_access_id,origin_retention.project_id,origin_retention.actor_user_id)
+        IS (resource.organization_id,resource.project_access_id,resource.project_id,resource.actor_user_id)
+      AND origin_retention.classification='transient-private' AND typeof(origin_retention.policy_version)='integer'
+      AND origin_retention.policy_version BETWEEN 0 AND 9007199254740991 AND origin_retention.created_at=origin_body.created_at
+      AND typeof(origin_retention.assigned_expires_at)='text' AND length(origin_retention.assigned_expires_at)=24
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',origin_retention.assigned_expires_at)=origin_retention.assigned_expires_at
+      AND origin_retention.assigned_expires_at<=origin.source_retention_ceiling
+      AND origin_retention.assigned_expires_at<=CASE WHEN origin_body.content_id=origin.manifest_content_ref THEN origin.manifest_expires_at ELSE origin.answer_expires_at END)`:'0';
   const previousResources=await env.DB.prepare(`SELECT resource.resource_kind,resource.resource_id,resource.source_event_id,resource.actor_user_id,
-    CASE WHEN retained.content_id IS NULL THEN 0 ELSE 1 END AS private_provider_response
+    ${structuredLedgerCustody} AS private_structured_ledger,
+    ${structuredOriginCustody} AS private_structured_origin,
+    CASE WHEN retained.content_id IS NULL THEN 0 ELSE 1 END AS private_provider_response,
+    -- Preserve existing private Image custody, not execution authority. The
+    -- current document projection below must still contain this original job.
+    CASE WHEN resource.resource_kind='content' AND resource.visibility='actor_private' THEN (
+      SELECT CASE WHEN length(CAST(image.content AS BLOB))<=2000000 THEN CASE WHEN json_valid(image.content)=1 THEN (
+        SELECT CASE WHEN length(CAST(job.result_json AS BLOB))<=2000000 THEN CASE WHEN json_valid(job.result_json)=1 THEN
+          CASE WHEN (json_extract(image.content,'$.version')=1 AND json_extract(image.content,'$.stage.version')=1
+            AND json_extract(job.result_json,'$.imageRecovery.version')=1
+            AND json_extract(job.result_json,'$.imageRecovery.contentId')=image.content_id
+            AND json_extract(job.result_json,'$.imageRecovery.stage') IN('planned','rendered')
+            AND ((json_extract(job.result_json,'$.imageRecovery.stage')='planned' AND json_type(image.content,'$.stage.rendered') IS NULL)
+              OR (json_extract(job.result_json,'$.imageRecovery.stage')='rendered' AND json_type(image.content,'$.stage.rendered')='object')))
+            AND (json_extract(image.content,'$.identity.jobId')=job.job_id
+            AND json_extract(image.content,'$.identity.actorUserId')=job.owner_id
+            AND json_extract(image.content,'$.identity.scopeKey')=slot.scope_key
+            AND json_extract(image.content,'$.identity.slotId')=slot.slot_id
+            AND json_extract(image.content,'$.identity.grantId')=slot.grant_id
+            AND json_extract(image.content,'$.identity.sourceDigest')=slot.source_digest
+            AND json_extract(image.content,'$.identity.routeDigest')=slot.route_digest)
+            AND (json_type(image.content,'$.identity.inputDigest')='text'
+            AND length(json_extract(image.content,'$.identity.inputDigest'))=64
+            AND json_extract(image.content,'$.identity.inputDigest') NOT GLOB '*[^a-f0-9]*'
+            AND json_extract(image.content,'$.identity.inputDigest')=json_extract(job.result_json,'$.imageRecovery.inputDigest')
+            AND json_type(job.result_json,'$.imageRecovery.contentSha256')='text'
+            AND length(json_extract(job.result_json,'$.imageRecovery.contentSha256'))=64
+            AND json_extract(job.result_json,'$.imageRecovery.contentSha256') NOT GLOB '*[^a-f0-9]*'
+            AND COALESCE(json_extract(job.result_json,'$.errorDetail.category'),'')!='canceled')
+            AND (job.status!='completed' OR (slot.status IN('running','failed','succeeded') AND json_extract(job.result_json,'$.imageRecovery.stage')='rendered'
+              AND json_type(job.result_json,'$.generationReceipt')='object')
+              AND EXISTS(SELECT 1 FROM events completion JOIN events usage_event ON (usage_event.stream_id=completion.stream_id
+                AND usage_event.type='GenerationUsageRecorded' AND usage_event.causation_id=completion.event_id)
+                AND (usage_event.sequence=completion.sequence+1 AND usage_event.correlation_id=job.correlation_id
+                AND usage_event.actor='worker:policy' AND usage_event.client_id='server:document-job:generate'
+                AND json_extract(usage_event.payload,'$.generation_id')=json_extract(image.content,'$.stage.generationId'))
+                JOIN output_native_storage_writes storage ON (storage.scope_key=slot.scope_key AND storage.slot_id=slot.slot_id
+                  AND storage.status='written') AND (storage.write_acknowledged=1 AND storage.publication_event_id=completion.event_id
+                  AND storage.content_sha256=json_extract(image.content,'$.stage.rendered.media.contentHash'))
+                WHERE (completion.stream_id=job.stream_id AND completion.type='GenerationCompleted'
+                  AND completion.actor='worker:generator' AND completion.client_id='server:document-job:generate')
+                  AND (completion.correlation_id=job.correlation_id AND completion.causation_id=json_extract(image.content,'$.stage.compiledEventId')
+                  AND json_extract(completion.payload,'$.generation_id')=json_extract(image.content,'$.stage.generationId')
+                  AND json_extract(completion.payload,'$.document_id')=job.document_id
+                  AND (slot.outcome_event_id IS NULL OR slot.outcome_event_id=completion.event_id)))
+              AND (SELECT COUNT(*) FROM events terminal_event WHERE terminal_event.stream_id=job.stream_id
+                AND terminal_event.type IN('GenerationCompleted','GenerationUsageRecorded','GenerationFailed')
+                AND json_extract(terminal_event.payload,'$.generation_id')=json_extract(image.content,'$.stage.generationId'))=2)
+          THEN job.document_id END END END
+        FROM document_jobs job
+        JOIN project_resource_scopes anchored ON (anchored.resource_kind='job' AND anchored.resource_id=job.job_id
+          AND anchored.project_access_id=resource.project_access_id) AND (anchored.organization_id=resource.organization_id
+          AND anchored.project_id=resource.project_id AND anchored.owner_user_id=resource.owner_user_id
+          AND anchored.actor_user_id=resource.actor_user_id)
+        JOIN output_operation_slots slot ON slot.job_id=job.job_id
+        JOIN output_plan_revisions plan ON (plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
+          AND plan.scope_kind='project' AND plan.project_access_id=resource.project_access_id) AND (plan.organization_id=resource.organization_id
+          AND plan.project_id=resource.project_id AND plan.owner_user_id=resource.owner_user_id AND plan.document_id=job.document_id AND plan.source_digest=slot.source_digest)
+        JOIN output_plan_targets target ON (target.scope_key=slot.scope_key AND target.plan_revision_id=slot.plan_revision_id
+          AND target.target_id=slot.target_id) AND (target.target_contract_digest=slot.target_contract_digest AND target.media_kind='image' AND target.selected=1)
+        JOIN output_execution_grants original_grant ON (original_grant.scope_key=slot.scope_key AND original_grant.grant_id=slot.grant_id)
+          AND (original_grant.plan_revision_id=slot.plan_revision_id AND original_grant.actor_user_id=resource.actor_user_id)
+        WHERE (job.job_id=json_extract(image.content,'$.identity.jobId') AND job.kind='generate'
+          AND job.owner_id=resource.actor_user_id AND job.stream_id='creative:'||resource.owner_user_id)
+          AND (job.attempt_count BETWEEN 1 AND 2 AND job.correlation_id=job.job_id||':attempt:'||job.attempt_count
+          AND job.status IN('queued','running','committing','failed','completed') AND slot.status IN('queued','running','failed','succeeded'))
+          AND (original_grant.status IN('authorized','active','completed') AND original_grant.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          AND job.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+          AND EXISTS(SELECT 1 FROM events anchor WHERE (anchor.event_id=anchored.source_event_id
+            AND anchor.stream_id=job.stream_id AND anchor.actor='user:'||resource.actor_user_id) AND (anchor.type='ProjectDocumentJobQueued'
+            AND json_extract(anchor.payload,'$.job_id')=job.job_id AND json_extract(anchor.payload,'$.project_access_id')=resource.project_access_id
+            AND json_extract(anchor.payload,'$.organization_id')=resource.organization_id))
+          AND NOT EXISTS(SELECT 1 FROM events stopped WHERE stopped.stream_id=job.stream_id AND stopped.type IN('JobCanceled','JobForceFailed')
+            AND (json_extract(stopped.payload,'$.job_id')=job.job_id OR stopped.correlation_id=job.job_id||':attempt:1'
+              OR job.attempt_count=2 AND stopped.correlation_id=job.job_id||':attempt:2'))
+      ) END END FROM private_content image
+      JOIN private_content_retention_scopes image_retention ON (image_retention.content_id=image.content_id
+        AND image_retention.project_access_id=resource.project_access_id AND image_retention.organization_id=resource.organization_id)
+        AND (image_retention.project_id=resource.project_id AND image_retention.actor_user_id=resource.actor_user_id
+        AND image_retention.classification='transient-private' AND image_retention.assigned_expires_at>=image.expires_at)
+      JOIN organization_projects image_project ON (image_project.project_access_id=resource.project_access_id
+        AND image_project.organization_id=resource.organization_id AND image_project.project_id=resource.project_id)
+        AND (image_project.owner_user_id=resource.owner_user_id AND image_project.status='active')
+      JOIN organizations image_organization ON image_organization.organization_id=resource.organization_id AND image_organization.status='active'
+      JOIN organization_memberships image_actor ON (image_actor.organization_id=resource.organization_id AND image_actor.user_id=resource.actor_user_id)
+        AND (image_actor.status='active' AND image_actor.accepted_at IS NOT NULL AND image_actor.revoked_at IS NULL)
+      WHERE (image.content_id=resource.resource_id AND image.owner_id=resource.actor_user_id AND image.kind='provider-output')
+        AND (image.redacted_at IS NULL AND image.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    ) END AS retained_image_document_id
     FROM project_resource_scopes resource LEFT JOIN private_content retained ON resource.resource_kind='content'
       AND retained.content_id=resource.resource_id AND retained.owner_id=resource.actor_user_id
       AND(retained.kind IN('provider-response','assistant-action')
-        OR retained.kind IN('chat-user','chat-assistant') AND resource.visibility='actor_private' AND retained.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        OR retained.kind IN('chat-user','chat-assistant','chat-assistant-memory') AND resource.visibility='actor_private' AND retained.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
           AND EXISTS(SELECT 1 FROM private_content_retention_scopes conversation
             JOIN organization_projects current_project ON current_project.project_access_id=conversation.project_access_id
               AND current_project.organization_id=conversation.organization_id AND current_project.project_id=conversation.project_id
@@ -326,7 +508,7 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
                 AND json_extract(issue_note.payload,'$.document_id')=job.document_id))))
       AND retained.redacted_at IS NULL AND retained.expires_at>?
     WHERE resource.project_access_id=? AND resource.organization_id=?`)
-    .bind(new Date().toISOString(),input.projectAccessId,input.organizationId).all<{resource_kind:string;resource_id:string;source_event_id:string|null;actor_user_id:string;private_provider_response:number}>();
+    .bind(new Date().toISOString(),input.projectAccessId,input.organizationId).all<{resource_kind:string;resource_id:string;source_event_id:string|null;actor_user_id:string;private_structured_ledger:number;private_structured_origin:number;private_provider_response:number;retained_image_document_id:string|null}>();
   const actorJobs=previousResources.results.filter((resource)=>resource.resource_kind==="job");
   const actorByJobCorrelation=new Map<string,string>();
   if(actorJobs.length){
@@ -401,7 +583,7 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
     ["project",new Set([input.projectId])],["document",documentIds],["block",blockIds],["relation",relationIds],
     ["collection",collectionIds],["output",outputIds],["artifact",artifactIds],["reference",referenceIds],["canvas",canvasIds],
     ["canvas_item",canvasItemIds],["canvas_arrangement",arrangementIds],["canvas_context",contextSetIds],["manifest_version",new Set(["canvas-v1"])],
-    ["content",new Set([...projectArtifacts.flatMap((artifact)=>[artifact.contentRef,artifact.inputRef]).filter((value):value is string=>Boolean(value)),...conversationContent.map((item)=>item.id),...previousResources.results.filter((resource)=>resource.resource_kind==="content"&&(resource.actor_user_id!==input.ownerUserId||resource.private_provider_response===1)).map((resource)=>resource.resource_id)])],
+    ["content",new Set([...projectOutputs.flatMap((output)=>[output.contentRef,output.promptRef]).filter((value):value is string=>Boolean(value)),...projectArtifacts.flatMap((artifact)=>[artifact.contentRef,artifact.inputRef]).filter((value):value is string=>Boolean(value)),...conversationContent.map((item)=>item.id),...previousResources.results.filter((resource)=>resource.resource_kind==="content"&&(resource.actor_user_id!==input.ownerUserId||resource.private_provider_response===1||resource.private_structured_ledger===1||resource.private_structured_origin===1||resource.retained_image_document_id!==null&&documentIds.has(resource.retained_image_document_id))).map((resource)=>resource.resource_id)])],
     ["media",new Set([...projectOutputs.map((output)=>mediaKey(output.mediaUrl)),...projectArtifacts.flatMap(artifactMediaKeys),...referenceMedia.map((item)=>item.key)].filter(Boolean))],
   ]);
   for(const resource of previousResources.results){
@@ -421,7 +603,14 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
     const key=`${kind}\u0000${id}`;
     if(!id||retainedResourceKeys.has(key))return; // The shared publication helper's INSERT OR IGNORE would be a no-op.
     retainedResourceKeys.add(key);
-    statements.push(prepareProjectResourceScopeStatement(env,input,{kind,id,visibility,sourceEventId,actorUserId},now));
+    // Old conversation/output references cannot recreate a minimized answer's
+    // permission row. The live before/after integrity proof also rejects any
+    // concurrent or trigger-created residue; original user content is unchanged.
+    statements.push(originSchema.present&&kind==="content"?env.DB.prepare(`INSERT OR IGNORE INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at)
+      SELECT ?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM memory_structured_answer_origins origin
+        WHERE origin.status='minimized' AND (origin.answer_content_id=? OR origin.manifest_content_ref=?))`)
+      .bind(input.projectAccessId,kind,id,input.organizationId,input.projectId,input.ownerUserId,visibility,sourceEventId,actorUserId,now,id,id)
+      :prepareProjectResourceScopeStatement(env,input,{kind,id,visibility,sourceEventId,actorUserId},now));
   };
   insertResource("project",input.projectId);
   for(const id of documentIds)insertResource("document",id);
@@ -449,9 +638,15 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
     statements.push(env.DB.prepare("INSERT OR IGNORE INTO project_event_scopes(event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
       .bind(event.eventId,input.projectAccessId,input.organizationId,input.projectId,input.ownerUserId,ownerStream,event.sequence,sequence,attributedActor,now));
   }
-  for(let offset=0;offset<statements.length;offset+=75)await env.DB.batch(statements.slice(offset,offset+75));
+  for(let offset=0;offset<statements.length;offset+=75){
+    sameLedgerDatabase();
+    const chunk=statements.slice(offset,offset+75);
+    const results=await ledgerDb.batch([ledgerSchemaAssertion(),...chunk,ledgerSchemaAssertion()]);
+    sameLedgerDatabase();
+    confirmLedgerBatch(results,chunk.length+2);
+  }
   const ownerHead=events.at(-1)?.sequence??0;
-  const activated=await env.DB.prepare(`INSERT INTO project_migration_states(project_access_id,organization_id,owner_user_id,status,last_owner_sequence,updated_at)
+  const activation=env.DB.prepare(`INSERT INTO project_migration_states(project_access_id,organization_id,owner_user_id,status,last_owner_sequence,updated_at)
     SELECT ?,?,?,'active',?,? WHERE EXISTS(SELECT 1 FROM organization_projects project
       JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
       JOIN organization_memberships owner ON owner.organization_id=project.organization_id AND owner.user_id=project.owner_user_id
@@ -461,8 +656,13 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
     ON CONFLICT(project_access_id) DO UPDATE SET status='active',last_owner_sequence=excluded.last_owner_sequence,updated_at=excluded.updated_at
       WHERE project_migration_states.organization_id=excluded.organization_id
         AND project_migration_states.owner_user_id=excluded.owner_user_id`)
-    .bind(input.projectAccessId,input.organizationId,input.ownerUserId,ownerHead,now,input.projectAccessId,input.organizationId,input.ownerUserId).run();
-  if(Number(activated.meta.changes??0)!==1)throw new Error("project_owner_authorization_changed");
+    .bind(input.projectAccessId,input.organizationId,input.ownerUserId,ownerHead,now,input.projectAccessId,input.organizationId,input.ownerUserId);
+  sameLedgerDatabase();
+  const activationResults=await ledgerDb.batch([ledgerSchemaAssertion(),activation,ledgerSchemaAssertion()]);
+  sameLedgerDatabase();
+  confirmLedgerBatch(activationResults,3);
+  const activated=activationResults[1];
+  if(Number(activated?.meta.changes??0)!==1)throw new Error("project_owner_authorization_changed");
   return{eventCount:sequence,documentCount:documentIds.size};
 }
 
@@ -501,47 +701,189 @@ function redactProjectPayload(payload:Record<string,unknown>,contentIds:Set<stri
   return redact(payload) as Record<string,unknown>;
 }
 
-function presentProjectEvent(row:Record<string,unknown>,context:ProjectRequestContext,activeResources:Map<string,Set<string>>,contentIds=new Set<string>()){
+type ProjectPresentationResources=Map<string,Set<string>>&{retiredCanvasItems:Set<string>};
+
+function presentProjectEvent(row:Record<string,unknown>,context:ProjectRequestContext,activeResources:ProjectPresentationResources,contentIds=new Set<string>()){
   const event=serializeEvent(row);
   const privateConversation=event.type==="ChatMessageSent"||event.type==="AssistantReasoned"&&event.payload.operation==="creative-chat";
-  if(PROJECT_CANVAS_MUTATION_TYPES.has(event.type)&&!context.permissions.includes("project.canvas.use")||privateConversation&&String(row.actor_user_id)!==context.principalUserId)
+  const payload=event.payload,operation=payload.operation&&typeof payload.operation==="object"?payload.operation as Record<string,unknown>:{};
+  const object=operation.object&&typeof operation.object==="object"?operation.object as Record<string,unknown>:{};
+  const sketch=operation.sketch&&typeof operation.sketch==="object"?operation.sketch as Record<string,unknown>:{};
+  const itemIds=[payload.item_id,payload.reference_item_id,object.item_id,sketch.item_id].filter(value=>value!==null&&value!==undefined).map(String);
+  const missingCanvasSource=PROJECT_CANVAS_MUTATION_TYPES.has(event.type)&&(
+    Boolean(payload.canvas_id&&!activeResources.get("canvas")?.has(String(payload.canvas_id)))
+    ||itemIds.some(id=>!activeResources.get("canvas_item")?.has(id))
+    ||Boolean(object.block_id&&(!activeResources.get("block")?.has(String(object.block_id))||activeResources.retiredCanvasItems.has(String(object.block_id))))
+    ||Boolean(payload.arrangement_id&&!activeResources.get("canvas_arrangement")?.has(String(payload.arrangement_id)))
+    ||Boolean(payload.context_set_id&&!activeResources.get("canvas_context")?.has(String(payload.context_set_id))));
+  // A removed:true placement still creates a visible item in the Canvas fold.
+  // Withhold the event type as well as its copied private presentation instead.
+  // Real removal events keep their redacted IDs so incremental clients can
+  // still remove previously rendered objects; they never recreate an item.
+  if(missingCanvasSource&&!["CanvasRemoved","CanvasItemRemoved","CanvasArrangementRemoved"].includes(event.type)
+    ||PROJECT_CANVAS_MUTATION_TYPES.has(event.type)&&!context.permissions.includes("project.canvas.use")||privateConversation&&String(row.actor_user_id)!==context.principalUserId)
     return{...event,streamId:`project:${context.projectAccessId}`,sequence:Number(row.project_sequence),actor:`user:${String(row.actor_user_id)}`,type:"ProjectResourceRestricted",payload:{project_id:context.projectId,restricted:true}};
   const visibleContent=privateConversation?new Set([...contentIds,String(event.payload.content_ref??"")]):contentIds;
-  return{...event,streamId:`project:${context.projectAccessId}`,sequence:Number(row.project_sequence),actor:event.actor.startsWith("user")?`user:${String(row.actor_user_id)}`:event.actor,payload:redactProjectPayload(event.payload,visibleContent,activeResources)};
+  const presentedPayload=missingCanvasSource?{project_id:context.projectId,
+    ...(payload.canvas_id?{canvas_id:String(payload.canvas_id)}:{}),
+    ...(payload.item_id?{item_id:String(payload.item_id)}:{}),
+    ...(payload.arrangement_id?{arrangement_id:String(payload.arrangement_id)}:{}),removed:true}
+    :redactProjectPayload(event.payload,visibleContent,activeResources);
+  return{...event,streamId:`project:${context.projectAccessId}`,sequence:Number(row.project_sequence),actor:event.actor.startsWith("user")?`user:${String(row.actor_user_id)}`:event.actor,payload:presentedPayload};
+}
+
+/** Same-snapshot structural witnesses for shared Canvas presentation. Observed
+ * reads retain raw provenance only for server-local final-response validation;
+ * resourceIndex and event serialization never expose it. */
+function prepareProjectPresentationResources(env:WorkerEnv,context:ProjectRequestContext,observed=false,descriptors?:AssistantContextReadDescriptor[]){
+  const body="COALESCE(secret.private_json,source.payload)";
+  const provenance=observed?`,json_array(resource.project_access_id,resource.resource_kind,resource.resource_id,resource.organization_id,resource.project_id,
+    resource.owner_user_id,resource.visibility,resource.source_event_id,resource.actor_user_id,resource.created_at) AS source_resource_record,
+    CASE WHEN source.event_id IS NULL THEN NULL ELSE json_array(source.event_id,source.stream_id,source.sequence,source.occurred_at,source.recorded_at,
+      source.actor,source.client_id,source.correlation_id,source.causation_id,source.compensates_event_id,source.schema_version,source.type,source.payload) END AS source_event_record,
+    CASE WHEN custody.event_id IS NULL THEN NULL ELSE json_array(custody.event_id,custody.project_access_id,custody.organization_id,custody.project_id,
+      custody.owner_user_id,custody.source_stream_id,custody.source_sequence,custody.project_sequence,custody.actor_user_id,custody.created_at) END AS source_custody_record,
+    CASE WHEN secret.private_event_id IS NULL THEN NULL ELSE json_array(secret.private_event_id,secret.owner_id,secret.project_id,secret.document_id,
+      secret.private_json,secret.created_at,secret.redacted_at) END AS source_private_record`:"";
+  const sql=`SELECT resource.resource_kind,resource.resource_id,resource.visibility,
+    CASE WHEN custody.event_id IS NOT NULL AND(source.payload IS NOT NULL)
+      AND(json_extract(source.payload,'$._private_ref') IS NULL OR secret.private_event_id IS NOT NULL) THEN source.type ELSE NULL END AS source_type,
+    json_extract(${body},'$.canvas_id') AS source_canvas_id,
+    json_extract(${body},'$.item_id') AS source_item_id,json_extract(${body},'$.reference_item_id') AS source_reference_item_id,
+    json_extract(${body},'$.arrangement_id') AS source_arrangement_id,json_extract(${body},'$.context_set_id') AS source_context_set_id,
+    json_extract(${body},'$.source_kind') AS source_kind,json_extract(${body},'$.source_id') AS source_id,
+    json_extract(${body},'$.block_id') AS source_block_id,json_extract(${body},'$.document_id') AS source_document_id,
+    json_extract(${body},'$.object_id') AS source_object_id,json_extract(${body},'$.item_ids') AS source_item_ids,
+    (SELECT json_group_array(CASE WHEN frame.type='object' THEN json_extract(frame.value,'$.item_id') ELSE NULL END)
+      FROM json_each(CASE WHEN source.type='CanvasArrangementCreated' THEN ${body} ELSE '{}' END,'$.frames') frame) AS source_frame_ids,
+    (SELECT json_group_array(CASE WHEN frame.type='object' THEN json_extract(frame.value,'$.item_id') ELSE NULL END)
+      FROM json_each(CASE WHEN source.type='CanvasArrangementCreated' THEN ${body} ELSE '{}' END,'$.previous_frames') frame) AS source_previous_frame_ids${provenance}
+    FROM project_resource_scopes resource
+    LEFT JOIN events source ON source.event_id=resource.source_event_id AND source.stream_id='creative:'||resource.owner_user_id
+      AND resource.resource_kind IN('canvas','canvas_item','canvas_context','canvas_arrangement')
+    LEFT JOIN project_event_scopes custody ON custody.event_id=source.event_id
+      AND(custody.project_access_id,custody.organization_id,custody.project_id,custody.owner_user_id,custody.source_stream_id,custody.source_sequence)
+        =(resource.project_access_id,resource.organization_id,resource.project_id,resource.owner_user_id,source.stream_id,source.sequence)
+    LEFT JOIN event_private_payloads secret ON secret.private_event_id=source.event_id AND secret.owner_id=resource.owner_user_id AND secret.redacted_at IS NULL
+    WHERE resource.project_access_id=? AND resource.organization_id=? AND resource.project_id=? AND resource.owner_user_id=?`;
+  const bindings=[context.projectAccessId,context.organizationId,context.projectId,context.ownerUserId];
+  descriptors?.push({sql,bindings,role:"resources"});
+  return env.DB.prepare(sql).bind(...bindings);
 }
 
 function resourceIndex(rows:Record<string,unknown>[]){
-  const activeResources=new Map<string,Set<string>>();
+  const activeResources:ProjectPresentationResources=Object.assign(new Map<string,Set<string>>(),{retiredCanvasItems:new Set<string>()});
   for(const row of rows){const kind=String(row.resource_kind),ids=activeResources.get(kind)??new Set<string>();ids.add(String(row.resource_id));activeResources.set(kind,ids);}
+  const key=(kind:string,id:string)=>JSON.stringify([kind,id]);
+  const collaborative=new Map(rows.filter(row=>row.visibility==="collaborative_output").map(row=>[key(String(row.resource_kind),String(row.resource_id)),row]));
+  const dependents=new Map<string,string[]>(),invalid=new Set<string>(),queue:string[]=[];
+  const reject=(id:string)=>{if(!invalid.has(id)){invalid.add(id);queue.push(id);}};
+  const members=(raw:unknown):string[]=>{
+    if(raw===null||raw===undefined)return[];
+    const value=typeof raw==="string"?JSON.parse(raw):raw;
+    if(!Array.isArray(value)||value.some(id=>typeof id!=="string"||!id))throw new Error("invalid_canvas_source_members");
+    return value;
+  };
+  for(const row of rows){
+    const kind=String(row.resource_kind),id=String(row.resource_id),own=key(kind,id),board=String(row.source_canvas_id??"");
+    if(!["canvas","canvas_item","canvas_context","canvas_arrangement"].includes(kind))continue;
+    const needs:Array<[string,string]>=[];
+    if(!collaborative.has(own)||!board){reject(own);continue;}
+    if(kind==="canvas"){
+      if(row.source_type!=="CanvasCreated"||board!==id)reject(own);
+    }else{
+      needs.push(["canvas",board]);
+      if(kind==="canvas_item"){
+        if(!["CanvasItemPlaced","CanvasReferenceCreated"].includes(String(row.source_type))||String(row.source_item_id??row.source_reference_item_id??"")!==id){reject(own);continue;}
+        const raw=String(row.source_kind??(row.source_type==="CanvasReferenceCreated"?"reference":"block"));
+        const sourceKind=["document","output","artifact","context","reference","sketch","block"].includes(raw)?raw:"block";
+        const sourceId=String(row.source_id??row.source_block_id??row.source_document_id??row.source_object_id??id);
+        const targetKind=sourceKind==="context"?"canvas_context":["reference","sketch"].includes(sourceKind)?"block":sourceKind;
+        if(!sourceId||targetKind==="canvas_context"&&String(collaborative.get(key(targetKind,sourceId))?.source_canvas_id??"")!==board)reject(own);
+        needs.push([targetKind,sourceId]);
+      }else{
+        if(row.source_type!==(kind==="canvas_context"?"ContextSetFormalized":"CanvasArrangementCreated")
+          ||String(kind==="canvas_context"?row.source_context_set_id:row.source_arrangement_id)!==id){reject(own);continue;}
+        try{
+          const ids=kind==="canvas_context"?members(row.source_item_ids):[...members(row.source_item_ids),...members(row.source_frame_ids),...members(row.source_previous_frame_ids)];
+          for(const member of new Set(ids)){
+            if(String(collaborative.get(key("canvas_item",member))?.source_canvas_id??"")!==board)reject(own);
+            needs.push(["canvas_item",member]);
+          }
+        }catch{reject(own);}
+      }
+    }
+    for(const [targetKind,targetId] of needs){
+      const target=key(targetKind,targetId);
+      if(!collaborative.has(target))reject(own);
+      const parents=dependents.get(target)??[];parents.push(own);dependents.set(target,parents);
+    }
+  }
+  // Propagate withdrawal through context cards and saved arrangements without
+  // rescanning history or granting authority from an incomplete item page.
+  for(let index=0;index<queue.length;index++){
+    const current=queue[index]!,[kind,id]=JSON.parse(current) as [string,string];
+    activeResources.get(kind)?.delete(id);
+    if(kind==="canvas_item")activeResources.retiredCanvasItems.add(id);
+    for(const parent of dependents.get(current)??[])reject(parent);
+  }
   return activeResources;
 }
 
+// Server-only provenance for exact replay of the original context source SELECTs.
+// The ordinary event serializer ignores these additional columns.
+const assistantContextEventProvenance=`,json_array(scope.event_id,scope.project_access_id,scope.organization_id,scope.project_id,scope.owner_user_id,
+  scope.source_stream_id,scope.source_sequence,scope.project_sequence,scope.actor_user_id,scope.created_at) AS source_scope_record,
+  CASE WHEN secret.private_event_id IS NULL THEN NULL ELSE json_array(secret.private_event_id,secret.owner_id,secret.project_id,secret.document_id,
+    secret.created_at,secret.redacted_at) END AS source_private_record`;
+
 /** Shared reads use dense project cursors and an explicit output-only private-content allowlist. */
-export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestContext,after:number,limit:number,includeContent:boolean){
+export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestContext,after:number,limit:number,includeContent:boolean,sourceObserver?:AssistantContextReadObserver){
   await synchronizeProjectScope(env,context);
   const size=Math.max(1,Math.min(5000,Math.floor(limit)||5000));
-  const statements=[
-    env.DB.prepare(`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
+  const eventSql=`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id${sourceObserver?assistantContextEventProvenance:""} FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
       LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL
-      WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.owner_user_id=? AND scope.project_sequence>? ORDER BY scope.project_sequence LIMIT ?`)
-      .bind(context.projectAccessId,context.organizationId,context.ownerUserId,Math.max(0,Math.floor(after)||0),size),
-    env.DB.prepare("SELECT COALESCE(MAX(project_sequence),0) AS head FROM project_event_scopes WHERE project_access_id=? AND organization_id=?").bind(context.projectAccessId,context.organizationId),
-    env.DB.prepare("SELECT resource_kind,resource_id FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND owner_user_id=?")
-      .bind(context.projectAccessId,context.organizationId,context.ownerUserId),
+      WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.owner_user_id=? AND scope.project_sequence>? ORDER BY scope.project_sequence LIMIT ?`;
+  const eventBindings=[context.projectAccessId,context.organizationId,context.ownerUserId,Math.max(0,Math.floor(after)||0),size];
+  const headSql="SELECT COALESCE(MAX(project_sequence),0) AS head FROM project_event_scopes WHERE project_access_id=? AND organization_id=?",headBindings=[context.projectAccessId,context.organizationId];
+  const descriptors:AssistantContextReadDescriptor[]=[{sql:eventSql,bindings:eventBindings,role:"ascending-events"},
+    {sql:headSql,bindings:headBindings,role:"project-head",projectAccessId:context.projectAccessId,organizationId:context.organizationId}];
+  const statements=[
+    env.DB.prepare(eventSql).bind(...eventBindings),env.DB.prepare(headSql).bind(...headBindings),
+    prepareProjectPresentationResources(env,context,Boolean(sourceObserver),descriptors),
   ];
   // Metadata pages retain only references eligible for this exact reader. Body
   // hydration is separate; content=0 must neither select bytes nor erase live IDs.
-  statements.push(env.DB.prepare(`SELECT content.content_id${includeContent?",content.content":""} FROM project_resource_scopes scope INDEXED BY sqlite_autoindex_project_resource_scopes_1
+  // Ordinary Assistant metadata compilation does not consume chat bodies: its
+  // recentTurns are replaced by independently certified history. Authorized
+  // conversation event pointers are preserved in presentProjectEvent itself.
+  // Keep the page certificate on document-artifact eligibility; otherwise an
+  // unrelated retired answer could invalidate a fresh document-derived reply.
+  const assistantMetadataOnly=Boolean(sourceObserver)&&!includeContent;
+  const contentProvenance=sourceObserver?`,json_array(content.content_id,content.owner_id,content.kind,content.created_at,content.expires_at,content.redacted_at) AS source_content_record,
+    json_array(scope.project_access_id,scope.resource_kind,scope.resource_id,scope.organization_id,scope.project_id,scope.owner_user_id,
+      scope.visibility,scope.source_event_id,scope.actor_user_id,scope.created_at) AS source_resource_record,
+    CASE WHEN scope.visibility='actor_private' THEN(SELECT json_array(retention.content_id,retention.organization_id,retention.project_access_id,retention.project_id,
+      retention.actor_user_id,retention.classification,retention.policy_version,retention.assigned_expires_at,retention.created_at)
+      FROM private_content_retention_scopes retention WHERE retention.content_id=content.content_id
+        AND retention.organization_id=scope.organization_id AND retention.project_access_id=scope.project_access_id
+        AND retention.project_id=scope.project_id AND retention.actor_user_id=scope.actor_user_id) ELSE NULL END AS source_retention_record`:"";
+  const { nativeMemoryAnswerExclusion } = await import("./memory-native-boundary.ts");
+  const ordinaryContent=await nativeMemoryAnswerExclusion(env,{answerAlias:"content"});
+  const contentSql=`SELECT content.content_id${includeContent?",content.content":""}${contentProvenance} FROM project_resource_scopes scope INDEXED BY sqlite_autoindex_project_resource_scopes_1
     CROSS JOIN private_content content ON content.content_id=scope.resource_id
     WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.owner_user_id=? AND scope.resource_kind='content'
       AND ((scope.visibility='collaborative_output' AND content.owner_id=scope.owner_user_id AND content.kind='document-artifact')
-        OR(scope.visibility='actor_private' AND scope.actor_user_id=? AND content.owner_id=? AND content.kind IN('chat-user','chat-assistant')
+        OR(${assistantMetadataOnly?"0 AND ":""}scope.visibility='actor_private' AND scope.actor_user_id=? AND content.owner_id=? AND content.kind IN('chat-user','chat-assistant')
           AND EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id=content.content_id
             AND retention.organization_id=scope.organization_id AND retention.project_access_id=scope.project_access_id
             AND retention.project_id=scope.project_id AND retention.actor_user_id=scope.actor_user_id)))
-      AND content.redacted_at IS NULL AND content.expires_at>?`)
-    .bind(context.projectAccessId,context.organizationId,context.ownerUserId,context.principalUserId,context.principalUserId,new Date().toISOString()));
-  const [rows,headRow,resourceRows,contentRow]=await env.DB.batch<Record<string,unknown>>(statements);
+      AND content.redacted_at IS NULL AND content.expires_at>${sourceObserver?"strftime('%Y-%m-%dT%H:%M:%fZ','now')":"?"} AND ${ordinaryContent.sql}`;
+  const contentBindings=[context.projectAccessId,context.organizationId,context.ownerUserId,context.principalUserId,context.principalUserId,...(sourceObserver?[]:[new Date().toISOString()]),...ordinaryContent.bindings];
+  statements.push(env.DB.prepare(contentSql).bind(...contentBindings));descriptors.push({sql:contentSql,bindings:contentBindings,role:"content-allowlist"});
+  const reads=await env.DB.batch<Record<string,unknown>>(statements);
+  sourceObserver?.(statements,reads,descriptors);
+  const [rows,headRow,resourceRows,contentRow]=reads;
   const content=includeContent?Object.fromEntries((contentRow?.results??[]).map((row)=>[String(row.content_id),String(row.content)])):{};
   const allowedContent=new Set((contentRow?.results??[]).map((row)=>String(row.content_id)));
   const activeResources=resourceIndex(resourceRows?.results??[]);
@@ -551,30 +893,36 @@ export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestC
 }
 
 /** Reconstruct semantic resource state without replaying unrelated activity or bypassing actor redaction. */
-export async function readProjectAssistantEventView(env:WorkerEnv,context:ProjectRequestContext,selection:{documentId?:string|null;canvasId?:string|null}={}){
-  await synchronizeProjectScope(env,context);
+export async function readProjectAssistantEventView(env:WorkerEnv,context:ProjectRequestContext,selection:{documentId?:string|null;canvasId?:string|null;sourceObserver?:AssistantContextReadObserver}={}){
+  const sourceObserver=selection.sourceObserver;
   const documentId=selection.documentId??"",canvasId=selection.canvasId??"";
+  await synchronizeProjectScope(env,context);
   const scope="scope.project_access_id=? AND scope.organization_id=? AND scope.owner_user_id=?";
   const joins="FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL";
   const eventDocument="COALESCE(json_extract(event.payload,'$.document_id'),(SELECT json_extract(previous.payload,'$.document_id') FROM events previous WHERE previous.stream_id=event.stream_id AND previous.sequence<=event.sequence AND previous.type IN('DocumentCreated','DocumentOpened') ORDER BY previous.sequence DESC LIMIT 1))";
-  const bootstrap=env.DB.prepare(`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id ${joins}
+  const bootstrapSql=`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id${sourceObserver?assistantContextEventProvenance:""} ${joins}
     WHERE ${scope} AND(event.type='ProjectCreated'
       OR event.type IN('DocumentCreated','DocumentForked','DocumentRenamed','DocumentRemoved','DocumentRestored') AND(?='' OR json_extract(event.payload,'$.document_id')=?)
       OR event.type IN('CanvasCreated','CanvasRenamed','CanvasRemoved','CanvasRestored') AND(?='' OR json_extract(event.payload,'$.canvas_id')=?))
-    ORDER BY scope.project_sequence DESC LIMIT 96`).bind(context.projectAccessId,context.organizationId,context.ownerUserId,documentId,documentId,canvasId,canvasId);
-  const semantic=env.DB.prepare(`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id ${joins}
+    ORDER BY scope.project_sequence DESC LIMIT 96`;
+  const bootstrapBindings=[context.projectAccessId,context.organizationId,context.ownerUserId,documentId,documentId,canvasId,canvasId];
+  const semanticSql=`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id${sourceObserver?assistantContextEventProvenance:""} ${joins}
     WHERE ${scope} AND event.type IN(${ASSISTANT_STATE_EVENT_SQL})
       AND((?='' AND ?='') OR ${eventDocument}=? OR json_extract(event.payload,'$.canvas_id')=?
         OR json_extract(event.payload,'$.source_canvas_id')=? OR event.type IN('ProjectCreated','ProjectOpened','ProjectRenamed'))
-    ORDER BY scope.project_sequence DESC LIMIT 384`).bind(context.projectAccessId,context.organizationId,context.ownerUserId,documentId,canvasId,documentId,canvasId,canvasId);
-  const boundaries=env.DB.prepare(`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id ${joins}
+    ORDER BY scope.project_sequence DESC LIMIT 384`;
+  const semanticBindings=[context.projectAccessId,context.organizationId,context.ownerUserId,documentId,canvasId,documentId,canvasId,canvasId];
+  const boundariesSql=`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id${sourceObserver?assistantContextEventProvenance:""} ${joins}
     WHERE ${scope} AND event.type='BlockCreated' AND(?='' OR ${eventDocument}=?)
       AND(json_extract(event.payload,'$.type')='exclusion' OR json_extract(secret.private_json,'$.properties.intent')='prohibit'
-        OR json_extract(secret.private_json,'$.properties.locked')=1) ORDER BY scope.project_sequence DESC LIMIT 32`)
-    .bind(context.projectAccessId,context.organizationId,context.ownerUserId,documentId,documentId);
-  const resource=env.DB.prepare("SELECT resource_kind,resource_id FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND owner_user_id=?")
-    .bind(context.projectAccessId,context.organizationId,context.ownerUserId);
-  const [basics,state,limits,resources]=await env.DB.batch<Record<string,unknown>>([bootstrap,semantic,boundaries,resource]);
+        OR json_extract(secret.private_json,'$.properties.locked')=1) ORDER BY scope.project_sequence DESC LIMIT 32`;
+  const boundariesBindings=[context.projectAccessId,context.organizationId,context.ownerUserId,documentId,documentId];
+  const descriptors:AssistantContextReadDescriptor[]=[{sql:bootstrapSql,bindings:bootstrapBindings},{sql:semanticSql,bindings:semanticBindings},{sql:boundariesSql,bindings:boundariesBindings}];
+  const resource=prepareProjectPresentationResources(env,context,Boolean(sourceObserver),descriptors);
+  const statements=[env.DB.prepare(bootstrapSql).bind(...bootstrapBindings),env.DB.prepare(semanticSql).bind(...semanticBindings),env.DB.prepare(boundariesSql).bind(...boundariesBindings),resource];
+  const reads=await env.DB.batch<Record<string,unknown>>(statements);
+  sourceObserver?.(statements,reads,descriptors);
+  const [basics,state,limits,resources]=reads;
   const activeResources=resourceIndex(resources.results??[]);
   const unique=new Map<string,Record<string,unknown>>();
   for(const row of [...(basics.results??[]),...(state.results??[]),...(limits.results??[])])unique.set(String(row.event_id),row);
@@ -585,18 +933,43 @@ export async function readProjectAssistantEventView(env:WorkerEnv,context:Projec
 
 export type ProjectSourceScope={organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string};
 
-/** A read may require a current projection, but cannot reactivate or repair one. */
-export function projectSourceProjectionCurrentAssertion(scope:ProjectSourceScope){
-  return{sql:`EXISTS(SELECT 1 FROM project_migration_states migration
+function projectSourceProjectionAssertion(scope:ProjectSourceScope,head:{sql:string;bindings:Readonly<BudgetReservationGuard["bindings"]>}|null){
+  return {sql:`EXISTS(SELECT 1 FROM project_migration_states migration
     JOIN organization_projects project ON project.project_access_id=migration.project_access_id AND project.organization_id=migration.organization_id
       AND project.owner_user_id=migration.owner_user_id AND project.status='active'
     JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
     WHERE migration.project_access_id=? AND migration.organization_id=? AND migration.owner_user_id=? AND project.project_id=?
-      AND migration.status='active' AND migration.last_owner_sequence=(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)
+      AND migration.status='active'${head?` AND ${head.sql}`:""}
       AND EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.project_access_id=migration.project_access_id
         AND resource.organization_id=migration.organization_id AND resource.project_id=project.project_id AND resource.owner_user_id=migration.owner_user_id
         AND resource.resource_kind='manifest_version' AND resource.resource_id='canvas-v1'))`,
-    bindings:[scope.projectAccessId,scope.organizationId,scope.ownerUserId,scope.projectId,`creative:${scope.ownerUserId}`]};
+    bindings:[scope.projectAccessId,scope.organizationId,scope.ownerUserId,scope.projectId,...(head?.bindings??[])]};
+}
+
+/** A read may require a current projection, but cannot reactivate or repair one. */
+export function projectSourceProjectionCurrentAssertion(scope:ProjectSourceScope,own?:AssistantOwnSendFootprint){
+  if(own&&(!own.scope||own.streamId!=="creative:"+scope.ownerUserId||own.scope.organizationId!==scope.organizationId
+    ||own.scope.projectAccessId!==scope.projectAccessId||own.scope.projectId!==scope.projectId||own.scope.ownerUserId!==scope.ownerUserId))throw new Error("context_own_send_scope");
+  const suffix=own?assistantOwnSendGuard(own):null;
+  const index=own?assistantOwnSendProjectIndexGuard(own,true):null,partialIndex=own?assistantOwnSendProjectIndexGuard(own):null;
+  const head=own?`(migration.last_owner_sequence=? OR migration.last_owner_sequence=? AND (${index!.sql}))`:"migration.last_owner_sequence=(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)";
+  const current=projectSourceProjectionAssertion(scope,{sql:head,bindings:own?[own.sourceHead,own.sourceHead+own.eventWrites.length,...index!.bindings]:[`creative:${scope.ownerUserId}`]});
+  return suffix?{sql:`(${current.sql}) AND ((${suffix.sql}) AND (${partialIndex!.sql}))`,bindings:[...current.bindings,...suffix.bindings,...partialIndex!.bindings]}:current;
+}
+
+/** Final-only structured publication proof: never substitutes for the original prewrite source guard. */
+export function projectStructuredSourceProjectionCurrentAssertion(scope:ProjectSourceScope,own:AssistantStructuredOwnSendFootprint){
+  if(!own.scope||own.streamId!=="creative:"+scope.ownerUserId||own.scope.organizationId!==scope.organizationId
+    ||own.scope.projectAccessId!==scope.projectAccessId||own.scope.projectId!==scope.projectId||own.scope.ownerUserId!==scope.ownerUserId
+    ||own.projectId!==scope.projectId)throw new Error("context_structured_own_send_scope");
+  const suffix=assistantStructuredOwnSendGuard(own),index=assistantStructuredOwnSendProjectIndexGuard(own,true);
+  const current=projectSourceProjectionAssertion(scope,{sql:"migration.last_owner_sequence=?",bindings:[own.sourceHead+2]});
+  return{sql:`(${current.sql}) AND (${suffix.sql}) AND (${index.sql})`,bindings:[...current.bindings,...suffix.bindings,...index.bindings]};
+}
+
+/** Same custody proof after guarded event INSERTs, before projection advancement. */
+export function projectSourceProjectionPublicationAssertion(scope:ProjectSourceScope){
+  return projectSourceProjectionAssertion(scope,null);
 }
 
 /** Shared source SELECT for ordinary refresh and guarded read-only Output execution. */
@@ -668,8 +1041,7 @@ async function resourceBelongsToCanvas(env:WorkerEnv,context:ProjectRequestConte
 async function readProjectReceiptEvents(env:WorkerEnv,context:ProjectRequestContext,eventIds:string[],actorUserId:string){
   const unique=[...new Set(eventIds)];
   if(!unique.length)return new Map<string,ReturnType<typeof presentProjectEvent>>();
-  const statements:D1PreparedStatement[]=[env.DB.prepare("SELECT resource_kind,resource_id FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND owner_user_id=?")
-    .bind(context.projectAccessId,context.organizationId,context.ownerUserId)];
+  const statements:D1PreparedStatement[]=[prepareProjectPresentationResources(env,context)];
   for(let offset=0;offset<unique.length;offset+=70){
     const chunk=unique.slice(offset,offset+70);
     statements.push(env.DB.prepare(`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id

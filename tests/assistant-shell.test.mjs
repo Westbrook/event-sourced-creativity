@@ -237,7 +237,10 @@ test("D428 tight launcher uses existing native inset-focus tokens and the same b
   };
   assert.ok(styles.includes("min-inline-size: var(--forma-control-min-size, 2.75rem);"));
   assert.ok(styles.includes("min-block-size: 2.75rem;"));
-  assert.ok(panel.includes("if (!launcher || this.open || launcher.contains(focused)) return;"));
+  // Ordinary floating placement still freezes on its own focus. Only a
+  // currently measured main reservation may revalidate that same control.
+  assert.ok(panel.includes('const reserved = this.dataset.browseLane === "true" && this.#positionInBrowseLane(launcher ?? undefined);'));
+  assert.ok(panel.includes("if (!launcher || this.open || launcher.contains(focused) && !reserved) return;"));
   assert.ok(panel.includes("for (let attempt = 0; attempt < 8; attempt += 1)"));
   assert.ok(panel.includes("for (let attempt = 0; attempt < 4; attempt += 1)"));
   assert.ok(block(tight).includes("box-shadow: none;"), "tight placement must not paint a decorative shadow across neighboring focus");
@@ -260,7 +263,7 @@ test("E3 Studio utility reserves real space only beside an eligible current floa
     read("src/components/design-system/assistant-panel.css"),
     read("src/components/studio-navigation.css"),
   ]);
-  assert.ok(panel.includes('if (!launcher || this.open || launcher.contains(focused)) return;'));
+  assert.ok(panel.includes('if (!launcher || this.open || launcher.contains(focused) && !reserved) return;'));
   assert.ok(panel.includes('for (let attempt = 0; attempt < 8; attempt += 1)'));
   assert.ok(panel.includes('for (let attempt = 0; attempt < 4; attempt += 1)'));
   assert.ok(studio.includes('scroll-padding-inline: var(--forma-focus-clearance);'));
