@@ -126,6 +126,13 @@ Use an 8px-derived rhythm. Prefer generous spacing between conceptual sections a
 
 Page gutters should be fluid, normally `clamp(1rem, 4vw, 4.5rem)`. Content widths should be set by reading or image needs, not by arbitrary card widths.
 
+The Creator document workbench uses the bounded `--forma-pane-inset` gutter
+(`clamp(1rem, 1.6vi, 1.25rem)`) for its shell, project identity, document heading,
+and reading content. Navigation labels align to that leading edge; padded
+control surfaces hang into the gutter. Side rails establish a separate column,
+with the same inset measured from each column’s start. Compact rows preserve
+this alignment when actions wrap. Use logical edges so the rule mirrors in RTL.
+
 ### Shape and depth
 
 - Standard controls use a 6px radius.

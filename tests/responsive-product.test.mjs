@@ -1506,10 +1506,17 @@ test("D428 Document task-strip peers reuse inset focus without changing native s
   assert.ok(sharedRules.some(rule => rule.selectors.includes(strip + '[data-has-reviews="true"]')
     && rule.parent.type === "root" && rule.nodes.some(node => node.prop === "display" && node.value === "flex")),
     "the same task strip is available with reviews outside narrow postures");
-  assert.ok(sharedRules.some(rule => rule.selectors.includes(strip) && rule.parent.name === "container"
-    && rule.parent.params === "studio (width < 46rem)"
-    && rule.nodes.some(node => node.prop === "display" && node.value === "flex")),
-    "retain the existing narrow-container presentation rather than inventing a new breakpoint");
+  const narrowOwner = '.workspace-page[data-workbench="document"][data-workbench-narrow="true"]';
+  const narrowRules = [];
+  root.walkRules(rule => { if (rule.selectors?.includes(narrowOwner + " " + strip)) narrowRules.push(rule); });
+  assert.equal(narrowRules.length, 1, "one rendered posture owns the narrow task strip");
+  assert.equal(narrowRules[0].parent.type, "root", "pane visibility and its strip must not evaluate separate container breakpoints");
+  assert.ok(narrowRules[0].nodes.some(node => node.prop === "display" && node.value === "flex"));
+  assert.ok(workspace.includes('data-workbench-narrow=' + '$' + '{String(this.#narrowWorkbench)}'));
+  assert.ok(workspace.includes('const narrow=width<62*rootSize;'), "retain the readable two-pane boundary");
+  assert.ok(workspace.includes('?hidden=' + '$' + '{this.#narrowWorkbench&&this.#workbenchPane!=="write"}'),
+    "the context pane uses the same rendered posture as the switcher");
+  assert.equal(winning(narrowOwner + " .studio-grid", "grid-template-columns", viewports[0])?.value, "minmax(0, 1fr)");
   for (const viewport of viewports) {
     assert.equal(winning(strip, "overflow-x", viewport)?.value, "auto");
     assert.equal(winning(strip, "padding-inline", viewport)?.value, "var(--forma-pane-inset)");

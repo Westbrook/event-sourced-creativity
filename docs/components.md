@@ -7,6 +7,12 @@ The living reference is `/knowledge/design-system`;
 `/knowledge/guidance` publishes privacy, accessibility, and localization rules.
 Every example is fictional and store-independent.
 
+Creator’s document workbench composes the existing shell, ProjectRail and Studio
+navigation around `--forma-pane-inset`. Heading text, first navigation labels,
+and identity marks share that logical leading edge; backgrounds and separators
+keep their own full-width boundaries. This is application layout, with no new
+component API or translated copy. The compact dock keeps its equal-width cells.
+
 Before creating an interface, inspect the live reference, this guide,
 `DESIGN.md`, and `custom-elements.json`. Reuse an exact production component
 first, extend the closest shared contract second, and create a new component
