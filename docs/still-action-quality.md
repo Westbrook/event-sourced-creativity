@@ -63,6 +63,17 @@ open product-review items.
 The [local verification receipt](still-action-quality-verification-2026-10-01.md)
 records selected checks, retained failures and untested areas.
 
+## Authorized release preparation — 2026-10-01
+
+The continuation is committed as `45cf36bd`. The user then authorized publication
+of this work and its required still-24 foundation. Qualification preserves the
+41 packaged migrations and the historical Memory repair manifest; only the
+source-journal metadata recognizes the exact0074 append. The server bootstrap
+creates four empty Still tables and four indexes on its first auth-required
+request. Recording remains an explicit personal, scoped opt-in. Paid evaluations,
+actual-data exports and real-user experiments are outside this publication.
+The terminal release/source/archive receipt will establish publication separately.
+
 ## Foundation implementation and retained baseline
 
 The historical foundation used policy `still-24`, branch

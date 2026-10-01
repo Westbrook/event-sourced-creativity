@@ -4,7 +4,8 @@ This is a release preparation checklist. The current task authorizes local
 implementation and fictional verification only. Existing-database changes,
 hosted activation, actual-data exports, paid provider runs, and real-user studies
 require their applicable explicit authorization. No such activity follows merely
-from completing this document.
+from completing this document. The user subsequently authorized committing and
+publishing this slice; release evidence is recorded separately.
 
 Use the [implementation and evaluation guide](still-action-quality.md),
 [intake contract](still-action-quality-intake.md),
@@ -21,7 +22,10 @@ do not turn a passing fictional case into a claim of user benefit.
 - [ ] Include additive [0074_still_action_outcomes.sql](../drizzle/0074_still_action_outcomes.sql)
   with its unchanged SQL hash/journal entry. It creates opt-in preferences,
   decision receipts, observations, and goal references outside the creative event
-  head. Confirm bootstrap and journaled schema equivalence in an isolated,
+  head. With the held-migration release policy,0074 remains source-only; the
+  equivalent bootstrap creates these empty objects on the first auth-required
+  request (before principal lookup). The release must qualify the exact
+  source-journal extension without activating held Memory migrations. Confirm bootstrap and journaled schema equivalence in an isolated,
   fictional database, including rerun and rollback behavior.
 - [ ] Confirm the current slice needs **no additional migration**: versioned
   `still-workflow-v1`, `still-outcome-v1`, and `still-quality-assessment-v1` payloads

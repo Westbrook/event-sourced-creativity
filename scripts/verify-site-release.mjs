@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {verifyReleaseMigrations} from '../build/release-migrations.ts';
+import {verifyStillJournalTransition} from './lib/still-migration-journal.mjs';
 
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
@@ -22,8 +23,18 @@ export function verifySource(root,plan){
  const manifest=JSON.parse(readFileSync(join(root,'.openai/hosting.json')));
  const baseline=JSON.parse(git(root,'show',`${plan.baselineCommit}:.openai/hosting.json`));
  if(manifest.project_id!==plan.projectId||baseline.project_id!==plan.projectId)throw Error('Site identity mismatch');
- if(git(root,'diff',plan.baselineCommit,plan.candidateCommit,'--','build/memory-migration-release.json','.openai/hosting.json'))throw Error('Hosting or migration policy changed; qualify a separate release');
- return {candidateCommit:plan.candidateCommit,baselineCommit:plan.baselineCommit,projectId:plan.projectId,changed};
+ if(git(root,'diff',plan.baselineCommit,plan.candidateCommit,'--','.openai/hosting.json'))throw Error('Hosting configuration changed; qualify a separate release');
+ let migrationSourceQualification;
+ if(git(root,'diff',plan.baselineCommit,plan.candidateCommit,'--','build/memory-migration-release.json')||plan.migrationSourceJournalTransition){
+  const readAt=(commit,file)=>execFileSync('git',['show',`${commit}:${file}`],{cwd:root,encoding:'utf8'});
+  const beforeJournal=readAt(plan.baselineCommit,'drizzle/meta/_journal.json');
+  migrationSourceQualification=verifyStillJournalTransition({transition:plan.migrationSourceJournalTransition,
+   beforePolicy:readAt(plan.baselineCommit,'build/memory-migration-release.json'),afterPolicy:readAt(plan.candidateCommit,'build/memory-migration-release.json'),
+   beforeJournal,afterJournal:readAt(plan.candidateCommit,'drizzle/meta/_journal.json'),addedSql:readAt(plan.candidateCommit,'drizzle/0074_still_action_outcomes.sql')});
+  const oldFiles=JSON.parse(beforeJournal).entries.map(entry=>`drizzle/${entry.tag}.sql`);
+  if(git(root,'diff',plan.baselineCommit,plan.candidateCommit,'--',...oldFiles))throw Error('Historical migration changed during source-journal qualification');
+ }
+ return {candidateCommit:plan.candidateCommit,baselineCommit:plan.baselineCommit,projectId:plan.projectId,changed,...(migrationSourceQualification?{migrationSourceQualification}:{})};
 }
 export async function verifyArchive(root,archive,savedVersion,source){
  const inspected=JSON.parse(execFileSync(process.env.PYTHON||'python3',[fileURLToPath(new URL('./lib/site-release-archive.py',import.meta.url)),resolve(archive)],{encoding:'utf8',maxBuffer:8*1024*1024}));

@@ -82,6 +82,9 @@ test('bounds reject passive attention, invalid shapes, unknown actions and exces
 test('migration and bootstrap share identical additive schema',()=>{
  const migrated=new DatabaseSync(':memory:'),bootstrapped=new DatabaseSync(':memory:');migrated.exec(readFileSync(new URL('../drizzle/0074_still_action_outcomes.sql',import.meta.url),'utf8'));for(const sql of STILL_ACTION_OUTCOMES_SCHEMA)bootstrapped.exec(sql);
  const objects=db=>db.prepare("SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();assert.deepEqual(objects(migrated),objects(bootstrapped));
+ bootstrapped.exec("CREATE TABLE events(id TEXT PRIMARY KEY);INSERT INTO events VALUES('creative-head');");for(const sql of STILL_ACTION_OUTCOMES_SCHEMA)bootstrapped.exec(sql);
+ for(const table of ['still_action_preferences','still_action_receipts','still_action_observations','still_action_goals'])assert.equal(bootstrapped.prepare(`SELECT count(*) n FROM ${table}`).get().n,0);
+ assert.deepEqual(bootstrapped.prepare('SELECT id FROM events').all().map(r=>r.id),['creative-head']);migrated.close();bootstrapped.close();
 });
 test('direct windows limit new invocation while preserving delayed commits from a long form',async()=>{
  const h=harness();await h.opt();assert.equal((await h.observe({id:'invoke',kind:'invocation',actionId:'compose'})).status,201);

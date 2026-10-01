@@ -3,7 +3,9 @@
 This receipt covers the local continuation of ST-ACTIONS-001 on 2026-10-01.
 Both `0451de43` and `2168fc05` are ancestors of the current `main` checkout.
 The worktree also contains concurrent unrelated work; it has been preserved.
-These changes are local and uncommitted. No existing database was changed, no
+At this local verification checkpoint, the changes were uncommitted.
+The user subsequently authorized commit and publication; see the later release
+entry in the implementation guide for its separately recorded status. No existing database was changed, no
 paid provider evaluation or actual-data export ran, and no hosted release or
 real-user study was started.
 

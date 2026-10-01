@@ -69,3 +69,22 @@ for safe tar inspection; application runtime and browser tests remain Node-based
 check against fictional Git/build fixtures, altered Workers, unexpected source,
 unsafe archives, mismatched saved receipts and extra migrations. No production
 fixture or database is required.
+
+## Still0074 source-journal qualification
+
+The explicit `migrationSourceJournalTransition` plan object permits only the
+pinned `still-action-outcomes-0074` source-journal extension. Copy its exact
+`kind`, `before`, `after`, and `sql` values from
+`scripts/lib/still-migration-journal.mjs`. The check binds both journal byte
+hashes, the exact appended SQL, every historical SQL file and a policy edit
+that replaces only `sourceJournalSha256`. All other policy bytes, hosting
+configuration, the 41 packaged SQL files and their journal remain unchanged.
+Absent or mismatched qualification remains a release failure.
+
+The Memory repair generator validates that one extension but still generates
+from its original 72-entry journal prefix. Its historical 31-migration repair
+manifest must remain byte-identical. This qualification does not activate held
+Memory migrations or package0074. Still's ordinary server bootstrap creates
+its four empty additive tables and four indexes; collection requires explicit
+scoped opt-in. Native publication authorizes this bootstrap effect, independently
+of paid evaluations, actual-data exports or a real-user study.
