@@ -799,6 +799,24 @@ workspace access revision7 and environment16. Evidence and the successful native
 deployment receipt are in `outputs/workbench-spacing/release/`. Live human visual
 acceptance remains separate; no further implementation or publication remains.
 
+### Project sidebar spacing — 2026-10-01
+
+**Published to Production as Site565.** Main commit `6cfb79e2`; release source
+`9a723204`. Native deployment succeeded with environment16 and workspace access
+revision7 preserved. The user explicitly authorized Production after the initial
+preview/live ambiguity. [Release receipt](evidence/project-sidebar-release-2026-10-01.json).
+
+Project copy, section headings, and navigation icon cells share a logical inset;
+Documents and Library use the same centered icon/label
+layout. Section boundaries use a single divider and consistent vertical spacing.
+TypeScript, scoped lint, CEM checks, and 12 synthetic Chromium geometry cases
+pass (320–1600px, short landscape, English/Arabic). Visual evidence and focused
+validation logs are retained in `outputs/sidebar-spacing/`. Publication is
+complete; user visual acceptance remains separate.
+The selected Node run passed 84/91 tests. All seven native-navigation fixture
+failures also reproduce with the original ProjectRail component (focus ownership
+and the collection-create request count); they remain outside this visual fix.
+
 ### Ask Forma trailing alignment — 2026-10-01
 
 **Published as Site563.** Main implementation `ed23b17a`; release

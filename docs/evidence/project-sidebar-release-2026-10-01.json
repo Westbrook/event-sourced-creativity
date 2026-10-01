@@ -1,0 +1,59 @@
+{
+  "status": "published",
+  "mainCommit": "6cfb79e2554392c6621c78f0e4d466249cba5bd8",
+  "releaseCommit": "9a723204cfb84c3d00d227c1219107d0ca6b44b7",
+  "baselineVersion": 564,
+  "savedVersion": 565,
+  "savedVersionId": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_1c5d99dd41cc8191a33d3768a0dac360",
+  "projectId": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "targetUrl": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+  "deployment": {
+    "id": "appgdep_6abe788c8b6481919f632171064d8d01",
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "title": "Forma Creative Studio",
+    "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_1c5d99dd41cc8191a33d3768a0dac360",
+    "type": "publish",
+    "status": "succeeded",
+    "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+    "has_mcp": false,
+    "screenshot_asset_pointer": null,
+    "provider_deployment_id": "site---6a7a020e334881919ed8aea0363cb98f",
+    "failure_message": null,
+    "env_set_revision": 16,
+    "updated_at": "2026-10-01T15:13:32.531651+00:00"
+  },
+  "checks": [
+    "TypeScript and full lint passed in isolated release checkout",
+    "48 focused source tests passed; zero failures/skips",
+    "Production build passed; CEM, localization and schema checks passed",
+    "Saved source/archive matched: 622 files; existing 41-migration prefix retained",
+    "Prior local visual check: 12 Chromium desktop/mobile/RTL cases passed"
+  ],
+  "archivePreflight": {
+    "candidateCommit": "9a723204cfb84c3d00d227c1219107d0ca6b44b7",
+    "baselineCommit": "63a696545456db2b3e909b711764fc0ae0ca6945",
+    "projectId": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "changed": [
+      "docs/backlog.md",
+      "docs/components.md",
+      "src/components/project-rail.ts",
+      "src/design-system.css",
+      "src/responsive-foundation.css"
+    ],
+    "archive": "/private/tmp/forma-sidebar-qualified-20261001.tar",
+    "archiveSha256": "f00b5e72421ac34cf1892fcf8cb4173088567ed4bd8d423ba653b17373a9bc76",
+    "normalizedSha256": "a2a35447a5335ec2ee4f88588cf4cd08e7f4f267072c5f09d8e49daa80d432b7",
+    "files": 622,
+    "migrations": 41,
+    "savedReceiptVerified": true,
+    "hostedActions": 0
+  },
+  "accessMode": "workspace_all",
+  "accessRevision": 7,
+  "environmentRevision": 16,
+  "nextAction": "User visual review on Production; no remaining commit or publication work.",
+  "checkout": "/private/tmp/forma-sidebar-release-20261001",
+  "unrelatedWork": "Uncommitted Still work preserved and excluded from main sidebar commit and publication candidate.",
+  "approvalHistory": "Automatic approval review rejected live deployment because user requested a preview site. Sites exposes production publication for this existing shared URL. Ask explicit authorization before retrying.",
+  "approvalResolution": "User explicitly authorized live Production publication on 2026-10-01."
+}

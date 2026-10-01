@@ -418,7 +418,6 @@ html[data-document-focus] .studio-subpage-body {
 .library-block-browser-section > b,
 .library-block-browser-section > p,
 .library-block-filing:not(.collapsed) > p,
-.rail-project-card,
 .rail-note,
 .rail-stream,
 .collection-rail-filter {
@@ -432,6 +431,44 @@ html[data-document-focus] .studio-subpage-body {
 
 .project-rail .collection-tree {
   padding-inline: var(--forma-focus-clearance);
+}
+
+/* One inset for section copy and row contents; the row border stays outside it. */
+.project-rail .rail-content {
+  --rail-content-inset: var(--forma-space-2, .5rem);
+}
+
+.project-rail :is(.rail-links, .rail-collections) {
+  margin-block-start: var(--forma-space-4, 1rem);
+  padding-block-start: var(--forma-space-3, .75rem);
+}
+
+.project-rail .rail-label,
+.project-rail .rail-document-handoff {
+  padding-inline: var(--rail-content-inset);
+}
+
+.project-rail .tree-heading {
+  min-block-size: var(--forma-hit-target);
+  padding: 0 var(--rail-content-inset);
+}
+
+.project-rail :is(.rail-document-links, .rail-library-links) > a {
+  padding-inline: calc(var(--rail-content-inset) - 1px);
+}
+
+.project-rail :is(.rail-project-overview > span:first-child, .rail-links a i, .rail-collapse-toggle > span) {
+  display: inline-flex;
+  flex: 0 0 1.25rem;
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.project-rail .rail-links > a > small {
+  flex: 0 0 auto;
 }
 
 .workspace-settings-navigation > ul,
